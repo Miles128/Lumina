@@ -1,0 +1,14 @@
+{
+  "name": "lumina-desktop",
+  "version": "0.1.0",
+  "description": "CN-local personal AI secretary desktop mascot",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "install:cn": "bash ../scripts/install-electron.sh"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0"
+  }
+}

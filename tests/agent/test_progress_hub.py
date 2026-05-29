@@ -1,0 +1,35 @@
+"""Tests for chat progress hub."""
+
+from __future__ import annotations
+
+import pytest
+
+from secretary.agent.progress_events import ProgressEvent, progress_event_label
+from secretary.agent.progress_hub import ProgressHub
+
+
+@pytest.mark.asyncio
+async def test_progress_hub_streams_events() -> None:
+    hub = ProgressHub()
+    hub.open("trace-1")
+    hub.publish("trace-1", ProgressEvent(kind="iteration_started", iteration=1))
+    hub.publish(
+        "trace-1",
+        ProgressEvent(kind="tool_started", iteration=1, tool_name="shell"),
+    )
+    hub.close("trace-1")
+
+    chunks: list[str] = []
+    async for chunk in hub.stream("trace-1"):
+        chunks.append(chunk)
+
+    assert any("第 1 轮思考" in chunk for chunk in chunks)
+    assert any("执行命令" in chunk for chunk in chunks)
+    assert any('"kind": "done"' in chunk for chunk in chunks)
+
+
+def test_progress_event_label_for_mcp_tool() -> None:
+    label = progress_event_label(
+        ProgressEvent(kind="tool_started", iteration=2, tool_name="mcp_filesystem_read_file"),
+    )
+    assert "MCP filesystem/read_file" in label

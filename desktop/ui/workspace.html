@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>灵犀 · CN 本地助手</title>
+    <link rel="stylesheet" href="/assets/tokens.css?v=2" />
+    <link rel="stylesheet" href="/assets/workspace.css?v=3" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <span class="topbar-title">知识库</span>
+        <div class="topbar-actions">
+          <button id="btn-open-mascot" class="btn ghost" type="button">吉祥物</button>
+          <button id="btn-sync-all" class="btn primary">全量同步</button>
+          <a href="/" class="btn ghost">返回对话</a>
+        </div>
+      </header>
+
+      <div class="main-layout">
+        <aside class="sidebar">
+          <div class="sidebar-tabs">
+            <button class="sidebar-tab active" data-pane="tree">主题</button>
+            <button class="sidebar-tab" data-pane="graph">图谱</button>
+            <button class="sidebar-tab" data-pane="profile">画像</button>
+          </div>
+
+          <div class="sidebar-pane active" id="pane-tree">
+            <div id="topic-tree" class="topic-tree"></div>
+          </div>
+
+          <div class="sidebar-pane" id="pane-graph">
+            <div class="graph-toolbar">
+              <button class="chip active" data-graph-filter="personal">个人</button>
+              <button class="chip" data-graph-filter="topic">主题</button>
+              <button class="chip" data-graph-filter="tag">标签</button>
+              <button class="chip" data-graph-filter="all">全部</button>
+            </div>
+            <canvas id="graph-canvas"></canvas>
+          </div>
+
+          <div class="sidebar-pane" id="pane-profile">
+            <pre id="profile-panel" class="profile-panel">加载中...</pre>
+          </div>
+        </aside>
+
+        <section class="editor-area">
+          <div class="editor-toolbar">
+            <span id="editor-title">选择一篇笔记</span>
+            <button id="btn-save-note" class="btn ghost" type="button" disabled>保存笔记</button>
+            <button id="btn-rebuild-kb" class="btn ghost">重建知识库</button>
+          </div>
+          <div class="editor-split">
+            <textarea id="note-editor" class="note-editor" placeholder="Markdown 笔记内容..." spellcheck="false"></textarea>
+            <div id="note-preview" class="note-preview"></div>
+          </div>
+        </section>
+
+        <aside class="ai-panel" id="ai-panel">
+          <div class="ai-panel-header">
+            <span class="ai-dot"></span>
+            <span>灵犀助手</span>
+          </div>
+          <div id="ai-messages" class="ai-messages"></div>
+          <form id="ai-form" class="ai-form">
+            <textarea id="ai-input" rows="2" placeholder="问我：我最近在关注什么？Shift+Enter 换行"></textarea>
+            <button type="submit" class="btn primary send-btn">发送</button>
+          </form>
+        </aside>
+      </div>
+    </div>
+
+    <script src="/assets/api.js"></script>
+    <script src="/assets/graph.js"></script>
+    <script src="/assets/workspace.js"></script>
+  </body>
+</html>

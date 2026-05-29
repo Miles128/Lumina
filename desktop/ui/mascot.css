@@ -1,0 +1,232 @@
+html, body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.mascot-shell {
+  width: 300px;
+  height: 420px;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md), 0 16px 48px rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+
+.mascot-titlebar {
+  -webkit-app-region: drag;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mascot-titlebar button {
+  -webkit-app-region: no-drag;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.mascot-titlebar button:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.mascot-stage-wrap {
+  height: 160px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-subtle);
+}
+
+.mascot {
+  position: relative;
+  width: 110px;
+  height: 140px;
+  animation: float 4s ease-in-out infinite;
+}
+
+.mascot[data-state="thinking"] { animation: float 1.2s ease-in-out infinite; }
+
+.mascot-hair {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  width: 90px;
+  height: 52px;
+  background: var(--text);
+  border-radius: 45px 45px 22px 22px;
+}
+
+.mascot-face {
+  position: absolute;
+  top: 22px;
+  left: 16px;
+  width: 78px;
+  height: 68px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 39px;
+}
+
+.eye {
+  position: absolute;
+  top: 26px;
+  width: 9px;
+  height: 12px;
+  background: var(--text);
+  border-radius: 50%;
+}
+
+.eye.left { left: 18px; }
+.eye.right { right: 18px; }
+
+.blush {
+  position: absolute;
+  top: 40px;
+  width: 12px;
+  height: 7px;
+  background: var(--line-strong);
+  border-radius: 50%;
+  opacity: 0.5;
+}
+
+.blush.left { left: 10px; }
+.blush.right { right: 10px; }
+
+.mouth {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  width: 14px;
+  height: 7px;
+  margin-left: -7px;
+  border-bottom: 2px solid var(--text-secondary);
+  border-radius: 0 0 12px 12px;
+}
+
+.mascot-body {
+  position: absolute;
+  bottom: 0;
+  left: 14px;
+  width: 82px;
+  height: 54px;
+  background: var(--text);
+  border-radius: 26px 26px 16px 16px;
+}
+
+.badge {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.mascot-arm {
+  position: absolute;
+  bottom: 32px;
+  width: 16px;
+  height: 32px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mascot-arm.left { left: 0; transform: rotate(18deg); }
+.mascot-arm.right { right: 0; transform: rotate(-18deg); }
+
+.mascot-speech {
+  margin: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  min-height: 48px;
+}
+
+.mascot-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.mascot-form input {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.mascot-form input:focus {
+  border-color: var(--line-strong);
+}
+
+.mascot-form input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.mascot-form button {
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--text);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.mascot-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
+}
+
+.mascot-actions button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.mascot-actions button:hover {
+  color: var(--text);
+  background: var(--bg-subtle);
+  border-color: var(--line-strong);
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
