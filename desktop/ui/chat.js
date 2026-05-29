@@ -28,6 +28,25 @@
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
+
+  function t(key, vars) {
+    if (window.LuminaI18n) {
+      return window.LuminaI18n.t(key, vars);
+    }
+    return key;
+  }
+
+  function avatarLabel(role) {
+    return role === "bot" ? t("bot.name") : t("user.me");
+  }
+
+  window.addEventListener("lumina:language", () => {
+    document.querySelectorAll(".message .avatar").forEach((el) => {
+      const isBot = el.classList.contains("bot");
+      el.setAttribute("aria-label", avatarLabel(isBot ? "bot" : "user"));
+    });
+    window.LuminaI18n?.applyDocument();
+  });
   const RUNTIME_SUMMARY_RE =
     /^本次(?:回答|操作|同步|处理|确认)?(?:已返回结果|已执行)?[,，]?\s*耗时\s*[\d.]+\s*秒[。.]?$/;
 
@@ -71,9 +90,9 @@
 
   async function syncAll() {
     if (busy) return;
-    appendMessage("user", "同步全部数据");
+    appendMessage("user", t("chat.sync.user"));
     setBusy(true);
-    showTyping(true, "正在同步数据…");
+    showTyping(true, t("chat.typing.sync"));
     beginTypingTicker();
     try {
       const controller = createActiveController();
@@ -82,9 +101,9 @@
         timeoutMs: 90_000,
       });
       const inserted = results.reduce((sum, item) => sum + item.inserted, 0);
-      appendMessage("bot", `同步完成，写入 ${inserted} 条记忆。`);
+      appendMessage("bot", t("chat.sync.done", { n: inserted }));
     } catch (error) {
-      handleRequestError(error, "同步");
+      handleRequestError(error, t("chat.error.sync"));
     } finally {
       endTypingTicker();
       clearActiveController();
@@ -101,7 +120,7 @@
     chatInput.value = "";
     autoResize();
     setBusy(true);
-    showTyping(true, "正在理解你的问题…");
+    showTyping(true, t("chat.typing.understand"));
     beginTypingTicker();
     slowNoticeSent = false;
     resetProgressLog();
@@ -132,7 +151,7 @@
       }
     } catch (error) {
       clearStreamingBubble();
-      handleRequestError(error, "回答");
+      handleRequestError(error, t("chat.error.reply"));
     } finally {
       endTypingTicker();
       clearActiveController();
@@ -149,13 +168,13 @@
 
     const confirmRow = document.querySelector(".confirmation-row");
     if (confirmRow) {
-      const status = approved ? "✅ 已允许" : "❌ 已拒绝";
+      const status = approved ? `✅ ${t("confirm.allow")}` : `❌ ${t("confirm.deny")}`;
       confirmRow.querySelector(".confirm-actions").innerHTML = `<span class="confirm-status">${status}</span>`;
       confirmRow.classList.remove("confirmation-row");
     }
 
     setBusy(true);
-    showTyping(true, "正在执行操作…");
+    showTyping(true, t("chat.typing.execute"));
     beginTypingTicker();
 
     try {
@@ -190,7 +209,7 @@
       }
     } catch (error) {
       clearStreamingBubble();
-      handleRequestError(error, "操作");
+      handleRequestError(error, t("chat.error.action"));
     } finally {
       endTypingTicker();
       clearActiveController();
@@ -219,7 +238,7 @@
     const avatarSrc = role === "bot" ? "/assets/avatar-bot.svg" : "/assets/avatar-user.svg";
     const bubbleClass = role === "bot" ? "bubble markdown" : "bubble";
     row.innerHTML =
-      `<div class="avatar ${role}" aria-label="${role === "bot" ? "灵犀" : "你"}">` +
+      `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
       `<img src="${avatarSrc}" alt="" aria-hidden="true" /></div>` +
       `<div class="${bubbleClass}">${renderMessageHtml(role, text)}</div>`;
     messagesEl.appendChild(row);
@@ -284,7 +303,7 @@
 
   window.__luminaConfirm = handleConfirm;
 
-  function showTyping(visible, statusText = "正在处理…") {
+  function showTyping(visible, statusText = t("chat.processing")) {
     typingEl.hidden = !visible;
     if (typingTextEl) {
       typingTextEl.textContent = statusText;
@@ -351,7 +370,7 @@
       showTyping(true, label);
     }
     if (event?.kind === "done") {
-      showTyping(true, "正在整理回复…");
+      showTyping(true, t("chat.typing.organize"));
     }
   }
 
@@ -362,7 +381,7 @@
     const row = document.createElement("div");
     row.className = "message bot streaming";
     row.innerHTML =
-      `<div class="avatar bot" aria-label="灵犀">` +
+      `<div class="avatar bot" aria-label="${avatarLabel("bot")}">` +
       `<img src="/assets/avatar-bot.svg" alt="" aria-hidden="true" /></div>` +
       `<div class="bubble markdown"></div>`;
     messagesEl.appendChild(row);
@@ -441,42 +460,39 @@
     if (!busy) return;
     const elapsedSec = Math.floor((Date.now() - typingStartAt) / 1000);
     if (elapsedSec < 8) {
-      showTyping(true, "正在理解你的问题…");
+      showTyping(true, t("chat.typing.understand"));
       return;
     }
     if (elapsedSec < 20) {
-      showTyping(true, "正在整理相关信息…");
+      showTyping(true, t("chat.typing.gather"));
       return;
     }
     if (elapsedSec < 40) {
-      showTyping(true, "正在调用工具处理…");
+      showTyping(true, t("chat.typing.tools"));
       return;
     }
     if (elapsedSec < 70) {
-      showTyping(true, "还在继续处理，马上给你结果…");
+      showTyping(true, t("chat.typing.almost"));
       return;
     }
-    showTyping(true, "这次耗时较长，你可以点「暂停」先中止。");
+    showTyping(true, t("chat.typing.slow"));
     if (!slowNoticeSent) {
-      appendMessage("bot", "这次处理有点慢，我还在继续。你可以点「暂停」先停下。");
+      appendMessage("bot", t("chat.slowNotice"));
       slowNoticeSent = true;
     }
   }
 
   function handleRequestError(error, scene) {
     if (error instanceof window.SecretaryAPI.ApiAbortError) {
-      appendMessage("bot", "已暂停这次请求。你可以继续发下一条。");
+      appendMessage("bot", t("chat.paused"));
       return "已暂停";
     }
     if (error instanceof window.SecretaryAPI.ApiTimeoutError) {
-      appendMessage(
-        "bot",
-        "这次等待超时，我还没拿到结果。你可以让我缩小范围后再试一次。",
-      );
+      appendMessage("bot", t("chat.timeout"));
       return "超时";
     }
-    appendMessage("bot", `${scene}失败：${error.message}`);
-    return "失败";
+    appendMessage("bot", `${scene}: ${error.message}`);
+    return "error";
   }
 
   function renderMessageHtml(role, text) {
@@ -609,7 +625,7 @@
   function createThread(clearBackend = true) {
     const thread = {
       id: `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-      title: "新对话",
+      title: t("thread.new"),
       updatedAt: new Date().toISOString(),
       messages: [],
     };
@@ -646,7 +662,7 @@
         const preview = buildThreadPreview(item);
         return (
           `<button class="thread-item${active}" data-thread-id="${item.id}">` +
-          `<div class="thread-item-title">${escapeHtml(item.title || "新对话")}</div>` +
+          `<div class="thread-item-title">${escapeHtml(item.title || t("thread.new"))}</div>` +
           `<div class="thread-item-preview">${escapeHtml(preview)}</div>` +
           `<div class="thread-item-time">${formatThreadTime(item.updatedAt)}</div>` +
           `</button>`
@@ -683,7 +699,7 @@
     if (thread.messages.length > 400) {
       thread.messages = thread.messages.slice(-400);
     }
-    if (role === "user" && (thread.title === "新对话" || !thread.title)) {
+    if (role === "user" && (thread.title === t("thread.new") || thread.title === "新对话" || !thread.title)) {
       thread.title = buildThreadTitle(text);
     }
     thread.updatedAt = new Date().toISOString();
@@ -728,7 +744,7 @@
 
   function buildThreadTitle(text) {
     const compact = String(text || "").replace(/\s+/g, " ").trim();
-    if (!compact) return "新对话";
+    if (!compact) return t("thread.new");
     return compact.length > 20 ? `${compact.slice(0, 20)}…` : compact;
   }
 
@@ -743,11 +759,11 @@
 
   function buildThreadPreview(thread) {
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
-      return "暂无消息";
+      return t("thread.empty");
     }
     const last = thread.messages[thread.messages.length - 1];
     const text = String(last?.text || "").replace(/\s+/g, " ").trim();
-    if (!text) return "暂无消息";
+    if (!text) return t("thread.empty");
     return text.length > 24 ? `${text.slice(0, 24)}…` : text;
   }
 

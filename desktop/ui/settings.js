@@ -16,13 +16,27 @@
   let agentSoulPath = "";
   let durableMemoryMd = "";
   let durableUserMd = "";
-  let uiPreferences = { density: "comfortable", messageWidth: "medium" };
+  let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi" };
   let mcpStatus = null;
   let backgroundTasks = null;
+
+  function t(key, vars) {
+    if (window.LuminaI18n) {
+      return window.LuminaI18n.t(key, vars);
+    }
+    return key;
+  }
 
   document.getElementById("btn-platforms").addEventListener("click", () => openSettings());
   document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
   backdrop.addEventListener("click", closeSettings);
+
+  window.addEventListener("lumina:language", () => {
+    if (panel.hidden) return;
+    renderNav();
+    renderContent(activeKey);
+    window.LuminaI18n?.applyDocument(panel);
+  });
 
   async function openSettings(preferredKey) {
     panel.hidden = false;
@@ -33,7 +47,7 @@
     try {
       await loadSettings();
     } catch (error) {
-      contentEl.innerHTML = `<p class="muted">加载失败：${escapeHtml(error.message)}</p>`;
+      contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loadFailed"))}：${escapeHtml(error.message)}</p>`;
     }
   }
 
@@ -43,7 +57,7 @@
   }
 
   async function loadSettings() {
-    contentEl.innerHTML = '<p class="muted">加载中…</p>';
+    contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
     const [platformList, profile, config, soul, durable, mcp, background] = await Promise.all([
       window.SecretaryAPI.request("GET", "/api/settings/platforms"),
       window.SecretaryAPI.request("GET", "/api/profile"),
@@ -80,14 +94,14 @@
 
     const agentGroup = document.createElement("div");
     agentGroup.className = "settings-nav-group";
-    agentGroup.innerHTML = '<div class="settings-nav-label">Agent</div>';
+    agentGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.agent"))}</div>`;
 
     for (const item of [
-      { key: "agent_llm", label: "大模型", status: agentConfig?.status || "not_configured" },
-      { key: "agent_soul", label: "人格 SOUL", status: "ready" },
-      { key: "agent_memory", label: "持久记忆", status: "ready" },
-      { key: "agent_mcp", label: "MCP 工具", status: mcpStatus?.tool_count ? "ready" : "not_configured" },
-      { key: "appearance", label: "界面", status: "ready" },
+      { key: "agent_llm", label: t("settings.llm"), status: agentConfig?.status || "not_configured" },
+      { key: "agent_soul", label: t("settings.soul"), status: "ready" },
+      { key: "agent_memory", label: t("settings.memory"), status: "ready" },
+      { key: "agent_mcp", label: t("settings.mcp"), status: mcpStatus?.tool_count ? "ready" : "not_configured" },
+      { key: "appearance", label: t("settings.appearance"), status: "ready" },
     ]) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -104,7 +118,7 @@
 
     const sourceGroup = document.createElement("div");
     sourceGroup.className = "settings-nav-group";
-    sourceGroup.innerHTML = '<div class="settings-nav-label">数据源</div>';
+    sourceGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.sources"))}</div>`;
 
     for (const platform of platforms) {
       const btn = document.createElement("button");
@@ -124,7 +138,7 @@
     profileBtn.type = "button";
     profileBtn.className = `settings-nav-item${activeKey === "profile" ? " active" : ""}`;
     profileBtn.dataset.key = "profile";
-    profileBtn.innerHTML = "<span>个人画像</span>";
+    profileBtn.innerHTML = `<span>${escapeHtml(t("settings.profile"))}</span>`;
     profileBtn.addEventListener("click", () => selectTab("profile"));
     navEl.appendChild(profileBtn);
   }
@@ -432,31 +446,40 @@
   function renderAppearancePane() {
     const density = uiPreferences.density || "comfortable";
     const width = uiPreferences.messageWidth || "medium";
+    const language = uiPreferences.language || "bi";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
-          <h3>界面</h3>
-          <p>仅调整密度与阅读宽度，不改变现有布局结构。</p>
+          <h3>${escapeHtml(t("appearance.title"))}</h3>
+          <p>${escapeHtml(t("appearance.desc"))}</p>
         </header>
         <div class="settings-fields">
           <label class="settings-field">
-            <span>密度模式</span>
-            <select id="ui-density">
-              <option value="comfortable"${density === "comfortable" ? " selected" : ""}>舒适</option>
-              <option value="compact"${density === "compact" ? " selected" : ""}>紧凑</option>
+            <span>${escapeHtml(t("appearance.language"))}</span>
+            <select id="ui-language">
+              <option value="bi"${language === "bi" ? " selected" : ""}>${escapeHtml(t("appearance.lang.bi"))}</option>
+              <option value="en"${language === "en" ? " selected" : ""}>${escapeHtml(t("appearance.lang.en"))}</option>
+              <option value="zh"${language === "zh" ? " selected" : ""}>${escapeHtml(t("appearance.lang.zh"))}</option>
             </select>
           </label>
           <label class="settings-field">
-            <span>消息宽度档位</span>
+            <span>${escapeHtml(t("appearance.density"))}</span>
+            <select id="ui-density">
+              <option value="comfortable"${density === "comfortable" ? " selected" : ""}>${escapeHtml(t("appearance.density.comfortable"))}</option>
+              <option value="compact"${density === "compact" ? " selected" : ""}>${escapeHtml(t("appearance.density.compact"))}</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span>${escapeHtml(t("appearance.width"))}</span>
             <select id="ui-message-width">
-              <option value="narrow"${width === "narrow" ? " selected" : ""}>窄</option>
-              <option value="medium"${width === "medium" ? " selected" : ""}>中</option>
-              <option value="wide"${width === "wide" ? " selected" : ""}>宽</option>
+              <option value="narrow"${width === "narrow" ? " selected" : ""}>${escapeHtml(t("appearance.width.narrow"))}</option>
+              <option value="medium"${width === "medium" ? " selected" : ""}>${escapeHtml(t("appearance.width.medium"))}</option>
+              <option value="wide"${width === "wide" ? " selected" : ""}>${escapeHtml(t("appearance.width.wide"))}</option>
             </select>
           </label>
         </div>
         <div class="platform-actions">
-          <button class="btn-text save-btn" type="button" id="btn-save-appearance">保存</button>
+          <button class="btn-text save-btn" type="button" id="btn-save-appearance">${escapeHtml(t("action.save"))}</button>
         </div>
         <div id="appearance-feedback" class="platform-feedback" hidden></div>
       </div>
@@ -467,27 +490,30 @@
   function saveAppearance() {
     const density = document.getElementById("ui-density")?.value || "comfortable";
     const messageWidth = document.getElementById("ui-message-width")?.value || "medium";
-    uiPreferences = { density, messageWidth };
+    const language = document.getElementById("ui-language")?.value || "bi";
+    uiPreferences = { density, messageWidth, language };
     localStorage.setItem("lumina.ui.preferences.v1", JSON.stringify(uiPreferences));
     window.dispatchEvent(new CustomEvent("lumina:ui-preferences", { detail: uiPreferences }));
+    window.dispatchEvent(new CustomEvent("lumina:language"));
     const feedback = document.getElementById("appearance-feedback");
     if (feedback) {
-      showFeedback(feedback, "success", "界面偏好已保存");
+      showFeedback(feedback, "success", t("appearance.saved"));
     }
   }
 
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem("lumina.ui.preferences.v1");
-      if (!raw) return { density: "comfortable", messageWidth: "medium" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi" };
       const parsed = JSON.parse(raw);
       const density = parsed?.density === "compact" ? "compact" : "comfortable";
       const messageWidth = ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
         ? parsed.messageWidth
         : "medium";
-      return { density, messageWidth };
+      const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
+      return { density, messageWidth, language };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi" };
     }
   }
 

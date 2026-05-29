@@ -12,28 +12,28 @@
     <div class="app">
       <header class="topbar">
         <div class="topbar-left">
-          <span class="logo">灵犀</span>
+          <span class="logo" data-i18n="app.name">灵犀</span>
           <span class="topbar-sep" aria-hidden="true">—</span>
-          <span class="topbar-model" id="topbar-model" title="当前大模型">加载中…</span>
+          <span class="topbar-model" id="topbar-model" data-i18n-title="model.current">加载中…</span>
         </div>
         <div class="topbar-right">
-          <div class="token-usage" title="累计 token 消耗">
-            <span>Token</span>
+          <div class="token-usage" data-i18n-title="token.usage">
+            <span data-i18n="token.label">Token</span>
             <strong id="token-usage-value">0</strong>
           </div>
           <div class="topbar-menu-wrap">
             <button id="btn-topbar-menu" class="topbar-menu-btn" type="button" aria-expanded="false">
-              <span class="sr-only">菜单</span>
+              <span class="sr-only">Menu</span>
               <span class="hamburger" aria-hidden="true">
                 <span></span><span></span><span></span>
               </span>
             </button>
             <nav id="topbar-menu" class="topbar-menu" hidden>
-              <button id="btn-skills" type="button">技能</button>
-              <button id="btn-platforms" type="button">设置</button>
-              <button id="btn-kb" type="button">知识库</button>
-              <button id="btn-sync" type="button">同步</button>
-              <button id="btn-about" type="button">关于</button>
+              <button id="btn-skills" type="button" data-i18n="menu.skills">技能</button>
+              <button id="btn-platforms" type="button" data-i18n="menu.settings">设置</button>
+              <button id="btn-kb" type="button" data-i18n="menu.knowledge">知识库</button>
+              <button id="btn-sync" type="button" data-i18n="menu.sync">同步</button>
+              <button id="btn-about" type="button" data-i18n="menu.about">关于</button>
             </nav>
           </div>
         </div>
@@ -42,20 +42,20 @@
       <div id="about-backdrop" class="overlay" hidden></div>
       <aside id="about-panel" class="about-panel" hidden>
         <header class="about-panel-head">
-          <span>关于灵犀</span>
-          <button id="btn-close-about" type="button" aria-label="关闭">×</button>
+          <span data-i18n="about.title">关于灵犀</span>
+          <button id="btn-close-about" type="button" data-i18n-aria="action.close">×</button>
         </header>
         <div class="about-panel-body">
-          <p><span class="about-label">开发者</span><span>四海</span></p>
-          <p><span class="about-label">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
-          <p><span class="about-label">版本号</span><span>0.0.1</span></p>
+          <p><span class="about-label" data-i18n="about.developer">开发者</span><span>四海</span></p>
+          <p><span class="about-label" data-i18n="about.email">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
+          <p><span class="about-label" data-i18n="about.version">版本号</span><span>0.0.1</span></p>
         </div>
       </aside>
 
       <div class="workspace">
         <aside class="chat-sidebar">
           <div class="chat-sidebar-head">
-            <button id="btn-new-thread" type="button">新对话</button>
+            <button id="btn-new-thread" type="button" data-i18n="chat.newThread">新对话</button>
           </div>
           <nav id="thread-list" class="thread-list"></nav>
         </aside>
@@ -64,21 +64,21 @@
           <main class="main">
             <div class="main-inner">
               <section id="welcome" class="hero">
-                <h1>有什么可以帮你？</h1>
+                <h1 data-i18n="chat.welcome">有什么可以帮你？</h1>
                 <div class="prompts">
-                  <button class="prompt" type="button" data-prompt="总结一下我最近在读什么">最近在读什么</button>
+                  <button class="prompt" type="button" data-i18n="prompt.reading.label" data-i18n-prompt="prompt.reading">最近在读什么</button>
                   <span class="prompt-sep">·</span>
-                  <button class="prompt" type="button" data-prompt="帮我看看今天的日程和待办">今天安排</button>
+                  <button class="prompt" type="button" data-i18n="prompt.schedule.label" data-i18n-prompt="prompt.schedule">今天安排</button>
                   <span class="prompt-sep">·</span>
-                  <button class="prompt" type="button" data-prompt="我的个人信息画像是什么样的">个人画像</button>
+                  <button class="prompt" type="button" data-i18n="prompt.profile.label" data-i18n-prompt="prompt.profile">个人画像</button>
                 </div>
               </section>
 
               <div id="messages" class="thread"></div>
               <div id="typing" class="typing" hidden>
                 <div class="typing-dots"><span></span><span></span><span></span></div>
-                <span id="typing-text" class="typing-text">正在处理…</span>
-                <button id="btn-pause" class="typing-pause" type="button">暂停</button>
+                <span id="typing-text" class="typing-text" data-i18n="chat.processing">正在处理…</span>
+                <button id="btn-pause" class="typing-pause" type="button" data-i18n="action.pause">暂停</button>
               </div>
               <div id="agent-progress" class="agent-progress" hidden>
                 <ul id="agent-progress-list"></ul>
@@ -91,10 +91,11 @@
               <textarea
                 id="chat-input"
                 rows="1"
+                data-i18n-placeholder="chat.placeholder"
                 placeholder="Message"
                 maxlength="4000"
               ></textarea>
-              <button type="submit" id="btn-send" class="composer-send" aria-label="发送">
+              <button type="submit" id="btn-send" class="composer-send" data-i18n-aria="action.send">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 19V5M5 12l7-7 7 7"/>
                 </svg>
@@ -107,13 +108,13 @@
       <div id="skills-backdrop" class="overlay" hidden></div>
       <aside id="skills-panel" class="sheet sheet-skills" hidden>
         <header class="sheet-head sheet-head-skills">
-          <button id="btn-close-skills" type="button" aria-label="关闭">×</button>
-          <span class="sheet-title">技能管理</span>
+          <button id="btn-close-skills" type="button" data-i18n-aria="action.close">×</button>
+          <span class="sheet-title" data-i18n="skills.title">技能管理</span>
           <nav id="skills-nav" class="skills-top-tabs"></nav>
         </header>
         <div class="sheet-body sheet-body-skills">
           <div id="skills-content" class="sheet-main sheet-main-skills">
-            <p class="muted">加载中…</p>
+            <p class="muted" data-i18n="settings.loading">加载中…</p>
           </div>
         </div>
         <div id="skill-detail-modal" class="skill-detail-modal" hidden>
@@ -126,22 +127,26 @@
       <div id="settings-backdrop" class="overlay" hidden></div>
       <aside id="settings-panel" class="sheet" hidden>
         <header class="sheet-head">
-          <button id="btn-close-settings" type="button" aria-label="关闭">×</button>
-          <span>设置</span>
+          <button id="btn-close-settings" type="button" data-i18n-aria="action.close">×</button>
+          <span data-i18n="settings.title">设置</span>
         </header>
         <div class="sheet-body">
           <nav id="settings-nav" class="sheet-nav"></nav>
           <div id="settings-content" class="sheet-main">
-            <p class="muted">加载中…</p>
+            <p class="muted" data-i18n="settings.loading">加载中…</p>
           </div>
         </div>
       </aside>
     </div>
 
+    <script src="/assets/i18n.js?v=1"></script>
     <script src="/assets/api.js?v=2"></script>
-    <script src="/assets/topbar.js?v=3"></script>
-    <script src="/assets/settings.js?v=3"></script>
+    <script src="/assets/topbar.js?v=4"></script>
+    <script src="/assets/settings.js?v=4"></script>
     <script src="/assets/skills.js?v=5"></script>
-    <script src="/assets/chat.js?v=11"></script>
+    <script src="/assets/chat.js?v=12"></script>
+    <script>
+      window.LuminaI18n?.applyDocument();
+    </script>
   </body>
 </html>

@@ -97,6 +97,11 @@
     applyUiPreferences(prefs);
   });
 
+  window.addEventListener("lumina:language", () => {
+    window.LuminaI18n?.applyDocument();
+    loadActiveModel();
+  });
+
   window.addEventListener("lumina:agent-config", (event) => {
     const detail = event.detail || {};
     if (detail.model) {
@@ -120,10 +125,11 @@
   }
 
   function renderActiveModel(model, status) {
+    const t = (key) => window.LuminaI18n?.t(key) || key;
     const name = String(model || "").trim();
     if (!name) {
-      modelEl.textContent = status === "ready" ? "未指定模型" : "未配置模型";
-      modelEl.title = "当前大模型";
+      modelEl.textContent = status === "ready" ? t("model.unset") : t("model.unconfigured");
+      modelEl.title = t("model.current");
       return;
     }
     modelEl.textContent = shortenModelName(name);
@@ -185,16 +191,18 @@
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
-      if (!raw) return { density: "comfortable", messageWidth: "medium" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi" };
       const parsed = JSON.parse(raw);
+      const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
       return {
         density: parsed?.density === "compact" ? "compact" : "comfortable",
         messageWidth: ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
           ? parsed.messageWidth
           : "medium",
+        language,
       };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi" };
     }
   }
 
