@@ -2,6 +2,8 @@
 
 个人 AI 秘书桌面应用。本地运行 FastAPI 后端 + Electron 前端，支持工具调用、持久记忆、数据源同步与 MCP 扩展。
 
+产品需求文档：[docs/PRD.md](docs/PRD.md)（English · 中文，先英后中）
+
 ## 功能概览
 
 - **对话 Agent**：多轮工具循环（读文件、搜索、shell、联网等），读写操作需用户确认
