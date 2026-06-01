@@ -65,6 +65,7 @@ class AgentConfigView:
     max_history_turns: int
     use_hermes_fallback: bool
     response_style: str
+    shell_working_dir: str
     status: str
     status_message: str
     active_source: str
@@ -173,6 +174,7 @@ class AgentConfigStore:
             max_history_turns=document.max_history_turns,
             use_hermes_fallback=document.use_hermes_fallback,
             response_style=document.response_style,
+            shell_working_dir=document.shell_working_dir,
             status=status,
             status_message=message,
             active_source=resolved.source if resolved else "none",

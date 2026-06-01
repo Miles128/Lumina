@@ -11,6 +11,7 @@ from secretary.agent.prompt_gate import (
     parse_intent_json,
     rule_route,
     rule_route_followup,
+    rule_route_simple_direct,
 )
 from secretary.config import Settings
 from secretary.exceptions import AgentError
@@ -42,6 +43,33 @@ def test_rule_route_profile_keywords() -> None:
 
 def test_rule_route_returns_none_for_general_chat() -> None:
     assert rule_route("今天天气怎么样") is None
+
+
+def test_rule_route_simple_direct_greeting() -> None:
+    decision = rule_route_simple_direct("你好")
+    assert decision is not None
+    assert decision.action == GateAction.DIRECT
+
+
+def test_rule_route_simple_direct_short_ack() -> None:
+    decision = rule_route_simple_direct("好哒")
+    assert decision is not None
+    assert decision.action == GateAction.DIRECT
+
+
+def test_rule_route_simple_direct_long_chat_not_matched() -> None:
+    assert rule_route_simple_direct("今天天气怎么样") is None
+
+
+def test_rule_route_simple_direct_skips_file_question() -> None:
+    assert rule_route_simple_direct("列出简历目录") is None
+
+
+def test_rule_route_followup_trivial_goes_direct() -> None:
+    history = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+    decision = rule_route_followup("谢谢", history)
+    assert decision is not None
+    assert decision.action == GateAction.DIRECT
 
 
 def test_rule_route_forces_agent_for_bash_block_request() -> None:

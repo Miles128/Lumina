@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from secretary.agent.progress_events import ProgressEvent, progress_event_label
+from secretary.agent.progress_events import ProgressEvent, progress_event_label, progress_event_payload
 from secretary.agent.progress_hub import ProgressHub
 
 
@@ -33,3 +33,16 @@ def test_progress_event_label_for_mcp_tool() -> None:
         ProgressEvent(kind="tool_started", iteration=2, tool_name="mcp_filesystem_read_file"),
     )
     assert "MCP filesystem/read_file" in label
+
+
+def test_progress_event_payload_includes_detail() -> None:
+    payload = progress_event_payload(
+        ProgressEvent(
+            kind="tool_finished",
+            iteration=1,
+            tool_name="shell",
+            success=True,
+            detail="ls -la\nfile.txt",
+        )
+    )
+    assert payload["detail"] == "ls -la\nfile.txt"

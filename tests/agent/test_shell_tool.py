@@ -24,3 +24,10 @@ def test_shell_tool_reports_exit_code(tmp_path: Path) -> None:
     tool = ShellTool()
     output = tool.execute({"command": "exit 3"}, tmp_path)
     assert "[exit code: 3]" in output
+
+
+def test_shell_tool_uses_home_when_cwd_missing(tmp_path: Path, monkeypatch) -> None:
+    tool = ShellTool()
+    missing = tmp_path / "missing-dir"
+    output = tool.execute({"command": "pwd"}, missing)
+    assert str(Path.home()) in output

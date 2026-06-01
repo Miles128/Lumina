@@ -37,8 +37,34 @@ def is_third_person_meta_reply(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in _META_REPLY_PATTERNS)
 
 
+def strip_reasoning_chain(text: str) -> str:
+    """Remove model reasoning / chain-of-thought blocks from user-facing text."""
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(
+        r"<\s*redacted_reasoning\s*>[\s\S]*?<\s*/\s*redacted_reasoning\s*>",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"<\s*think\s*>[\s\S]*?<\s*/\s*think\s*>",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"^\s*#{1,3}\s*思考(过程|链)?\s*\n+",
+        "",
+        cleaned,
+        flags=re.MULTILINE,
+    )
+    return cleaned.strip()
+
+
 def sanitize_user_facing_reply(reply: str, user_message: str) -> str:
-    output = reply.strip()
+    output = strip_reasoning_chain(reply)
     if is_third_person_meta_reply(output):
         output = (
             f"抱歉，刚才那句不对。\n"

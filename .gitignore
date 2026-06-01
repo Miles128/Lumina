@@ -12,3 +12,6 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+
+# Local-only developer notes (never push to GitHub)
+_local/

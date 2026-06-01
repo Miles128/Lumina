@@ -1,65 +1,90 @@
 # Lumina · 灵犀
 
-个人 AI 秘书桌面应用。本地运行 FastAPI 后端 + Electron 前端，支持工具调用、持久记忆、数据源同步与 MCP 扩展。
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Lumina logo" width="120" />
+</p>
 
-产品需求文档：[docs/PRD.md](docs/PRD.md)（English · 中文，先英后中）
+<p align="center">
+  <strong>Local-first personal AI secretary · 本地优先的个人 AI 秘书</strong>
+</p>
+
+<p align="center">
+  Electron desktop · FastAPI · self-built agent harness · Hermes-compatible memory
+</p>
+
+---
+
+灵犀是在你本机运行的个人 AI 秘书：读文件、搜记忆、连 MCP、同步飞书/读书/小红书等数据，并在 Shell / 写入 / 删除前征得你确认。不是又一个网页聊天框。
+
+产品需求文档：[docs/PRD.md](docs/PRD.md)
+
+架构参考：[docs/4-harness-comparison.md](docs/4-harness-comparison.md) · [docs/subagent-loop-comparison.md](docs/subagent-loop-comparison.md)
 
 ## 功能概览
 
-- **对话 Agent**：多轮工具循环（读文件、搜索、shell、联网等），读写操作需用户确认
-- **持久记忆**：Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理
-- **数据源同步**：飞书、微信读书、小红书、邮箱、云盘等（按平台配置）
-- **技能管理**：本地技能挂载与可执行技能
-- **MCP 工具**：接入 Model Context Protocol 服务器，扩展 Agent 能力
-- **流式回复**：模型回答逐字显示，工具过程通过 SSE 实时展示
-- **后台任务**：定时同步、每日简报、后台思考、会话记忆摘要
+| 能力 | 说明 |
+|------|------|
+| **对话 Agent** | 自研 `AgentLoop`：读/写文件、Shell、搜文件、联网、MCP；高风险操作需确认 |
+| **Sub-agent（Phase 1）** | `spawn_subagent` 委派只读 `explore` 子任务，隔离 context，只回摘要 |
+| **防幻觉 Grounding** | 文件类问题强制工具查证；`search_files` 结果可正常用于列表回复 |
+| **持久记忆** | Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理 |
+| **数据源同步** | 飞书、微信读书、小红书、邮箱、云盘、本地文档 |
+| **技能 & MCP** | 本地技能挂载；stdio MCP 扩展工具 |
+| **流式体验** | 回复逐字输出；工具进度 SSE 实时可见 |
+| **双语 UI** | English · 中文 标签（可切换 `en` / `zh` / `bi`） |
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
 | 后端 | Python 3.11+ · FastAPI · SQLite |
-| 前端 | Electron · 原生 HTML/CSS/JS |
-| Agent | 自研 Loop · OpenAI 兼容 API · MCP SDK |
-| 数据 | `~/.lumina/`（配置、记忆库、会话） |
+| 前端 | Electron · HTML/CSS/JS |
+| Agent | PromptGate → TurnOrchestrator → AgentLoop → Tools + MCP |
+| Sub-agent | `spawn_subagent` · `SubAgentRunner`（无 LangGraph） |
+| 数据 | `~/.lumina/` |
 
 ## 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-# Python 后端
 cd Lumina
 pip install -e ".[dev]"
 
-# Electron 桌面端（国内镜像）
+# Electron（国内镜像）
 ./scripts/install-electron.sh
 ```
 
 ### 2. 配置大模型
 
-复制环境变量模板并按需填写：
-
 ```bash
 cp .env.example .env
+# 编辑 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 ```
 
-或在 `~/.lumina/agent.json` 中配置 API Key / Base URL / Model。  
-若留空，会尝试读取 `~/.hermes/config.yaml` 中的 LLM 配置。
+或在 `~/.lumina/agent.json` 配置；留空时会尝试读取 `~/.hermes/config.yaml`。
 
 ### 3. 启动
 
 ```bash
-# 终端 1：后端（默认 http://127.0.0.1:8765）
-./scripts/start-backend.sh
+# 方式 A：桌面端自动拉起后端
+cd desktop && npm start
 
-# 终端 2：桌面端
+# 方式 B：分开启动
+./scripts/start-backend.sh    # http://127.0.0.1:8765
 cd desktop && npm start
 ```
 
-## MCP 服务器
+## 品牌资源
 
-在 **设置 → Agent → MCP 工具** 中添加，或编辑 `~/.lumina/mcp.json`：
+| 文件 | 用途 |
+|------|------|
+| `docs/assets/logo.png` | README / 文档 |
+| `desktop/ui/logo.png` | 顶栏、favicon、助手头像 |
+
+## MCP 配置示例
+
+`~/.lumina/mcp.json`：
 
 ```json
 {
@@ -76,39 +101,38 @@ cd desktop && npm start
 }
 ```
 
-保存后点击「重新连接」，或从 Hermes 配置一键导入。
+设置 → MCP 工具 → 保存并连接。
 
 ## 目录结构
 
 ```
 Lumina/
-├── src/secretary/     # Python 后端（API、Agent、记忆、连接器）
-├── desktop/           # Electron 应用与 UI
-├── tests/             # pytest 测试
-└── scripts/           # 启动与安装脚本
+├── docs/                 # PRD、架构对比、logo
+├── src/secretary/        # FastAPI 后端
+│   └── agent/
+│       ├── loop.py       # Agent 主循环
+│       └── subagent/     # Phase 1 子 Agent
+├── desktop/ui/           # Electron UI + logo.png
+├── tests/
+└── scripts/
 ```
 
 ## 环境变量
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
-| `LLM_API_KEY` | 大模型 API Key | — |
-| `LLM_BASE_URL` | OpenAI 兼容接口地址 | — |
-| `LLM_MODEL` | 模型名称 | — |
+| `LLM_API_KEY` | API Key | — |
+| `LLM_BASE_URL` | OpenAI 兼容地址 | — |
+| `LLM_MODEL` | 模型名 | — |
 | `LUMINA_DATA_DIR` | 数据目录 | `~/.lumina` |
 | `SECRETARY_AUTO_SYNC_ENABLED` | 自动同步 | `true` |
-| `SECRETARY_THINK_ENABLED` | 后台思考 | `true` |
-| `SECRETARY_MEMORY_SUMMARY_ENABLED` | 每日记忆摘要 | `true` |
 
 完整列表见 `src/secretary/config.py`。
 
 ## 开发
 
 ```bash
-# 运行测试
-pytest
-
-# 代码检查
+pytest          # 170+ tests
 ruff check src tests
 mypy src
 ```

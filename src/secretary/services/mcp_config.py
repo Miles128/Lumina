@@ -113,6 +113,67 @@ class McpConfigStore:
             self.save(document.model_copy(update={"servers": servers, "import_hermes": True}))
         return added
 
+    def add_filesystem_server(self, root: Path) -> bool:
+        """Register @modelcontextprotocol/server-filesystem if not already present."""
+        resolved = root.expanduser().resolve()
+        if not resolved.is_dir():
+            raise ValueError(f"目录不存在: {resolved}")
+        document = self.load_persisted()
+        if "filesystem" in document.servers:
+            return False
+        self.upsert_server(
+            "filesystem",
+            McpServerConfig(
+                command="npx",
+                args=[
+                    "-y",
+                    "@modelcontextprotocol/server-filesystem",
+                    str(resolved),
+                ],
+                enabled=True,
+                transport="stdio",
+                timeout=120,
+            ),
+        )
+        return True
+
+    def ensure_filesystem_server(self, preferred_root: Path | None = None) -> bool:
+        """Add filesystem MCP on first run if missing."""
+        if "filesystem" in self.load_persisted().servers:
+            return False
+        candidates: list[Path] = []
+        if preferred_root is not None:
+            candidates.append(preferred_root.expanduser())
+        candidates.extend([Path.home() / "Documents", Path.home()])
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if not resolved.is_dir():
+                continue
+            self.upsert_server(
+                "filesystem",
+                McpServerConfig(
+                    command="npx",
+                    args=[
+                        "-y",
+                        "@modelcontextprotocol/server-filesystem",
+                        str(resolved),
+                    ],
+                    enabled=True,
+                    transport="stdio",
+                    timeout=120,
+                ),
+            )
+            return True
+        return False
+
 
 def _load_hermes_servers() -> dict[str, McpServerConfig]:
     if not _HERMES_CONFIG.exists():

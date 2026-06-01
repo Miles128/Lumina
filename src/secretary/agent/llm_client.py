@@ -10,14 +10,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
 
 logger = logging.getLogger(__name__)
 
-Role = Literal["system", "user", "assistant"]
+Role = Literal["system", "user", "assistant", "tool"]
 
 
 @dataclass
@@ -25,6 +25,20 @@ class LlmUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class LlmToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ChatCompletionResult:
+    content: str
+    tool_calls: tuple[LlmToolCall, ...]
+    assistant_message: dict[str, Any]
 
 
 _USAGE_TRACKER: ContextVar[LlmUsage | None] = ContextVar(
@@ -129,6 +143,142 @@ def chat_completion_stream(
     return content
 
 
+def schemas_to_openai_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for schema in schemas:
+        name = str(schema.get("name") or "").strip()
+        if not name:
+            continue
+        parameters = schema.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {"type": "object", "properties": {}}
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(schema.get("description") or ""),
+                    "parameters": parameters,
+                },
+            }
+        )
+    return tools
+
+
+def chat_completion_with_tools(
+    config: LlmConfig,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    tool_choice: str | dict[str, Any] = "auto",
+    timeout: float = 120.0,
+    temperature: float = 0.7,
+) -> ChatCompletionResult:
+    """Call /chat/completions with OpenAI-style function tools."""
+    url = f"{config.base_url.rstrip('/')}/chat/completions"
+    payload: dict[str, Any] = {
+        "model": config.model,
+        "messages": messages,
+        "temperature": temperature,
+        "tools": tools,
+        "tool_choice": tool_choice,
+    }
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        logger.warning("LLM tools HTTP error %s: %s", error.code, detail[:300])
+        message = _extract_api_error(detail) or f"大模型工具调用失败 ({error.code})"
+        raise AgentError(message) from error
+    except urllib.error.URLError as error:
+        logger.warning("LLM tools network error: %s", error.reason)
+        raise AgentError("无法连接大模型服务") from error
+    except TimeoutError as error:
+        raise AgentError("大模型响应超时") from error
+
+    _record_usage(body.get("usage"))
+    try:
+        message = body["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as error:
+        raise AgentError("大模型返回格式异常") from error
+    if not isinstance(message, dict):
+        raise AgentError("大模型返回格式异常")
+    return _result_from_assistant_message(message)
+
+
+def _result_from_assistant_message(message: dict[str, Any]) -> ChatCompletionResult:
+    content = _extract_message_text(message)
+    tool_calls = _parse_message_tool_calls(message)
+    assistant_message = _assistant_message_dict(message, content, tool_calls)
+    return ChatCompletionResult(
+        content=content,
+        tool_calls=tool_calls,
+        assistant_message=assistant_message,
+    )
+
+
+def _parse_message_tool_calls(message: dict[str, Any]) -> tuple[LlmToolCall, ...]:
+    raw_calls = message.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return ()
+    parsed: list[LlmToolCall] = []
+    for index, item in enumerate(raw_calls):
+        if not isinstance(item, dict):
+            continue
+        fn = item.get("function")
+        if not isinstance(fn, dict):
+            continue
+        name = str(fn.get("name") or "").strip()
+        if not name:
+            continue
+        args_raw = fn.get("arguments", "{}")
+        if isinstance(args_raw, dict):
+            arguments = dict(args_raw)
+        else:
+            try:
+                loaded = json.loads(str(args_raw or "{}"))
+            except json.JSONDecodeError:
+                loaded = {}
+            arguments = loaded if isinstance(loaded, dict) else {}
+        call_id = str(item.get("id") or f"call_{name}_{index}")
+        parsed.append(LlmToolCall(id=call_id, name=name, arguments=arguments))
+    return tuple(parsed)
+
+
+def _assistant_message_dict(
+    message: dict[str, Any],
+    content: str,
+    tool_calls: tuple[LlmToolCall, ...],
+) -> dict[str, Any]:
+    if tool_calls:
+        return {
+            "role": "assistant",
+            "content": content or None,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in tool_calls
+            ],
+        }
+    return {"role": "assistant", "content": content}
+
+
 def _iter_sse_lines(response: object) -> Iterator[str]:
     for raw in response:
         if not raw:
@@ -147,6 +297,9 @@ def _extract_stream_delta(chunk: dict[str, object]) -> str:
         return ""
     delta = first.get("delta")
     if not isinstance(delta, dict):
+        return ""
+    reasoning = delta.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
         return ""
     content = delta.get("content")
     if isinstance(content, str):

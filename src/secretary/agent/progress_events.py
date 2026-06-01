@@ -9,6 +9,8 @@ ProgressKind = Literal[
     "iteration_started",
     "tool_started",
     "tool_finished",
+    "subagent_started",
+    "subagent_finished",
     "final_reply",
     "stopped",
     "reply_start",
@@ -24,6 +26,9 @@ class ProgressEvent:
     message: str = ""
     tool_name: str = ""
     success: bool = True
+    detail: str = ""
+    sub_run_id: str = ""
+    archetype: str = ""
 
 
 _TOOL_LABELS: dict[str, str] = {
@@ -43,6 +48,7 @@ _TOOL_LABELS: dict[str, str] = {
     "skills_list": "列出技能",
     "skill_view": "查看技能",
     "clarify": "澄清问题",
+    "spawn_subagent": "委派子任务",
 }
 
 
@@ -56,6 +62,13 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "tool_finished":
         status = "完成" if event.success else "失败"
         return f"{_tool_display_name(event.tool_name)} {status}"
+    if event.kind == "subagent_started":
+        prefix = f"[{event.archetype}] " if event.archetype else ""
+        return prefix + (event.message or "子任务开始")
+    if event.kind == "subagent_finished":
+        prefix = f"[{event.archetype}] " if event.archetype else ""
+        status = "完成" if event.success else "失败"
+        return prefix + (event.message[:80] if event.message else f"子任务{status}")
     if event.kind == "final_reply":
         return "整理回复"
     if event.kind == "stopped":
@@ -86,5 +99,11 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
     }
     if event.kind in {"reply_delta", "reply_start", "reply_end"} and event.message:
         payload["delta"] = event.message
+    if event.detail.strip():
+        payload["detail"] = event.detail.strip()
+    if event.sub_run_id.strip():
+        payload["sub_run_id"] = event.sub_run_id.strip()
+    if event.archetype.strip():
+        payload["archetype"] = event.archetype.strip()
     return payload
 

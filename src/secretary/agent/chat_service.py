@@ -33,6 +33,7 @@ from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
+from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps, SubAgentRunner
 from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
 from secretary.config import Settings
 from secretary.core.types import MemoryChunk
@@ -65,6 +66,9 @@ class ChatResult:
     confirmation_kind: str = ""
     allow_permanent_read: bool = False
     allow_session_write: bool = False
+    grounding_verified: bool = True
+    grounding_note: str = ""
+    files_read: list[str] | None = None
 
 
 class ChatService:
@@ -152,14 +156,19 @@ class ChatService:
             )
 
         if decision.action == GateAction.DIRECT:
-            return self._run_direct(
-                cleaned,
-                view.markdown,
-                hits,
-                llm_config,
-                profile_excerpt,
-                progress_callback=progress_callback,
-            )
+            from secretary.agent.grounding import is_filesystem_question
+
+            if is_filesystem_question(cleaned):
+                decision = GateDecision(action=GateAction.CONTINUE, intent=decision.intent)
+            else:
+                return self._run_direct(
+                    cleaned,
+                    view.markdown,
+                    hits,
+                    llm_config,
+                    profile_excerpt,
+                    progress_callback=progress_callback,
+                )
 
         return self._run_agent(
             cleaned,
@@ -298,7 +307,11 @@ class ChatService:
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": system_prompt + "\n\n直接回答用户，不要调用工具。",
+                "content": (
+                    system_prompt
+                    + "\n\n直接回答用户，不要调用工具。"
+                    + "不要输出思考过程、推理链或 think 标签；给最终答案即可。"
+                ),
             },
         ]
         messages.extend(self._load_history())
@@ -408,9 +421,21 @@ class ChatService:
             )
 
         light_mode = decision.action == GateAction.LIGHT
-        max_steps = 3 if light_mode else 8
+        from secretary.agent.grounding import is_filesystem_question
+
+        filesystem_turn = is_filesystem_question(cleaned)
+        max_steps = 3 if light_mode and not filesystem_turn else 8
         suggested = decision.intent.suggested_tools if decision.intent else ()
-        tools = self._pick_tools(suggested) if light_mode else self._build_tools()
+        if filesystem_turn:
+            tools = self._build_tools()
+        elif light_mode:
+            tools = self._pick_tools(suggested)
+        else:
+            tools = self._build_tools()
+
+        if filesystem_turn or not light_mode:
+            tools = [*tools, self._make_spawn_tool(llm_config, session_id)]
+
         plan = AgentTurnPlan(messages=messages, max_steps=max_steps, tools=tools)
 
         try:
@@ -500,6 +525,9 @@ class ChatService:
             used_tools=result.used_tools,
             total_steps=result.total_steps,
             pending_confirmation=result.pending_confirmation,
+            grounding_verified=result.grounding_verified,
+            grounding_note=result.grounding_note,
+            files_read=result.files_read or None,
             **_confirmation_ui(result.pending_confirmation),
         )
 
@@ -572,6 +600,18 @@ class ChatService:
             tools.extend(self._mcp_manager.get_tools())
         return tools
 
+    def _make_spawn_tool(self, llm_config: LlmConfig, session_id: str) -> SpawnSubagentTool:
+        spawn_context = SpawnContext(parent_session_id=session_id, depth=0)
+        deps = SubAgentDeps(
+            llm_config=llm_config,
+            file_auth=self._file_auth,
+            memory_store=self._store,
+            hermes=self._hermes,
+            temperature=min(self._temperature(), 0.5),
+        )
+        runner = SubAgentRunner(deps)
+        return SpawnSubagentTool(runner, spawn_context)
+
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
         soul = load_soul(self._settings.resolved_data_dir())
         skills = self._skills.prompt_block()
@@ -607,13 +647,19 @@ class ChatService:
             "- 没有本地记忆时也要正常回答，可以给出通用建议\n"
             "- 涉及用户个人信息时，只使用画像和记忆里的内容；没有就说明\n"
             "- 不要编造用户的经历、偏好或读过的书\n"
+            "- 涉及本地文件、目录、代码内容时：必须先调用 list_dir / file_read / search_files 查证；"
+            "未读到的不要说「有」或「内容是…」；找不到就明确说未找到\n"
+            "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
+            "- 记忆和画像里的片段不等于真实文件内容，不能当作文本引用\n"
             "- 需要执行操作时，使用 tool-call 调用工具\n"
             "- 读文件和浏览目录可以直接执行，不需要确认\n"
             "- 新建文件可在「本次授权」后免重复确认；修改或删除文件每次都要确认\n"
             "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
             "- 不要分析用户情绪，直接回应具体问题\n"
             f"{style_rule}"
-            "- 完成复杂任务后，总结关键事实到 durable memory"
+            "- 完成复杂任务后，总结关键事实到 durable memory\n"
+            "- 复杂调研可调用 spawn_subagent（archetype=explore）委派只读子任务；"
+            "子任务只回摘要，关键结论需你自行整合后再回复用户"
         )
 
     def _response_style(self) -> str:

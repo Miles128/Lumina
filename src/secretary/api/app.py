@@ -97,6 +97,9 @@ class ChatResponse(BaseModel):
     confirmation_kind: str = ""
     allow_permanent_read: bool = False
     allow_session_write: bool = False
+    grounding_verified: bool = True
+    grounding_note: str = ""
+    files_read: list[str] = []
     usage_prompt_tokens: int = 0
     usage_completion_tokens: int = 0
     usage_total_tokens: int = 0
@@ -242,6 +245,7 @@ class AgentConfigResponse(BaseModel):
     max_history_turns: int
     use_hermes_fallback: bool
     response_style: str
+    shell_working_dir: str = ""
     status: str
     status_message: str
     active_source: str
@@ -257,6 +261,11 @@ class AgentConfigUpdateRequest(BaseModel):
     max_history_turns: int | None = None
     use_hermes_fallback: bool | None = None
     response_style: str = ""
+    shell_working_dir: str | None = None
+
+
+class McpQuickstartFilesystemRequest(BaseModel):
+    root: str = ""
 
 
 class AgentTestResponse(BaseModel):
@@ -284,6 +293,9 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
         confirmation_kind=result.confirmation_kind,
         allow_permanent_read=result.allow_permanent_read,
         allow_session_write=result.allow_session_write,
+        grounding_verified=result.grounding_verified,
+        grounding_note=result.grounding_note,
+        files_read=list(result.files_read or []),
         usage_prompt_tokens=usage_stats.prompt_tokens,
         usage_completion_tokens=usage_stats.completion_tokens,
         usage_total_tokens=usage_stats.total_tokens,
@@ -303,6 +315,15 @@ def _init_services() -> dict[str, object]:
     file_auth = FileAuthService(settings.resolved_data_dir() / "file_auth.json")
     mcp_config_store = McpConfigStore(settings.resolved_data_dir() / "mcp.json")
     mcp_manager = McpManager(mcp_config_store)
+    if settings.mcp_auto_filesystem:
+        preferred_root: Path | None = None
+        shell_raw = agent_config_store.load().shell_working_dir.strip()
+        if shell_raw:
+            shell_path = Path(shell_raw).expanduser()
+            if shell_path.is_dir():
+                preferred_root = shell_path
+        if mcp_config_store.ensure_filesystem_server(preferred_root):
+            mcp_manager.reload()
     progress_hub = ProgressHub()
     chat_service = ChatService(
         settings,
@@ -480,6 +501,26 @@ def mcp_import_hermes(request: Request) -> dict[str, object]:
     manager.reload()
     status = manager.status()
     status["imported_count"] = added
+    return status
+
+
+@app.post("/api/mcp/quickstart/filesystem")
+def mcp_quickstart_filesystem(
+    request: Request,
+    body: McpQuickstartFilesystemRequest | None = None,
+) -> dict[str, object]:
+    store: McpConfigStore = request.app.state.mcp_config_store
+    manager: McpManager = request.app.state.mcp_manager
+    root_raw = body.root.strip() if body and body.root else ""
+    root = Path(root_raw).expanduser() if root_raw else Path.home() / "Documents"
+    try:
+        added = store.add_filesystem_server(root)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    manager.reload()
+    status = manager.status()
+    status["added"] = added
+    status["root"] = str(root.expanduser().resolve())
     return status
 
 
@@ -758,6 +799,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         max_history_turns=view.max_history_turns,
         use_hermes_fallback=view.use_hermes_fallback,
         response_style=view.response_style,
+        shell_working_dir=view.shell_working_dir,
         status=view.status,
         status_message=view.status_message,
         active_source=view.active_source,
@@ -785,6 +827,8 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["use_hermes_fallback"] = body.use_hermes_fallback
     if body.response_style in {"standard", "brief"}:
         payload["response_style"] = body.response_style.strip()
+    if body.shell_working_dir is not None:
+        payload["shell_working_dir"] = body.shell_working_dir.strip()
     agent_config_store.update(payload)
     agent_config_store.apply_to_settings(settings)
     return get_agent_config(request)
