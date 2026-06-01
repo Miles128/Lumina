@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, session } = require("electron");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -197,6 +197,14 @@ async function loadUrlWithBackendRetry(win, targetUrl) {
   }
 }
 
+function setupGeolocationPermissions() {
+  const ses = session.defaultSession;
+  ses.setPermissionCheckHandler((_webContents, permission) => permission === "geolocation");
+  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === "geolocation");
+  });
+}
+
 async function waitForBackend(retries = 30) {
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
@@ -211,6 +219,7 @@ async function waitForBackend(retries = 30) {
 }
 
 app.whenReady().then(async () => {
+  setupGeolocationPermissions();
   await ensureBackend();
   createMainWindow();
 });

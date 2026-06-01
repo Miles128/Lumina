@@ -124,6 +124,92 @@ def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     assert result.used_llm is False
 
 
+def test_chat_weather_without_city_asks_location(tmp_path: Path) -> None:
+    from secretary.agent.web_routing import WEATHER_ASK_LOCATION
+
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    result = service.reply("今天天气怎么样")
+    assert result.reply == WEATHER_ASK_LOCATION
+    assert result.used_llm is False
+
+
+def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.web_search.WebSearchTool.execute",
+            return_value="🔍 '杭州 今天天气 气温' — 2 results\n1. 杭州天气\n   晴 18°C",
+        ):
+            with patch(
+                "secretary.agent.chat_service.chat_completion",
+                return_value="杭州今天晴，约 18°C。",
+            ) as llm:
+                result = service.reply("杭州天气怎么样")
+    llm.assert_called_once()
+    assert "web_search" in (result.used_tools or [])
+    assert "18" in result.reply
+    assert result.route == "web_search"
+
+
+def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.web_search.WebSearchTool.execute",
+            return_value="🔍 '杭州 今天天气 气温' — 2 results\n1. 杭州天气\n   晴 20°C",
+        ):
+            with patch(
+                "secretary.agent.chat_service.chat_completion",
+                return_value="杭州今天晴，约 20°C。",
+            ) as llm:
+                result = service.reply("今天天气怎么样", location_city="杭州")
+    llm.assert_called_once()
+    assert "web_search" in (result.used_tools or [])
+    assert "20" in result.reply
+    assert result.route == "web_search"
+
+
+def test_chat_author_gate_is_hardcoded_without_llm(tmp_path: Path) -> None:
+    from secretary.agent.identity import LUMINA_AUTHOR_REPLY
+
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config") as mocked:
+        with patch("secretary.agent.loop.chat_completion") as llm:
+            result = service.reply("你的作者是谁")
+    mocked.assert_not_called()
+    llm.assert_not_called()
+    assert result.reply == LUMINA_AUTHOR_REPLY
+    assert result.used_llm is False
+    assert result.route == "author"
+
+
+def test_chat_identity_gate_is_hardcoded_without_llm(tmp_path: Path) -> None:
+    from secretary.agent.identity import LUMINA_IDENTITY_INTRO
+
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config") as mocked:
+        with patch("secretary.agent.loop.chat_completion") as llm:
+            result = service.reply("做一下自我介绍")
+    mocked.assert_not_called()
+    llm.assert_not_called()
+    assert result.reply == LUMINA_IDENTITY_INTRO
+    assert result.used_llm is False
+    assert result.total_steps == 0
+    assert result.route == "identity"
+
+
 def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
     config = LlmConfig(
         api_key="test-key",

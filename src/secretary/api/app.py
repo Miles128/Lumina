@@ -83,6 +83,16 @@ class MemorySearchResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     trace_id: str = Field(default="", max_length=64)
+    location_city: str = Field(default="", max_length=64)
+
+
+class LocationReverseRequest(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class LocationReverseResponse(BaseModel):
+    city: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -90,6 +100,7 @@ class ChatResponse(BaseModel):
     profile_excerpt: str
     used_tools: list[str] = []
     total_steps: int = 1
+    route: str = ""
     needs_confirmation: bool = False
     confirmation_description: str = ""
     confirmation_action_id: str = ""
@@ -286,6 +297,7 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
         profile_excerpt=result.profile_excerpt,
         used_tools=result.used_tools or [],
         total_steps=result.total_steps,
+        route=result.route,
         needs_confirmation=pending is not None,
         confirmation_description=pending.description if pending else "",
         confirmation_action_id=pending.action_id if pending else "",
@@ -653,14 +665,44 @@ async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
     )
 
 
+@app.get("/api/identity/author")
+def identity_author() -> dict[str, str]:
+    from secretary.agent.identity import get_author_reply
+
+    return {"reply": get_author_reply()}
+
+
+@app.get("/api/identity/intro")
+def identity_intro() -> dict[str, str]:
+    from secretary.agent.identity import get_identity_reply
+
+    return {"reply": get_identity_reply()}
+
+
+@app.post("/api/location/reverse")
+def reverse_location(body: LocationReverseRequest) -> LocationReverseResponse:
+    from secretary.services.geolocation import reverse_geocode_city
+
+    city = reverse_geocode_city(body.lat, body.lng) or ""
+    return LocationReverseResponse(city=city)
+
+
 @app.post("/api/chat")
 def chat(request: Request, body: ChatRequest) -> ChatResponse:
     chat_service: ChatService = _svc(request).chat_service
-    trace_id = body.trace_id.strip()
+    message = body.message.strip()
+    author_turn = chat_service.is_author_turn(message)
+    identity_turn = chat_service.is_identity_turn(message)
+    trace_id = "" if (author_turn or identity_turn) else body.trace_id.strip()
     progress = _build_progress_callback(request, trace_id)
+    location_city = body.location_city.strip()
     try:
         with llm_usage_scope() as usage:
-            result = chat_service.reply(body.message.strip(), progress_callback=progress)
+            result = chat_service.reply(
+                message,
+                progress_callback=progress,
+                location_city=location_city or None,
+            )
         return _to_chat_response(result, usage)
     finally:
         _finish_progress(request, trace_id)
@@ -1201,14 +1243,16 @@ async def test_platform_settings(source: SourceKind, request: Request) -> dict[s
 if DESKTOP_UI_DIR.exists():
     app.mount("/assets", StaticFiles(directory=DESKTOP_UI_DIR), name="assets")
 
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
     @app.get("/")
     def desktop_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "index.html")
+        return FileResponse(DESKTOP_UI_DIR / "index.html", headers=_NO_CACHE)
 
     @app.get("/workspace")
     def workspace_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "workspace.html")
+        return FileResponse(DESKTOP_UI_DIR / "workspace.html", headers=_NO_CACHE)
 
     @app.get("/mascot")
     def mascot_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "mascot.html")
+        return FileResponse(DESKTOP_UI_DIR / "mascot.html", headers=_NO_CACHE)

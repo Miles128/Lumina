@@ -35,6 +35,17 @@ def test_progress_event_label_for_mcp_tool() -> None:
     assert "MCP filesystem/read_file" in label
 
 
+def test_progress_event_label_for_iteration_completed() -> None:
+    label = progress_event_label(
+        ProgressEvent(
+            kind="iteration_completed",
+            iteration=2,
+            message="核实通过，停止循环",
+        ),
+    )
+    assert "核实通过" in label
+
+
 def test_progress_event_payload_includes_detail() -> None:
     payload = progress_event_payload(
         ProgressEvent(

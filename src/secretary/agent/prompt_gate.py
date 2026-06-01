@@ -79,6 +79,7 @@ class GateAction(StrEnum):
     CLARIFY = "clarify"
     SYNC = "sync"
     PROFILE = "profile"
+    IDENTITY = "identity"
     DIRECT = "direct"
     LIGHT = "light"
 
@@ -197,18 +198,40 @@ def rule_route_simple_direct(message: str) -> GateDecision | None:
 
 
 def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDecision | None:
-    """Ongoing conversation: never block with clarify — agent has history."""
+    """Ongoing conversation routing — default to direct chat, not full agent."""
     if not history:
         return None
     text = message.strip()
+    from secretary.agent.web_routing import is_web_search_query
+
+    if is_web_search_query(text):
+        return None
     simple = rule_route_simple_direct(message)
     if simple is not None:
         return simple
+    if _is_identity_request(text):
+        return GateDecision(action=GateAction.IDENTITY)
+    if _needs_agent_loop(message):
+        return GateDecision(action=GateAction.CONTINUE)
     if any(marker in text for marker in FOLLOWUP_MARKERS):
         return GateDecision(action=GateAction.CONTINUE)
-    if len(text) <= 120:
-        return GateDecision(action=GateAction.CONTINUE)
-    return None
+    if _is_memory_light_query(text):
+        return GateDecision(action=GateAction.LIGHT, reason="memory followup")
+    return GateDecision(action=GateAction.DIRECT, reason="followup chat")
+
+
+def _should_route_web_search(text: str, history: list[dict[str, str]] | None = None) -> bool:
+    from secretary.agent.web_routing import (
+        is_weather_request,
+        is_web_search_query,
+        resolve_weather_city,
+    )
+
+    if not is_web_search_query(text):
+        return False
+    if is_weather_request(text, history) and not resolve_weather_city(text, history or []):
+        return False
+    return True
 
 
 def rule_route(message: str) -> GateDecision | None:
@@ -223,8 +246,12 @@ def rule_route(message: str) -> GateDecision | None:
     lowered = text.lower()
     if _is_sync_request(text, lowered):
         return GateDecision(action=GateAction.SYNC)
+    if _is_identity_request(text):
+        return GateDecision(action=GateAction.IDENTITY)
     if _is_profile_request(text):
         return GateDecision(action=GateAction.PROFILE)
+    if _should_route_web_search(text):
+        return GateDecision(action=GateAction.LIGHT, reason="web search")
     if _is_local_file_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     if _is_tool_execution_request(text, lowered):
@@ -240,8 +267,46 @@ def _is_sync_request(text: str, lowered: str) -> bool:
 
 
 def _is_profile_request(text: str) -> bool:
-    profile_markers = ("个人画像", "我是谁", "我的画像", "画像是什么样的")
+    profile_markers = ("个人画像", "我的画像", "画像是什么样的")
+    if "我是谁" in text and not _is_identity_request(text):
+        return True
     return any(marker in text for marker in profile_markers)
+
+
+def _is_identity_request(text: str) -> bool:
+    from secretary.agent.identity import is_identity_request
+
+    return is_identity_request(text)
+
+
+def _needs_agent_loop(message: str) -> bool:
+    text = message.strip()
+    lowered = text.lower()
+    if _is_local_file_request(text, lowered):
+        return True
+    if _is_tool_execution_request(text, lowered):
+        return True
+    from secretary.agent.grounding import is_filesystem_question
+
+    return is_filesystem_question(text)
+
+
+def _is_memory_light_query(text: str) -> bool:
+    markers = (
+        "记忆",
+        "在读",
+        "读过",
+        "阅读",
+        "日程",
+        "待办",
+        "同步过",
+        "之前说过",
+        "上次",
+        "历史对话",
+        "近期",
+        "最近读",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _is_tool_execution_request(text: str, lowered: str) -> bool:
@@ -280,7 +345,9 @@ def _is_local_file_request(text: str, lowered: str) -> bool:
         "读一下",
         "读取",
         "看看这个目录",
-        "搜一下",
+        "搜索文件",
+        "搜一下文件",
+        "搜一下目录",
         "有没有",
         "结构",
         "src/",
@@ -371,6 +438,18 @@ class PromptGate:
         followup = rule_route_followup(message, chat_history)
         if followup is not None:
             return followup
+
+        from secretary.agent.web_routing import is_web_search_query, is_weather_request
+
+        if is_web_search_query(message.strip()) and not is_weather_request(
+            message.strip(), chat_history
+        ):
+            return GateDecision(action=GateAction.LIGHT, reason="web search")
+
+        if not _needs_agent_loop(message):
+            if _is_memory_light_query(message.strip()):
+                return GateDecision(action=GateAction.LIGHT, reason="memory query")
+            return GateDecision(action=GateAction.DIRECT, reason="general chat")
 
         if not self._settings.prompt_gate_enabled:
             return GateDecision(action=GateAction.CONTINUE)

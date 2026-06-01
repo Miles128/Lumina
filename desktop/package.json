@@ -10,5 +10,12 @@
   },
   "devDependencies": {
     "electron": "^35.0.0"
+  },
+  "build": {
+    "mac": {
+      "extendInfo": {
+        "NSLocationWhenInUseUsageDescription": "灵犀需要获取您的位置以提供本地天气等服务。"
+      }
+    }
   }
 }

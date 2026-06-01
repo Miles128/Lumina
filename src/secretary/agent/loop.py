@@ -213,7 +213,11 @@ class AgentLoop:
                 )
 
             self._emit_progress(
-                ProgressEvent(kind="iteration_started", iteration=iteration)
+                ProgressEvent(
+                    kind="iteration_started",
+                    iteration=iteration,
+                    message=f"第 {iteration}/{self._max_steps} 轮思考",
+                )
             )
             tool_schemas = [t.schema() for t in self._tools.values()]
             payload = self._build_payload(current_messages, tool_schemas, native=self._native_tools_enabled)
@@ -269,6 +273,14 @@ class AgentLoop:
                     used_tools,
                     grounding_verified=verification.ok,
                     grounding_note=verification.note,
+                )
+                self._emit_progress(
+                    ProgressEvent(
+                        kind="iteration_completed",
+                        iteration=iteration,
+                        message="核实通过，停止循环",
+                        success=True,
+                    )
                 )
                 self._emit_progress(
                     ProgressEvent(kind="final_reply", iteration=iteration, message=final_reply)
@@ -381,6 +393,14 @@ class AgentLoop:
                 else:
                     clarify_reply = thought
                 reply = self._sanitize_reply(clarify_reply or thought, snapshot)
+                self._emit_progress(
+                    ProgressEvent(
+                        kind="iteration_completed",
+                        iteration=iteration,
+                        message="需要澄清，停止循环",
+                        success=True,
+                    )
+                )
                 self._emit_progress(
                     ProgressEvent(kind="final_reply", iteration=iteration, message=reply)
                 )

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/screenshot.jpg" alt="Lumina desktop screenshot" width="900" />
+</p>
+
 # Lumina · 灵犀
 
 <p align="center">
@@ -79,6 +83,7 @@ cd desktop && npm start
 
 | 文件 | 用途 |
 |------|------|
+| `docs/assets/screenshot.jpg` | README 主界面配图 |
 | `docs/assets/logo.png` | README / 文档 |
 | `desktop/ui/logo.png` | 顶栏、favicon、助手头像 |
 

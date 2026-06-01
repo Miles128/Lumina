@@ -28,6 +28,20 @@ from secretary.agent.loop import (
     WebFetchTool,
 )
 from secretary.agent.progress_events import ProgressEvent
+from secretary.agent.web_routing import (
+    WEATHER_ASK_LOCATION,
+    build_weather_search_query,
+    is_weather_request,
+    resolve_weather_city,
+)
+from secretary.agent.identity import (
+    LUMINA_DEFAULT_STYLE,
+    LUMINA_IDENTITY_SYSTEM_BLOCK,
+    get_author_reply,
+    get_identity_reply,
+    is_author_request,
+    is_identity_request,
+)
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
 from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
@@ -62,6 +76,7 @@ class ChatResult:
     memory_hits: int
     used_tools: list[str] | None = None
     total_steps: int = 1
+    route: str = ""
     pending_confirmation: PendingConfirmation | None = None
     confirmation_kind: str = ""
     allow_permanent_read: bool = False
@@ -94,7 +109,10 @@ class ChatService:
         )
         self._history_path = settings.resolved_data_dir() / "chat_history.json"
         self._hermes = HermesMemory(settings.resolved_data_dir())
-        self._background_review = BackgroundReviewService(self._hermes)
+        self._background_review = BackgroundReviewService(
+            self._hermes,
+            profile_service=self._profile_service,
+        )
         self._exec_skills = ExecutableSkillManager(settings.resolved_data_dir())
         self._pending: PendingConfirmation | None = None
         self._pending_messages: list[dict[str, str]] | None = None
@@ -115,14 +133,58 @@ class ChatService:
     def pending_confirmation(self) -> PendingConfirmation | None:
         return self._pending
 
+    def is_author_turn(self, message: str) -> bool:
+        cleaned = message.strip()
+        if not cleaned:
+            return False
+        return is_author_request(cleaned)
+
+    def is_identity_turn(self, message: str) -> bool:
+        cleaned = message.strip()
+        if not cleaned:
+            return False
+        return is_identity_request(cleaned, self._load_history())
+
     def reply(
         self,
         message: str,
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        location_city: str | None = None,
     ) -> ChatResult:
         cleaned = message.strip()
         history = self._load_history()
+        if is_author_request(cleaned):
+            return self._handle_author_gate(cleaned)
+        if is_identity_request(cleaned, history):
+            return self._handle_identity_gate(cleaned)
+
+        if is_weather_request(cleaned, history):
+            city = resolve_weather_city(cleaned, history, location_city=location_city)
+            if not city:
+                return self._finish_gate_reply(
+                    cleaned,
+                    WEATHER_ASK_LOCATION,
+                    used_llm=False,
+                )
+            llm_config = resolve_llm_config(self._settings, self._agent_config_store)
+            if llm_config is None:
+                return self._finish_gate_reply(
+                    cleaned,
+                    "还没配置大模型，暂时无法联网查天气。",
+                    used_llm=False,
+                )
+            view = self._profile_service.get_view()
+            hits = self._store.search(cleaned, limit=5)
+            return self._run_web_search_reply(
+                cleaned,
+                build_weather_search_query(city),
+                llm_config,
+                view.markdown[:800],
+                memory_hits=len(hits),
+                progress_callback=progress_callback,
+            )
+
         decision = self._prompt_gate.evaluate(cleaned, history)
 
         if decision.action == GateAction.REJECT:
@@ -135,6 +197,8 @@ class ChatService:
             return self._handle_sync_gate(cleaned)
         if decision.action == GateAction.PROFILE:
             return self._handle_profile_gate(cleaned)
+        if decision.action == GateAction.IDENTITY:
+            return self._handle_identity_gate(cleaned)
         if decision.action == GateAction.CLARIFY:
             decision = GateDecision(action=GateAction.CONTINUE, intent=decision.intent)
 
@@ -289,6 +353,34 @@ class ChatService:
             profile_excerpt=profile[:800],
         )
 
+    def _handle_author_gate(self, user_message: str) -> ChatResult:
+        reply = get_author_reply()
+        self._append_history(user_message, reply)
+        self._save_to_session("user", user_message)
+        self._save_to_session("assistant", reply)
+        return ChatResult(
+            reply=reply,
+            profile_excerpt="",
+            used_llm=False,
+            memory_hits=0,
+            total_steps=0,
+            route="author",
+        )
+
+    def _handle_identity_gate(self, user_message: str) -> ChatResult:
+        reply = get_identity_reply()
+        self._append_history(user_message, reply)
+        self._save_to_session("user", user_message)
+        self._save_to_session("assistant", reply)
+        return ChatResult(
+            reply=reply,
+            profile_excerpt="",
+            used_llm=False,
+            memory_hits=0,
+            total_steps=0,
+            route="identity",
+        )
+
     def _run_direct(
         self,
         cleaned: str,
@@ -365,6 +457,98 @@ class ChatService:
                 profile_excerpt=profile_excerpt,
                 used_llm=False,
                 memory_hits=len(hits),
+            )
+
+    def _run_web_search_reply(
+        self,
+        cleaned: str,
+        search_query: str,
+        llm_config: LlmConfig,
+        profile_excerpt: str,
+        *,
+        memory_hits: int = 0,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
+    ) -> ChatResult:
+        from secretary.agent.web_search import WebSearchTool
+
+        session_id = self._get_or_create_session_id()
+        self._hermes.create_session(session_id)
+        self._save_to_session("user", cleaned)
+
+        if progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    kind="tool_started",
+                    iteration=1,
+                    tool_name="web_search",
+                    detail=search_query,
+                )
+            )
+
+        tool = WebSearchTool()
+        search_output = tool.execute(
+            {"query": search_query, "engine": "bing", "limit": 5},
+            self._shell_working_dir(),
+        )
+        search_ok = not str(search_output).startswith("Error")
+
+        if progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    kind="tool_finished",
+                    iteration=1,
+                    tool_name="web_search",
+                    success=search_ok,
+                    detail=str(search_output)[:320],
+                )
+            )
+
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "你是灵犀。下面是一次 web_search 联网检索结果。"
+                    "请基于结果简洁回答用户；不要声称「无法联网」或让用户安装天气/搜索技能。"
+                    "若结果不足，如实说明并给出已找到的信息。"
+                ),
+            },
+        ]
+        messages.extend(self._load_history())
+        messages.append({"role": "user", "content": cleaned})
+        messages.append({"role": "user", "content": f"[web_search 结果]\n{search_output}"})
+
+        try:
+            reply = chat_completion(
+                llm_config,
+                messages,
+                temperature=self._temperature(),
+                timeout=120.0,
+            )
+            reply = self._prepare_user_reply(reply, cleaned, llm_config)
+            self._hermes.end_session(session_id, summary=reply[:200])
+            self._append_history(cleaned, reply)
+            self._save_to_session("assistant", reply)
+            self._background_review.schedule(cleaned, reply, llm_config)
+            return ChatResult(
+                reply=reply,
+                profile_excerpt=profile_excerpt,
+                used_llm=True,
+                memory_hits=memory_hits,
+                used_tools=["web_search"],
+                total_steps=2,
+                route="web_search",
+            )
+        except AgentError as error:
+            fallback = f"{error}\n\n检索结果摘要：\n{search_output[:1200]}"
+            self._append_history(cleaned, fallback)
+            self._save_to_session("assistant", fallback)
+            return ChatResult(
+                reply=fallback,
+                profile_excerpt=profile_excerpt,
+                used_llm=False,
+                memory_hits=memory_hits,
+                used_tools=["web_search"] if search_ok else [],
+                route="web_search",
             )
 
     def _run_agent(
@@ -624,26 +808,32 @@ class ChatService:
         if hermes_snapshot:
             hermes_section = f"\n\n## Persistent Memory\n{hermes_snapshot}"
         style_rule = (
-            "- 默认语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
+            "- 语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
             if self._response_style() == "brief"
-            else "- 默认语气档位：标准。先给结论，再补关键细节，避免啰嗦。\n"
+            else f"- 语气档位：标准；在「{LUMINA_DEFAULT_STYLE}」基础上，先给结论，再补关键细节，避免啰嗦。\n"
         )
 
         return (
             f"{soul}\n\n"
+            f"{LUMINA_IDENTITY_SYSTEM_BLOCK}\n\n"
             "## 已安装技能\n"
             f"{skills}\n\n"
             "## 可执行技能\n"
             f"{exec_skills}\n\n"
-            "## 用户画像\n"
+            "## 关于用户的资料（用户画像与本地文档，描述用户本人，不是灵犀）\n"
             f"{profile_block[:6000]}\n\n"
-            "## 相关本地记忆\n"
+            "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
             f"{memory_block}\n"
             f"{hermes_section}\n\n"
             "## 对话规则\n"
             "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
-            "- 回答里永远不要出现脏话、脏字或侮辱性表达\n"
-            "- 语气要温柔可亲、站在用户角度，先解决问题\n"
+            "- 用户画像、本地文档、本地记忆说的是用户；灵犀的风格、技术栈、自我介绍只说灵犀自己的，二者不要混用\n"
+            f"- 灵犀默认说话风格：{LUMINA_DEFAULT_STYLE}；先给结论，句子短，不铺垫、不堆砌\n"
+            "- 回答里永远不要出现脏话、脏字、侮辱性表达或网络俚语（如「装逼」「扯淡」等）\n"
+            "- 向用户介绍灵犀这个产品时，技术栈仅限 Electron + HTML/CSS/JS 前端与 Python + FastAPI 后端；"
+            "不要把用户资料里的技术名词当成灵犀的技术栈；"
+            "不要声称使用阿里云百炼、Apple Silicon 等与本产品无关的技术\n"
+            "- 站在用户角度，先解决问题\n"
             "- 没有本地记忆时也要正常回答，可以给出通用建议\n"
             "- 涉及用户个人信息时，只使用画像和记忆里的内容；没有就说明\n"
             "- 不要编造用户的经历、偏好或读过的书\n"
@@ -652,11 +842,14 @@ class ChatService:
             "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
             "- 记忆和画像里的片段不等于真实文件内容，不能当作文本引用\n"
             "- 需要执行操作时，使用 tool-call 调用工具\n"
+            "- 实时信息（天气、新闻、股价、汇率等）必须先调用 web_search 联网搜索；"
+            "不要说「无法联网」或让用户安装天气/搜索技能\n"
             "- 读文件和浏览目录可以直接执行，不需要确认\n"
             "- 新建文件可在「本次授权」后免重复确认；修改或删除文件每次都要确认\n"
             "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
             "- 不要分析用户情绪，直接回应具体问题\n"
             f"{style_rule}"
+            "- 用户在本轮明确提供的个人信息，应在回复后写入 durable memory（USER.md）与用户画像\n"
             "- 完成复杂任务后，总结关键事实到 durable memory\n"
             "- 复杂调研可调用 spawn_subagent（archetype=explore）委派只读子任务；"
             "子任务只回摘要，关键结论需你自行整合后再回复用户"

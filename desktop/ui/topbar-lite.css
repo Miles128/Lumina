@@ -16,12 +16,22 @@
   flex: 1;
 }
 
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .topbar-left .logo-mark {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   object-fit: cover;
+  display: block;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
 .topbar-left .logo {
@@ -162,7 +172,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 55;
-  width: min(320px, calc(100vw - 32px));
+  width: min(400px, calc(100vw - 32px));
   background: #fff;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -202,7 +212,7 @@
 }
 
 .about-panel-body {
-  padding: 14px 16px 16px;
+  padding: 8px 20px 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -212,14 +222,26 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0 8px;
+  gap: 12px;
+  padding: 0 0 12px;
+}
+
+.about-logo-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 0 0;
 }
 
 .about-logo {
-  border-radius: 16px;
-  object-fit: cover;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  width: min(300px, calc(100vw - 96px));
+  height: auto;
+  max-width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 20px;
+  display: block;
 }
 
 .about-product {

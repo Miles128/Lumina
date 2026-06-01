@@ -72,7 +72,7 @@ class SubAgentRunner:
             ProgressEvent(
                 kind="subagent_started",
                 iteration=0,
-                message=f"子任务 ({archetype})：{goal[:120]}",
+                message=f"正在派生子 Agent ({archetype})：{goal[:100]}",
                 sub_run_id=run_id,
                 archetype=archetype,
             ),

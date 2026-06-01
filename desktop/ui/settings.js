@@ -452,6 +452,9 @@
     const density = uiPreferences.density || "comfortable";
     const width = uiPreferences.messageWidth || "medium";
     const language = uiPreferences.language || "bi";
+    const locationState = window.LuminaLocation?.loadState?.() || { enabled: true, city: "" };
+    const locationEnabled = locationState.enabled !== false;
+    const cachedCity = locationState.city || "";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -482,6 +485,14 @@
               <option value="wide"${width === "wide" ? " selected" : ""}>${escapeHtml(t("appearance.width.wide"))}</option>
             </select>
           </label>
+          <label class="settings-field settings-field-inline">
+            <span>位置权限</span>
+            <input id="ui-location-enabled" type="checkbox"${locationEnabled ? " checked" : ""} />
+          </label>
+          <p class="muted settings-hint">开启后，问「今天天气怎么样」时会自动使用你的位置，无需手动说城市。${cachedCity ? `当前：${escapeHtml(cachedCity)}` : ""}</p>
+          <div class="platform-actions">
+            <button class="btn-text" type="button" id="btn-refresh-location">刷新位置</button>
+          </div>
         </div>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-appearance">${escapeHtml(t("action.save"))}</button>
@@ -490,12 +501,38 @@
       </div>
     `;
     document.getElementById("btn-save-appearance").addEventListener("click", saveAppearance);
+    document.getElementById("btn-refresh-location")?.addEventListener("click", refreshLocationFromSettings);
+  }
+
+  async function refreshLocationFromSettings() {
+    const feedback = document.getElementById("appearance-feedback");
+    if (!window.LuminaLocation) {
+      showFeedback(feedback, "error", "当前环境不支持位置服务");
+      return;
+    }
+    showFeedback(feedback, "info", "正在获取位置…");
+    try {
+      window.LuminaLocation.setEnabled(true);
+      const city = await window.LuminaLocation.ensureCity();
+      if (!city) {
+        showFeedback(feedback, "error", "获取位置失败，请检查系统位置权限");
+        return;
+      }
+      showFeedback(feedback, "success", `已更新：${city}`);
+      renderAppearancePane();
+    } catch (error) {
+      showFeedback(feedback, "error", `获取位置失败：${error.message || "未知错误"}`);
+    }
   }
 
   function saveAppearance() {
     const density = document.getElementById("ui-density")?.value || "comfortable";
     const messageWidth = document.getElementById("ui-message-width")?.value || "medium";
     const language = document.getElementById("ui-language")?.value || "bi";
+    const locationEnabled = Boolean(document.getElementById("ui-location-enabled")?.checked);
+    if (window.LuminaLocation) {
+      window.LuminaLocation.setEnabled(locationEnabled);
+    }
     uiPreferences = { density, messageWidth, language };
     localStorage.setItem("lumina.ui.preferences.v1", JSON.stringify(uiPreferences));
     window.dispatchEvent(new CustomEvent("lumina:ui-preferences", { detail: uiPreferences }));
@@ -575,7 +612,7 @@
 
   const SOUL_PRESETS = {
     default:
-      '## Identity\n\nname: "灵犀"\nrole: "CN 本地个人 AI 秘书"\ntone: "直接、简洁、实用"\nlanguage: "zh-CN"\n',
+      '## Identity\n\nname: "灵犀"\nrole: "CN 本地个人 AI 秘书"\ntone: "轻巧灵动、简明扼要"\nlanguage: "zh-CN"\n\n## Style\n\nverbosity: concise\nformat: structured\nvoice: 句子短、先结论、不铺垫、不堆砌\n',
     concise:
       '## Identity\n\nname: "灵犀"\nrole: "简洁助手"\ntone: "短句、结论先行、不铺垫"\nlanguage: "zh-CN"\n',
     creative:

@@ -65,11 +65,38 @@ def test_rule_route_simple_direct_skips_file_question() -> None:
     assert rule_route_simple_direct("列出简历目录") is None
 
 
+def test_prompt_gate_routes_web_search_to_light(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
+    gate = PromptGate(settings)
+    decision = gate.evaluate("搜一下 OpenAI 最新动态")
+    assert decision.action == GateAction.LIGHT
+
+
 def test_rule_route_followup_trivial_goes_direct() -> None:
     history = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
     decision = rule_route_followup("谢谢", history)
     assert decision is not None
     assert decision.action == GateAction.DIRECT
+
+
+def test_rule_route_followup_weather_defers_to_chat_service() -> None:
+    history = [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好"}]
+    decision = rule_route_followup("今天天气怎么样", history)
+    assert decision is None
+
+
+def test_rule_route_followup_simple_chat_goes_direct() -> None:
+    history = [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好"}]
+    decision = rule_route_followup("最近怎么样", history)
+    assert decision is not None
+    assert decision.action == GateAction.DIRECT
+
+
+def test_rule_route_followup_memory_goes_light() -> None:
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hi"}]
+    decision = rule_route_followup("总结一下我最近在读什么", history)
+    assert decision is not None
+    assert decision.action == GateAction.LIGHT
 
 
 def test_rule_route_forces_agent_for_bash_block_request() -> None:
@@ -163,7 +190,7 @@ def test_prompt_gate_disabled_falls_through(tmp_path) -> None:
         prompt_gate_enabled=False,
     )
     gate = PromptGate(settings)
-    decision = gate.evaluate("帮我写一段早安问候")
+    decision = gate.evaluate("列出项目目录里有哪些文件")
     assert decision.action == GateAction.CONTINUE
 
 
@@ -194,6 +221,21 @@ def test_prompt_gate_reject_unsafe_intent(tmp_path) -> None:
     assert decision.reason == "该请求无法处理。"
 
 
+def test_prompt_gate_routes_general_chat_direct_without_classifier(tmp_path) -> None:
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        prompt_gate_enabled=True,
+        llm_api_key="test-key",
+        llm_base_url="https://example.com/v1",
+        llm_model="test-model",
+    )
+    gate = PromptGate(settings)
+    with patch("secretary.agent.prompt_gate.chat_completion") as classify:
+        decision = gate.evaluate("今天天气怎么样")
+    classify.assert_not_called()
+    assert decision.action == GateAction.DIRECT
+
+
 def test_prompt_gate_low_confidence_passes_through(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path / "data",
@@ -217,7 +259,7 @@ def test_prompt_gate_low_confidence_passes_through(tmp_path) -> None:
     with patch("secretary.agent.prompt_gate.resolve_llm_config") as resolve:
         with patch("secretary.agent.prompt_gate.chat_completion", return_value=classify_payload):
             resolve.return_value = object()
-            decision = gate.evaluate("那个东西怎么样了")
+            decision = gate.evaluate("列出 src 目录下所有 Python 文件")
     assert decision.action == GateAction.CONTINUE
 
 
@@ -242,6 +284,10 @@ def test_prompt_gate_clarify_always_passes_through(tmp_path) -> None:
         llm_model="test-model",
     )
     gate = PromptGate(settings)
+    history = [
+        {"role": "user", "content": "之前的任务"},
+        {"role": "assistant", "content": "..."},
+    ]
     classify_payload = json.dumps(
         {
             "intent": "needs_clarify",
@@ -256,7 +302,7 @@ def test_prompt_gate_clarify_always_passes_through(tmp_path) -> None:
     with patch("secretary.agent.prompt_gate.resolve_llm_config") as resolve:
         with patch("secretary.agent.prompt_gate.chat_completion", return_value=classify_payload):
             resolve.return_value = object()
-            decision = gate.evaluate("你又行了？")
+            decision = gate.evaluate("你又行了？", history)
     assert decision.action == GateAction.CONTINUE
 
 
@@ -280,9 +326,8 @@ def test_prompt_gate_routes_light_for_memory_query(tmp_path) -> None:
         }
     )
     with patch("secretary.agent.prompt_gate.resolve_llm_config") as resolve:
-        with patch("secretary.agent.prompt_gate.chat_completion", return_value=classify_payload):
+        with patch("secretary.agent.prompt_gate.chat_completion", return_value=classify_payload) as classify:
             resolve.return_value = object()
             decision = gate.evaluate("总结一下我最近在读什么")
+    classify.assert_not_called()
     assert decision.action == GateAction.LIGHT
-    assert decision.intent is not None
-    assert "search_memory" in decision.intent.suggested_tools

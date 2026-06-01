@@ -26,6 +26,10 @@ class ProfileView(BaseModel):
     sections: list[dict[str, str | int]] = Field(default_factory=list)
 
 
+_CHAT_FACTS_HEADER = "## 对话中了解到的信息"
+_CHAT_FACTS_PATH_NAME = "profile_chat_facts.md"
+
+
 class ProfileService:
     def __init__(
         self,
@@ -60,6 +64,9 @@ class ProfileService:
         user = self._user_store.load()
         user_markdown = user.markdown.strip()
         display = user_markdown if user_markdown else auto_markdown
+        chat_facts = self._load_chat_facts_markdown()
+        if chat_facts:
+            display = f"{display.rstrip()}\n\n{chat_facts}".strip()
         return ProfileView(
             generated_at=rule_auto.generated_at,
             markdown=display,
@@ -102,7 +109,37 @@ class ProfileService:
         user = self._user_store.load()
         user_markdown = user.markdown.strip()
         display = user_markdown if user_markdown else auto.markdown
+        chat_facts = self._load_chat_facts_markdown()
+        if chat_facts:
+            display = f"{display.rstrip()}\n\n{chat_facts}".strip()
         self._persist_display(display)
+
+    def append_chat_fact(self, fact: str) -> None:
+        """Merge a chat-derived personal fact into profile display."""
+        line = fact.strip()
+        if not line:
+            return
+        path = self._chat_facts_path()
+        existing = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+        bullet = f"- {line}"
+        if bullet in existing:
+            return
+        if not existing:
+            updated = f"{_CHAT_FACTS_HEADER}\n\n{bullet}"
+        else:
+            updated = f"{existing}\n{bullet}"
+        path.write_text(updated.strip() + "\n", encoding="utf-8")
+        view = self.get_view()
+        self._persist_display(view.markdown)
+
+    def _chat_facts_path(self):
+        return self._settings.resolved_data_dir() / _CHAT_FACTS_PATH_NAME
+
+    def _load_chat_facts_markdown(self) -> str:
+        path = self._chat_facts_path()
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8").strip()
 
     def _persist_display(self, markdown: str) -> None:
         profile_path = self._settings.resolved_data_dir() / "USER.md"
