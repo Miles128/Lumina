@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     prompt_gate_enabled: bool = Field(default=True, alias="PROMPT_GATE_ENABLED")
     prompt_gate_min_confidence: float = Field(default=0.6, alias="PROMPT_GATE_MIN_CONFIDENCE")
+    mcp_auto_filesystem: bool = Field(default=True, alias="MCP_AUTO_FILESYSTEM")
 
     def resolved_data_dir(self) -> Path:
         expanded = self.data_dir.expanduser()

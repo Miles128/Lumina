@@ -16,6 +16,14 @@
   flex: 1;
 }
 
+.topbar-left .logo-mark {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .topbar-left .logo {
   flex-shrink: 0;
   font-size: 14px;
@@ -198,6 +206,27 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.about-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+
+.about-logo {
+  border-radius: 16px;
+  object-fit: cover;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.about-product {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .about-panel-body p {

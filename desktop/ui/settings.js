@@ -402,6 +402,10 @@
               <option value="brief"${responseStyle === "brief" ? " selected" : ""}>简短</option>
             </select>
           </label>
+          <label class="settings-field">
+            <span>Shell 工作目录 · Shell working dir</span>
+            <input id="agent-shell-cwd" type="text" value="${escapeAttr(cfg.shell_working_dir || "")}" placeholder="留空则使用用户主目录" />
+          </label>
         </div>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-agent">保存</button>
@@ -440,6 +444,7 @@
       max_history_turns: Number(document.getElementById("agent-history")?.value || 16),
       use_hermes_fallback: Boolean(document.getElementById("agent-hermes-fallback")?.checked),
       response_style: document.getElementById("agent-response-style")?.value || "standard",
+      shell_working_dir: document.getElementById("agent-shell-cwd")?.value || "",
     };
   }
 
@@ -711,7 +716,17 @@
           <p>外部 MCP 服务器提供的工具，对话时 Agent 可直接调用。配置文件：<code>${escapeHtml(configPath)}</code></p>
         </header>
         <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · SDK ${status.available ? "可用" : "不可用"}</p>
+        <p class="platform-meta muted">需要 Node.js / npx · 仅支持 stdio 传输（URL 暂不可用）· 写入类 MCP 工具需用户确认</p>
         ${status.last_error ? `<p class="platform-feedback error">${escapeHtml(status.last_error)}</p>` : ""}
+
+        <h4 class="settings-subtitle">快速添加 · Quick start</h4>
+        <div class="platform-actions">
+          <button class="btn-text save-btn" type="button" id="btn-mcp-quickstart-fs">Filesystem MCP · 文件系统</button>
+        </div>
+        <label class="settings-field">
+          <span>Filesystem 根目录（可选，默认 ~/Documents）</span>
+          <input id="mcp-fs-root" type="text" placeholder="/Users/you/Documents" />
+        </label>
 
         <h4 class="settings-subtitle">添加 MCP 服务器</h4>
         <div class="mcp-import-form">
@@ -747,8 +762,28 @@
       </div>
     `;
     document.getElementById("btn-add-mcp")?.addEventListener("click", addMcpServer);
+    document.getElementById("btn-mcp-quickstart-fs")?.addEventListener("click", quickstartFilesystemMcp);
     document.getElementById("btn-import-mcp-hermes")?.addEventListener("click", importMcpFromHermes);
     document.getElementById("btn-reload-mcp")?.addEventListener("click", reloadMcp);
+  }
+
+  async function quickstartFilesystemMcp() {
+    const feedback = document.getElementById("mcp-feedback");
+    const root = document.getElementById("mcp-fs-root")?.value.trim() || "";
+    showFeedback(feedback, "info", "正在添加 Filesystem MCP…");
+    try {
+      mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/quickstart/filesystem", { root });
+      renderNav();
+      renderAgentMcpPane();
+      const added = mcpStatus.added ? "已添加" : "已存在，已重新连接";
+      showFeedback(
+        document.getElementById("mcp-feedback"),
+        "success",
+        `${added} filesystem · 根目录 ${mcpStatus.root || root || "~/Documents"} · ${mcpStatus.tool_count || 0} 个工具`,
+      );
+    } catch (error) {
+      showFeedback(feedback, "error", `添加失败：${error.message}`);
+    }
   }
 
   async function addMcpServer() {

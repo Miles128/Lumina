@@ -45,3 +45,23 @@ def test_mcp_upsert_and_import(tmp_path, monkeypatch) -> None:
     assert added == 1
     merged = store.load_persisted()
     assert "hermes_demo" in merged.servers
+
+
+def test_add_filesystem_server(tmp_path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    store = McpConfigStore(tmp_path / "mcp.json")
+    assert store.add_filesystem_server(root) is True
+    persisted = store.load_persisted()
+    assert persisted.servers["filesystem"].command == "npx"
+    assert str(root) in persisted.servers["filesystem"].args
+    assert store.add_filesystem_server(root) is False
+
+
+def test_ensure_filesystem_server_adds_once(tmp_path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    store = McpConfigStore(tmp_path / "mcp.json")
+    assert store.ensure_filesystem_server(root) is True
+    assert store.ensure_filesystem_server(root) is False
+    assert "filesystem" in store.load_persisted().servers

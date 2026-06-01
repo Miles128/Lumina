@@ -48,6 +48,20 @@
     "chat.error.reply": { en: "Reply failed", zh: "回答失败" },
     "chat.error.sync": { en: "Sync failed", zh: "同步失败" },
     "chat.error.action": { en: "Action failed", zh: "操作失败" },
+    "chat.grounding.verified": { en: "Verified via file tools", zh: "已通过文件工具核实" },
+    "chat.grounding.unverified": { en: "Unverified", zh: "未核实" },
+    "chat.grounding.unverifiedNoTools": {
+      en: "Paths cited but no file tools were used",
+      zh: "回复含路径但未调用读文件工具",
+    },
+    "chat.grounding.unverifiedSimulated": {
+      en: "Directory listing may be simulated (no list_dir/file_read)",
+      zh: "疑似伪造目录列表，未调用 list_dir",
+    },
+    "chat.grounding.unverifiedMismatch": {
+      en: "Some paths not found in tool output",
+      zh: "部分路径未出现在工具结果中",
+    },
     "chat.sync.user": { en: "Sync all data", zh: "同步全部数据" },
     "chat.sync.done": { en: "Sync complete — {n} memories written.", zh: "同步完成，写入 {n} 条记忆。" },
 

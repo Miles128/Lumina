@@ -46,3 +46,10 @@ def test_agent_config_response_style_defaults_to_standard(tmp_path: Path) -> Non
     settings = Settings(data_dir=tmp_path / "data")
     view = store.get_view(settings)
     assert view.response_style == "standard"
+
+
+def test_shell_working_dir_persisted(tmp_path: Path) -> None:
+    store = AgentConfigStore(tmp_path / "agent.json")
+    store.update({"shell_working_dir": str(tmp_path)})
+    view = store.get_view(Settings(data_dir=tmp_path / "data"))
+    assert view.shell_working_dir == str(tmp_path)

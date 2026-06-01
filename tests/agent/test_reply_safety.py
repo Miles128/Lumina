@@ -1,6 +1,10 @@
 """Tests for reply safety filter."""
 
-from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
+from secretary.agent.reply_safety import (
+    is_third_person_meta_reply,
+    sanitize_user_facing_reply,
+    strip_reasoning_chain,
+)
 
 
 def test_detects_classifier_reason_leak() -> None:
@@ -35,3 +39,19 @@ def test_sanitize_rewrites_unprofessional_self_blame() -> None:
     fixed = sanitize_user_facing_reply("没有技术原因，就是我瞎了。", "为什么会漏")
     assert "瞎了" not in fixed
     assert "我这次判断失误" in fixed
+
+
+def test_strip_reasoning_chain_removes_think_blocks() -> None:
+    open_tag = "<" + "think" + ">"
+    close_tag = "</" + "think" + ">"
+    raw = f"{open_tag}先分析一下{close_tag}\n\n最终答案是：42"
+    assert strip_reasoning_chain(raw) == "最终答案是：42"
+
+
+def test_sanitize_strips_reasoning_before_display() -> None:
+    open_tag = "<" + "think" + ">"
+    close_tag = "</" + "think" + ">"
+    raw = f"{open_tag}内部推理{close_tag}\n你好，我在。"
+    fixed = sanitize_user_facing_reply(raw, "你好")
+    assert "内部推理" not in fixed
+    assert "你好，我在。" in fixed

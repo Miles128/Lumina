@@ -146,8 +146,10 @@
         appendConfirmation(response);
       } else if (streamingBubbleEl) {
         finalizeStreamingMessage(response.reply);
+        appendGroundingMeta(response);
       } else {
         appendMessage("bot", response.reply);
+        appendGroundingMeta(response);
       }
     } catch (error) {
       clearStreamingBubble();
@@ -204,8 +206,10 @@
         appendConfirmation(response);
       } else if (streamingBubbleEl) {
         finalizeStreamingMessage(response.reply);
+        appendGroundingMeta(response);
       } else {
         appendMessage("bot", response.reply);
+        appendGroundingMeta(response);
       }
     } catch (error) {
       clearStreamingBubble();
@@ -223,6 +227,94 @@
     appendMessageInternal(role, text, true);
   }
 
+  function usesFileTools(response) {
+    const tools = Array.isArray(response?.used_tools) ? response.used_tools : [];
+    return tools.some(
+      (name) =>
+        /^(list_dir|file_read|search_files)$/.test(name) ||
+        /^mcp_.*(read|list|file|directory|search)/i.test(name),
+    );
+  }
+
+  const REPLY_PATH_PATTERNS = [
+    /(?:~\/|\/Users\/|\.\/|\.\.\/)[^\s"'`<>]+/,
+    /\b[\w./-]+\.(?:py|js|ts|tsx|jsx|json|md|yaml|yml|toml|txt|csv)\b/i,
+    /`[^`]+\.(?:py|js|ts|md|json|yaml|yml|toml|txt)`/,
+  ];
+
+  function replyMentionsPaths(text) {
+    const source = String(text || "").trim();
+    if (!source) return false;
+    return REPLY_PATH_PATTERNS.some((pattern) => pattern.test(source));
+  }
+
+  function replySimulatesFileListing(text) {
+    const source = String(text || "");
+    if (!source.trim()) return false;
+    if (/^\s*\$\s*ls\b/m.test(source)) return true;
+    if (/^total\s+\d+/m.test(source)) return true;
+    if (/^[-drwxl]{10}\s+\d+\s+/m.test(source)) return true;
+    const treeLines = source.split("\n").filter((line) => /^[├└│──]/.test(line.trim())).length;
+    if (treeLines >= 2) return true;
+    const mdMatches = source.match(/[\w.-]+\.md\b/gi) || [];
+    if (mdMatches.length >= 3 && (treeLines >= 1 || source.includes("├──"))) return true;
+    if (mdMatches.length >= 5) return true;
+    return false;
+  }
+
+  function groundingUnverifiedReason(response) {
+    if (!response) return "";
+    if (response.grounding_note) return response.grounding_note;
+    const reply = String(response.reply || "");
+    if (replySimulatesFileListing(reply) && !usesFileTools(response)) {
+      return t("chat.grounding.unverifiedSimulated");
+    }
+    if (replyMentionsPaths(reply) && !usesFileTools(response)) {
+      return t("chat.grounding.unverifiedNoTools");
+    }
+    if (response.grounding_verified === false) {
+      return t("chat.grounding.unverifiedMismatch");
+    }
+    return "";
+  }
+
+  function shouldShowGroundingUnverified(response) {
+    if (!response) return false;
+    if (response.grounding_verified === false) return true;
+    const reply = String(response.reply || "");
+    if (replySimulatesFileListing(reply) && !usesFileTools(response)) return true;
+    return replyMentionsPaths(reply) && !usesFileTools(response);
+  }
+
+  function appendGroundingMeta(response) {
+    if (!response) return;
+    const showUnverified = shouldShowGroundingUnverified(response);
+    const showVerified = !showUnverified && usesFileTools(response) && response.grounding_verified !== false;
+    if (!showVerified && !showUnverified) return;
+
+    const rows = messagesEl.querySelectorAll(".message.bot");
+    const row = rows[rows.length - 1];
+    if (!row || row.querySelector(".message-grounding-meta")) return;
+
+    const bubble = row.querySelector(".bubble");
+    if (!bubble) return;
+
+    const meta = document.createElement("div");
+    meta.className = "message-grounding-meta";
+    if (showUnverified) {
+      meta.classList.add("is-unverified");
+      const reason = groundingUnverifiedReason(response);
+      meta.textContent = reason ? `${t("chat.grounding.unverified")} · ${reason}` : t("chat.grounding.unverified");
+    } else {
+      meta.classList.add("is-verified");
+      const count = Array.isArray(response.files_read) ? response.files_read.length : 0;
+      meta.textContent = count
+        ? `${t("chat.grounding.verified")} · ${count} files`
+        : t("chat.grounding.verified");
+    }
+    bubble.appendChild(meta);
+  }
+
   function isRuntimeSummaryMessage(text) {
     const source = String(text || "").trim();
     if (!source) return false;
@@ -235,7 +327,7 @@
     }
     const row = document.createElement("div");
     row.className = `message ${role}`;
-    const avatarSrc = role === "bot" ? "/assets/avatar-bot.svg" : "/assets/avatar-user.svg";
+    const avatarSrc = role === "bot" ? "/assets/logo.png?v=1" : "/assets/avatar-user.svg";
     const bubbleClass = role === "bot" ? "bubble markdown" : "bubble";
     row.innerHTML =
       `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
@@ -355,7 +447,17 @@
     if (progressEl && progressListEl && label && !kind.startsWith("reply_")) {
       progressEl.hidden = false;
       const item = document.createElement("li");
-      item.textContent = label;
+      const labelEl = document.createElement("div");
+      labelEl.className = "progress-label";
+      labelEl.textContent = label;
+      item.appendChild(labelEl);
+      const detail = String(event?.detail || "").trim();
+      if (detail) {
+        const detailEl = document.createElement("pre");
+        detailEl.className = "progress-detail";
+        detailEl.textContent = detail;
+        item.appendChild(detailEl);
+      }
       if (event?.kind === "tool_finished" && event.success === false) {
         item.className = "is-error";
       } else if (event?.kind === "done") {
@@ -382,7 +484,7 @@
     row.className = "message bot streaming";
     row.innerHTML =
       `<div class="avatar bot" aria-label="${avatarLabel("bot")}">` +
-      `<img src="/assets/avatar-bot.svg" alt="" aria-hidden="true" /></div>` +
+      `<img src="/assets/logo.png?v=1" alt="" aria-hidden="true" /></div>` +
       `<div class="bubble markdown"></div>`;
     messagesEl.appendChild(row);
     streamingBubbleEl = row.querySelector(".bubble");

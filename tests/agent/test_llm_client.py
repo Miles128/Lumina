@@ -78,7 +78,46 @@ def test_chat_completion_retries_once_on_empty_content() -> None:
     assert result == "retry-ok"
 
 
-def test_chat_completion_records_usage_in_scope() -> None:
+def test_chat_completion_with_tools_parses_tool_calls() -> None:
+    from secretary.agent.llm_client import chat_completion_with_tools, schemas_to_openai_tools
+
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "list_dir",
+                                "arguments": "{\"path\": \".\"}",
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    tools = schemas_to_openai_tools(
+        [
+            {
+                "name": "list_dir",
+                "description": "List directory",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }
+        ]
+    )
+    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+        result = chat_completion_with_tools(
+            _config(),
+            [{"role": "user", "content": "list files"}],
+            tools,
+            temperature=0.0,
+        )
+    assert result.tool_calls[0].name == "list_dir"
+    assert result.tool_calls[0].arguments["path"] == "."
     payload = {
         "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
         "choices": [{"message": {"content": "ok"}}],

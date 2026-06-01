@@ -17,11 +17,28 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from secretary.agent.llm_client import chat_completion
+from secretary.agent.llm_client import (
+    ChatCompletionResult,
+    chat_completion,
+    chat_completion_with_tools,
+    schemas_to_openai_tools,
+)
 from secretary.agent.llm_config import LlmConfig
+from secretary.exceptions import AgentError
 from secretary.memory.hermes_memory import HermesMemory
 from secretary.services.file_auth import FileAuthService
 from secretary.agent.progress_events import ProgressEvent
+from secretary.agent.grounding import (
+    GROUNDING_RETRY_USER,
+    collect_read_evidence,
+    enforce_grounded_reply,
+    format_verify_retry,
+    requires_forced_read_tool,
+    sanitize_filesystem_reply,
+    should_retry_for_grounding,
+    should_retry_for_verification,
+    verify_reply_against_evidence,
+)
 from secretary.agent.stop_hooks import (
     LoopSnapshot,
     MaxIterationsStopHook,
@@ -34,6 +51,24 @@ logger = logging.getLogger(__name__)
 
 MAX_LOOP_STEPS = 12
 MAX_TOOL_OUTPUT_CHARS = 4000
+_PROGRESS_DETAIL_LIMIT = 320
+
+
+def _progress_detail_preview(text: str, limit: int = _PROGRESS_DETAIL_LIMIT) -> str:
+    cleaned = text.strip()
+    if len(cleaned) > limit:
+        return cleaned[:limit] + "…"
+    return cleaned
+
+
+def _tool_action_detail(tool: Any, arguments: dict[str, Any], working_dir: Path) -> str:
+    try:
+        return _progress_detail_preview(tool.describe_action(arguments, working_dir))
+    except Exception:
+        try:
+            return _progress_detail_preview(json.dumps(arguments, ensure_ascii=False))
+        except Exception:
+            return ""
 READABLE_MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -41,6 +76,41 @@ READABLE_MAX_BYTES = 2 * 1024 * 1024
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    id: str = ""
+
+
+def ensure_tool_call_id(tool_call: ToolCall, *, suffix: str) -> ToolCall:
+    call_id = tool_call.id.strip()
+    if call_id:
+        return tool_call
+    return ToolCall(
+        name=tool_call.name,
+        arguments=tool_call.arguments,
+        id=f"call_{tool_call.name}_{suffix}",
+    )
+
+
+def assistant_message_for_tool_call(
+    assistant_message: dict[str, Any],
+    tool_call: ToolCall,
+) -> dict[str, Any]:
+    """Build an assistant message paired with exactly one tool response."""
+    content = assistant_message.get("content")
+    text = content.strip() if isinstance(content, str) else ""
+    return {
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.name,
+                    "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
+                },
+            }
+        ],
+    }
 
 
 @dataclass
@@ -59,6 +129,9 @@ class LoopResult:
     used_tools: list[str]
     total_steps: int
     pending_confirmation: PendingConfirmation | None = None
+    grounding_verified: bool = True
+    grounding_note: str = ""
+    files_read: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -102,6 +175,7 @@ class AgentLoop:
             ThirdPersonMetaReplyStopHook(),
         ]
         self._progress_callback = progress_callback
+        self._native_tools_enabled = True
 
     def run(self, messages: list[dict[str, str]], temperature: float = 0.7) -> LoopResult:
         steps: list[StepResult] = []
@@ -109,6 +183,10 @@ class AgentLoop:
         current_messages = list(messages)
         raw = ""
         thought = ""
+        grounding_retries = 0
+        max_grounding_retries = 2
+        verify_retries = 0
+        max_verify_retries = 1
 
         for step_idx in range(self._max_steps):
             iteration = step_idx + 1
@@ -138,31 +216,71 @@ class AgentLoop:
                 ProgressEvent(kind="iteration_started", iteration=iteration)
             )
             tool_schemas = [t.schema() for t in self._tools.values()]
-            payload = self._build_payload(current_messages, tool_schemas)
+            payload = self._build_payload(current_messages, tool_schemas, native=self._native_tools_enabled)
+            user_message = self._latest_user_message(current_messages)
+            force_read = requires_forced_read_tool(user_message, used_tools)
+            on_delta = None if force_read else self._build_reply_delta_callback(iteration)
 
-            on_delta = self._build_reply_delta_callback(iteration)
-            raw = chat_completion(
-                self._llm_config,
+            raw, tool_call, assistant_message, native_used = self._invoke_model(
                 payload,
+                tool_schemas,
+                force_read=force_read,
                 temperature=temperature,
-                timeout=180.0,
                 on_delta=on_delta,
             )
             if on_delta is not None:
                 self._emit_progress(ProgressEvent(kind="reply_end", iteration=iteration))
 
-            thought, tool_call = self._parse_response(raw)
+            thought = raw.strip() if raw else ""
+            if tool_call is None and raw:
+                thought, fence_call = self._parse_response(raw)
+                if fence_call is not None:
+                    tool_call = fence_call
 
             if tool_call is None:
                 reply = self._sanitize_reply(thought, snapshot)
+                reply = sanitize_filesystem_reply(reply)
+                if (
+                    grounding_retries < max_grounding_retries
+                    and should_retry_for_grounding(user_message, reply, used_tools)
+                ):
+                    grounding_retries += 1
+                    current_messages.append({"role": "assistant", "content": raw})
+                    current_messages.append({"role": "user", "content": GROUNDING_RETRY_USER})
+                    continue
+
+                evidence = collect_read_evidence(steps)
+                verification = verify_reply_against_evidence(reply, evidence, user_message)
+                if (
+                    verify_retries < max_verify_retries
+                    and should_retry_for_verification(verification)
+                ):
+                    verify_retries += 1
+                    current_messages.append({"role": "assistant", "content": raw})
+                    current_messages.append(
+                        {"role": "user", "content": format_verify_retry(verification, evidence)}
+                    )
+                    continue
+
+                files_read = sorted(evidence.read_files | evidence.search_hits)
+                final_reply, verified, note = enforce_grounded_reply(
+                    reply,
+                    user_message,
+                    used_tools,
+                    grounding_verified=verification.ok,
+                    grounding_note=verification.note,
+                )
                 self._emit_progress(
-                    ProgressEvent(kind="final_reply", iteration=iteration, message=reply)
+                    ProgressEvent(kind="final_reply", iteration=iteration, message=final_reply)
                 )
                 return LoopResult(
-                    reply=reply,
+                    reply=final_reply,
                     steps=steps,
                     used_tools=used_tools,
                     total_steps=step_idx + 1,
+                    grounding_verified=verified,
+                    grounding_note=note,
+                    files_read=files_read,
                 )
 
             tool = self._tools.get(tool_call.name)
@@ -170,11 +288,15 @@ class AgentLoop:
                 tool_output = f"Error: unknown tool '{tool_call.name}'"
                 step = StepResult(thought=thought, tool_call=tool_call, tool_output=tool_output)
                 steps.append(step)
-                current_messages.append({"role": "assistant", "content": raw})
-                current_messages.append({
-                    "role": "user",
-                    "content": f"[Tool Result: {tool_call.name}]\n{tool_output}",
-                })
+                self._append_tool_result_messages(
+                    current_messages,
+                    raw=raw,
+                    tool_call=tool_call,
+                    tool_output=tool_output,
+                    assistant_message=assistant_message,
+                    native_used=native_used,
+                    step_idx=step_idx,
+                )
                 continue
 
             needs_confirm, confirmation_kind = self._requires_confirmation(
@@ -209,13 +331,17 @@ class AgentLoop:
                 )
 
             try:
+                args_detail = _tool_action_detail(tool, tool_call.arguments, self._working_dir)
                 self._emit_progress(
                     ProgressEvent(
                         kind="tool_started",
                         iteration=iteration,
                         tool_name=tool_call.name,
+                        detail=args_detail,
                     )
                 )
+                if hasattr(tool, "bind_progress"):
+                    tool.bind_progress(self._progress_callback)
                 tool_output = tool.execute(tool_call.arguments, self._working_dir)
                 used_tools.append(tool_call.name)
                 self._emit_progress(
@@ -224,6 +350,7 @@ class AgentLoop:
                         iteration=iteration,
                         tool_name=tool_call.name,
                         success=True,
+                        detail=_progress_detail_preview(tool_output),
                     )
                 )
             except Exception as exc:
@@ -236,6 +363,7 @@ class AgentLoop:
                         tool_name=tool_call.name,
                         success=False,
                         message=tool_output,
+                        detail=_progress_detail_preview(tool_output),
                     )
                 )
 
@@ -263,11 +391,15 @@ class AgentLoop:
                     total_steps=step_idx + 1,
                 )
 
-            current_messages.append({"role": "assistant", "content": raw})
-            current_messages.append({
-                "role": "user",
-                "content": f"[Tool Result: {tool_call.name}]\n{tool_output}",
-            })
+            self._append_tool_result_messages(
+                current_messages,
+                raw=raw,
+                tool_call=tool_call,
+                tool_output=tool_output,
+                assistant_message=assistant_message,
+                native_used=native_used,
+                step_idx=step_idx,
+            )
 
         snapshot = LoopSnapshot(
             iteration=self._max_steps,
@@ -437,31 +569,160 @@ class AgentLoop:
         except Exception as exc:  # pragma: no cover - defensive callback safety
             logger.debug("Progress callback failed: %s", exc)
 
+    def _invoke_model(
+        self,
+        messages: list[dict[str, Any]],
+        tool_schemas: list[dict[str, Any]],
+        *,
+        force_read: bool,
+        temperature: float,
+        on_delta: Callable[[str], None] | None,
+    ) -> tuple[str, ToolCall | None, dict[str, Any] | None, bool]:
+        if self._native_tools_enabled and tool_schemas:
+            read_schemas = self._read_tool_schemas(tool_schemas)
+            active_schemas = read_schemas if force_read and read_schemas else tool_schemas
+            openai_tools = schemas_to_openai_tools(active_schemas)
+            if openai_tools:
+                tool_choice: str | dict[str, Any] = "required" if force_read else "auto"
+                try:
+                    result = chat_completion_with_tools(
+                        self._llm_config,
+                        messages,
+                        openai_tools,
+                        tool_choice=tool_choice,
+                        temperature=temperature,
+                        timeout=180.0,
+                    )
+                    tool_call = self._tool_call_from_result(result)
+                    return result.content, tool_call, result.assistant_message, True
+                except (AgentError, TypeError, ValueError) as error:
+                    logger.warning("Native tool calling unavailable, falling back: %s", error)
+                    self._native_tools_enabled = False
+
+        raw = chat_completion(
+            self._llm_config,
+            messages,
+            temperature=temperature,
+            timeout=180.0,
+            on_delta=on_delta,
+        )
+        thought, tool_call = self._parse_response(raw)
+        return raw, tool_call, {"role": "assistant", "content": raw}, False
+
+    def _tool_call_from_result(self, result: ChatCompletionResult) -> ToolCall | None:
+        if not result.tool_calls:
+            return None
+        if len(result.tool_calls) > 1:
+            logger.info(
+                "Model returned %s tool calls in one step; executing the first only",
+                len(result.tool_calls),
+            )
+        first = result.tool_calls[0]
+        return ToolCall(name=first.name, arguments=first.arguments, id=first.id)
+
+    def _append_tool_result_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        raw: str,
+        tool_call: ToolCall,
+        tool_output: str,
+        assistant_message: dict[str, Any] | None,
+        native_used: bool,
+        step_idx: int,
+    ) -> None:
+        paired_call = ensure_tool_call_id(tool_call, suffix=str(step_idx))
+        if native_used and assistant_message is not None:
+            self._append_tool_exchange(
+                messages,
+                assistant_message=assistant_message,
+                tool_call=paired_call,
+                tool_output=tool_output,
+            )
+            return
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({
+            "role": "user",
+            "content": f"[Tool Result: {paired_call.name}]\n{tool_output}",
+        })
+
+    def _append_tool_exchange(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        assistant_message: dict[str, Any],
+        tool_call: ToolCall,
+        tool_output: str,
+    ) -> None:
+        messages.append(assistant_message_for_tool_call(assistant_message, tool_call))
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": tool_output,
+            }
+        )
+
+    def _read_tool_schemas(self, tool_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from secretary.agent.grounding import READ_TOOL_NAMES
+
+        read: list[dict[str, Any]] = []
+        for schema in tool_schemas:
+            name = str(schema.get("name") or "")
+            if name in READ_TOOL_NAMES:
+                read.append(schema)
+                continue
+            lowered = name.lower()
+            if name.startswith("mcp_") and any(
+                hint in lowered for hint in ("read", "list", "search", "glob", "directory", "file")
+            ):
+                read.append(schema)
+        return read
+
     def _build_payload(
         self,
         messages: list[dict[str, str]],
         tool_schemas: list[dict[str, Any]],
+        *,
+        native: bool = False,
     ) -> list[dict[str, str]]:
         tools_desc = json.dumps(tool_schemas, ensure_ascii=False, indent=2)
         tool_names = ", ".join(self._tools.keys())
-        instruction = (
-            "You have access to the following tools. "
-            "To use a tool, output a JSON block inside ```tool-call``` fences:\n"
-            "```tool-call\n"
-            '{"name": "<tool_name>", "arguments": {<args>}}\n'
-            "```\n\n"
-            f"Available tools: {tool_names}\n\n"
-            f"Tool schemas:\n{tools_desc}\n\n"
-            "Rules:\n"
-            "- If you can answer directly without tools, do so.\n"
-            "- Use only one tool per step.\n"
-            "- After receiving tool results, decide if you need more steps or can answer.\n"
-            "- When done, provide the final answer without any tool-call blocks.\n"
-            "- Read tools (file_read, list_dir) execute immediately without confirmation.\n"
-            "- New files can be created without repeated prompts after session write authorization.\n"
-            "- Modifying or deleting files always needs user confirmation.\n"
-            "- Write tools (file_write, patch, file_delete, shell) follow the authorization rules above.\n"
-        )
+        if native:
+            instruction = (
+                "You have access to function tools (native tool calling).\n"
+                f"Available tools: {tool_names}\n\n"
+                f"Tool schemas:\n{tools_desc}\n\n"
+                "Rules:\n"
+                "- For local files, directories, or project structure: call list_dir, file_read, or search_files BEFORE answering.\n"
+                "- Never invent file paths, filenames, or file contents.\n"
+                "- Never paste simulated `$ ls`, `total N`, permission lines, or directory trees (├──) in your reply.\n"
+                "- In final answers, only mention files that appeared in tool results.\n"
+                "- Use one tool call per step.\n"
+                "- Write tools (file_write, patch, file_delete, shell) need user confirmation.\n"
+            )
+        else:
+            instruction = (
+                "You have access to the following tools. "
+                "To use a tool, output a JSON block inside ```tool-call``` fences:\n"
+                "```tool-call\n"
+                '{"name": "<tool_name>", "arguments": {<args>}}\n'
+                "```\n\n"
+                f"Available tools: {tool_names}\n\n"
+                f"Tool schemas:\n{tools_desc}\n\n"
+                "Rules:\n"
+                "- If you can answer directly without tools, do so — EXCEPT for local files, directories, or project structure.\n"
+                "- For anything about the user's filesystem or codebase: ALWAYS call list_dir, file_read, or search_files first.\n"
+                "- Never invent file paths, filenames, or file contents. If you have not read a file, say you have not verified it.\n"
+                "- Never paste simulated `$ ls`, directory trees (├──), or fake command output in your reply.\n"
+                "- Use only one tool per step.\n"
+                "- After receiving tool results, decide if you need more steps or can answer.\n"
+                "- When done, provide the final answer without any tool-call blocks.\n"
+                "- Read tools (file_read, list_dir) execute immediately without confirmation.\n"
+                "- New files can be created without repeated prompts after session write authorization.\n"
+                "- Modifying or deleting files always needs user confirmation.\n"
+                "- Write tools (file_write, patch, file_delete, shell) follow the authorization rules above.\n"
+            )
         patched: list[dict[str, str]] = []
         for msg in messages:
             if msg["role"] == "system":
