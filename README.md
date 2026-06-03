@@ -29,6 +29,7 @@
 | 能力 | 说明 |
 |------|------|
 | **对话 Agent** | 自研 `AgentLoop`：读/写文件、Shell、搜文件、联网、MCP；高风险操作需确认 |
+| **联网 / 天气** | `resolve_web_search` 统一 pipeline：定位 → Bing 搜索 → LLM 整理（不走无工具 DIRECT） |
 | **Sub-agent（Phase 1）** | `spawn_subagent` 委派只读 `explore` 子任务，隔离 context，只回摘要 |
 | **防幻觉 Grounding** | 文件类问题强制工具查证；`search_files` 结果可正常用于列表回复 |
 | **持久记忆** | Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理 |
@@ -131,16 +132,29 @@ Lumina/
 | `LLM_MODEL` | 模型名 | — |
 | `LUMINA_DATA_DIR` | 数据目录 | `~/.lumina` |
 | `SECRETARY_AUTO_SYNC_ENABLED` | 自动同步 | `true` |
+| `PROMPT_GATE_ENABLED` | LLM 输入分类（可选） | `false` |
 
 完整列表见 `src/secretary/config.py`。
+
+## 对话路由（简图）
+
+```
+用户消息
+  → 作者 / 身份（硬编码）
+  → 联网 / 天气（resolve_web_search → web_search → LLM）
+  → PromptGate（规则默认；可选 PROMPT_GATE_ENABLED LLM 分类）
+  → DIRECT 闲聊 | LIGHT 记忆 | AgentLoop 工具任务
+```
 
 ## 开发
 
 ```bash
-pytest          # 170+ tests
+pytest          # 205 tests（CI 在 push/PR 时自动跑）
 ruff check src tests
 mypy src
 ```
+
+GitHub Actions：`.github/workflows/ci.yml`（Python 3.11 / 3.12）。
 
 ## 许可证
 

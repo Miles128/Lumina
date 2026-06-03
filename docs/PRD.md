@@ -250,7 +250,7 @@ Design principles:
 
 | Metric · 指标 | Target |
 |---------------|--------|
-| Test suite | **170+** passing |
+| Test suite | **205** passing (CI on push/PR) |
 | Agent tasks with confirm | >90% useful output |
 | Cold start (excl. LLM) | <30s |
 | Memory recall (profile Q) | relevant in top 5 |
@@ -265,6 +265,9 @@ Design principles:
 - Logo & branding  
 - Sub-agent Phase 1 (`explore`)  
 - Grounding fix for `search_files` listings  
+- Unified web search / weather pipeline (`resolve_web_search`)  
+- Desktop geolocation for weather; GitHub Actions CI  
+- Rules-first PromptGate (LLM classifier opt-in via `PROMPT_GATE_ENABLED`)  
 
 **P1 — Capability**  
 - Sub-agent `worker` / `verify` archetypes  
@@ -280,6 +283,8 @@ Design principles:
 - Logo 与品牌  
 - 子 Agent Phase 1（`explore`）  
 - Grounding 支持经校验的 `search_files` 列表  
+- 联网 / 天气统一 pipeline；桌面定位；GitHub Actions CI  
+- PromptGate 默认纯规则（`PROMPT_GATE_ENABLED=false` 可选 LLM 分类）  
 
 **P1 — 能力**  
 - `worker` / `verify` 子 Agent；并行 explore；MCP HTTP  

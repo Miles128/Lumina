@@ -45,7 +45,11 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="", alias="LLM_MODEL")
 
-    prompt_gate_enabled: bool = Field(default=True, alias="PROMPT_GATE_ENABLED")
+    prompt_gate_enabled: bool = Field(
+        default=False,
+        alias="PROMPT_GATE_ENABLED",
+        description="LLM input classifier before agent loop; default off (rules-only routing).",
+    )
     prompt_gate_min_confidence: float = Field(default=0.6, alias="PROMPT_GATE_MIN_CONFIDENCE")
     mcp_auto_filesystem: bool = Field(default=True, alias="MCP_AUTO_FILESYSTEM")
 

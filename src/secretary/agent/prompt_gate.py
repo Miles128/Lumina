@@ -1,4 +1,9 @@
-"""Input routing before the main agent loop."""
+"""Input routing before the main agent loop.
+
+Realtime/web queries (weather, search, news) are handled in ``chat_service`` via
+``resolve_web_search`` before this gate runs. Default: rules-only; set
+``PROMPT_GATE_ENABLED=true`` to enable optional LLM classification for agent turns.
+"""
 
 from __future__ import annotations
 
@@ -230,6 +235,8 @@ def rule_route(message: str) -> GateDecision | None:
             reason=f"消息过长，请控制在 {MAX_MESSAGE_CHARS} 字以内。",
         )
     lowered = text.lower()
+    if _is_unsafe_request(text, lowered):
+        return GateDecision(action=GateAction.REJECT, reason="该请求无法处理。")
     if _is_sync_request(text, lowered):
         return GateDecision(action=GateAction.SYNC)
     if _is_identity_request(text):
@@ -241,6 +248,19 @@ def rule_route(message: str) -> GateDecision | None:
     if _is_tool_execution_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     return None
+
+
+def _is_unsafe_request(text: str, lowered: str) -> bool:
+    unsafe_markers = (
+        "删除所有",
+        "忽略系统",
+        "忽略系统指令",
+        "越权",
+        "注入",
+        "rm -rf",
+        "破坏",
+    )
+    return any(marker in text or marker in lowered for marker in unsafe_markers)
 
 
 def _is_sync_request(text: str, lowered: str) -> bool:
