@@ -780,7 +780,7 @@ class WebSearchResponse(BaseModel):
 
 
 @app.get("/api/web/search")
-async def web_search(q: str, engine: str = "bing", limit: int = 5) -> WebSearchResponse:
+async def web_search(q: str, engine: str = "auto", limit: int = 5) -> WebSearchResponse:
     from secretary.agent.web_search import run_search
 
     query = q.strip()

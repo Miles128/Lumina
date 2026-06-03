@@ -36,6 +36,9 @@ packages = ["src/secretary"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

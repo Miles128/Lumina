@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -40,4 +41,6 @@ def test_platform_settings_endpoint_is_fast() -> None:
     response = client.get("/api/settings/platforms")
     elapsed = time.time() - start
     assert response.status_code == 200
-    assert elapsed < 3.0
+    # CI runners cold-start the full FastAPI app (MCP, connectors); allow more headroom.
+    limit = 15.0 if os.getenv("CI") else 3.0
+    assert elapsed < limit

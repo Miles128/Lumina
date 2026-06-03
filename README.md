@@ -29,7 +29,7 @@
 | 能力 | 说明 |
 |------|------|
 | **对话 Agent** | 自研 `AgentLoop`：读/写文件、Shell、搜文件、联网、MCP；高风险操作需确认 |
-| **联网 / 天气** | `resolve_web_search` 统一 pipeline：定位 → Bing 搜索 → LLM 整理（不走无工具 DIRECT） |
+| **联网 / 天气** | `resolve_web_search` → `web_search`（`engine=auto`：多引擎降级 + DuckDuckGo Instant API 兜底）→ LLM |
 | **Sub-agent（Phase 1）** | `spawn_subagent` 委派只读 `explore` 子任务，隔离 context，只回摘要 |
 | **防幻觉 Grounding** | 文件类问题强制工具查证；`search_files` 结果可正常用于列表回复 |
 | **持久记忆** | Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理 |

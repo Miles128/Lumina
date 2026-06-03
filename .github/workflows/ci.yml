@@ -9,14 +9,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      LUMINA_DATA_DIR: ${{ github.workspace }}/.lumina-ci
+      SECRETARY_AUTO_SYNC_ENABLED: "false"
+      SECRETARY_BRIEFING_ENABLED: "false"
+      SECRETARY_THINK_ENABLED: "false"
+      SECRETARY_MEMORY_SUMMARY_ENABLED: "false"
+      PROMPT_GATE_ENABLED: "false"
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -25,7 +34,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Prepare CI data directory
+        run: mkdir -p "$LUMINA_DATA_DIR"
+
       - name: Run tests
-        env:
-          PYTHONPATH: src
         run: pytest -q

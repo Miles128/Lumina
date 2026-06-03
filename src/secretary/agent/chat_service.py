@@ -482,7 +482,7 @@ class ChatService:
 
         tool = WebSearchTool()
         search_output = tool.execute(
-            {"query": search_query, "engine": "bing", "limit": 5},
+            {"query": search_query, "engine": "auto", "limit": 5},
             self._shell_working_dir(),
         )
         search_ok = not str(search_output).startswith("Error")
@@ -504,7 +504,7 @@ class ChatService:
                 "content": (
                     "你是灵犀。下面是一次 web_search 联网检索结果。"
                     "请基于结果简洁回答用户；不要声称「无法联网」或让用户安装天气/搜索技能。"
-                    "若结果不足，如实说明并给出已找到的信息。"
+                    "若检索失败（以 Error 开头）或结果不足，如实说明并建议稍后重试或补充城市/关键词。"
                 ),
             },
         ]
