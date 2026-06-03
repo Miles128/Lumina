@@ -208,31 +208,8 @@
   async function sendMessage(text) {
     if (!text) return;
 
-    if (isAuthorRequest(text)) {
-      if (activeRequestController) {
-        activeRequestController.abort();
-        activeRequestController = null;
-      }
-      setBusy(false);
-      showTyping(false);
-      endTypingTicker();
-      sendAuthorReply(text);
-      chatInput.focus();
-      return;
-    }
-
-    if (isIdentityRequest(text)) {
-      if (activeRequestController) {
-        activeRequestController.abort();
-        activeRequestController = null;
-      }
-      setBusy(false);
-      showTyping(false);
-      endTypingTicker();
-      sendIdentityIntro(text);
-      chatInput.focus();
-      return;
-    }
+    // Author / identity routing is handled only by the backend (PromptGate + fast paths).
+    // Client-side shortcuts caused false positives (e.g. "open design 的作者").
 
     if (busy) return;
 
@@ -360,13 +337,17 @@
     appendMessageInternal(role, text, true);
   }
 
-  function usesFileTools(response) {
+  function usesGroundingTools(response) {
     const tools = Array.isArray(response?.used_tools) ? response.used_tools : [];
     return tools.some(
       (name) =>
-        /^(list_dir|file_read|search_files)$/.test(name) ||
+        /^(list_dir|file_read|search_files|search_memory|session_search)$/.test(name) ||
         /^mcp_.*(read|list|file|directory|search)/i.test(name),
     );
+  }
+
+  function usesFileTools(response) {
+    return usesGroundingTools(response);
   }
 
   const REPLY_PATH_PATTERNS = [
@@ -422,7 +403,8 @@
   function appendGroundingMeta(response) {
     if (!response) return;
     const showUnverified = shouldShowGroundingUnverified(response);
-    const showVerified = !showUnverified && usesFileTools(response) && response.grounding_verified !== false;
+    const showVerified =
+      !showUnverified && usesGroundingTools(response) && response.grounding_verified !== false;
     if (!showVerified && !showUnverified) return;
 
     const rows = messagesEl.querySelectorAll(".message.bot");

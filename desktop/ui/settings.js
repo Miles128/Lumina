@@ -412,6 +412,7 @@
           <button class="btn-text test-btn" type="button" id="btn-test-agent">测试连接</button>
           <button class="btn-text" type="button" id="btn-import-hermes">从 Hermes 导入</button>
           <button class="btn-text" type="button" id="btn-clear-chat">清空对话历史</button>
+          <button class="btn-text" type="button" id="btn-clear-pollution">清除对话污染记忆</button>
         </div>
         <div id="agent-feedback" class="platform-feedback" hidden></div>
       </div>
@@ -421,6 +422,7 @@
     document.getElementById("btn-test-agent").addEventListener("click", testAgentConfig);
     document.getElementById("btn-import-hermes").addEventListener("click", importHermesConfig);
     document.getElementById("btn-clear-chat").addEventListener("click", clearChatHistory);
+    document.getElementById("btn-clear-pollution").addEventListener("click", clearPollutedMemory);
     document.getElementById("agent-provider").addEventListener("change", onProviderChange);
   }
 
@@ -608,6 +610,19 @@
       showFeedback(feedback, "success", "对话历史已清空");
     } catch (error) {
       showFeedback(feedback, "error", `清空失败：${error.message}`);
+    }
+  }
+
+  async function clearPollutedMemory() {
+    const feedback = document.getElementById("agent-feedback");
+    try {
+      const result = await window.SecretaryAPI.request("POST", "/api/profile/clear-chat-derived");
+      const removed = Array.isArray(result?.removed_files) ? result.removed_files.join(", ") : "";
+      const suffix = removed ? `（已删除：${removed}）` : "";
+      showFeedback(feedback, "success", `已清除对话推断的画像条目与后台摘要${suffix}`);
+      profileMarkdown = String(result?.profile_markdown || profileMarkdown);
+    } catch (error) {
+      showFeedback(feedback, "error", `清除失败：${error.message}`);
     }
   }
 

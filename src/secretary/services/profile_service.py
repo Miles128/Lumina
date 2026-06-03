@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -141,8 +142,32 @@ class ProfileService:
             return ""
         return path.read_text(encoding="utf-8").strip()
 
+    def clear_chat_derived_facts(self) -> ProfileView:
+        """Remove profile bullets inferred from chat (may include assistant hallucinations)."""
+        path = self._chat_facts_path()
+        if path.exists():
+            path.unlink()
+        view = self.get_view()
+        auto = self._load_cached_auto_markdown()
+        user = self._user_store.load()
+        user_markdown = user.markdown.strip()
+        display = user_markdown if user_markdown else (auto or view.auto_markdown)
+        self._persist_display(display)
+        return self.get_view()
+
     def _persist_display(self, markdown: str) -> None:
         profile_path = self._settings.resolved_data_dir() / "USER.md"
         profile_path.write_text(markdown, encoding="utf-8")
         workspace = KnowledgeWorkspace(self._settings.resolved_data_dir() / "workspace")
         workspace.update_profile_md(markdown)
+
+
+def clear_polluted_derived_state(data_dir: Path) -> list[str]:
+    """Drop scheduler files that may embed hallucinated chat summaries."""
+    removed: list[str] = []
+    for name in ("think_state.json", "memory_summary_state.json"):
+        path = data_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    return removed

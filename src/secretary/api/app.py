@@ -639,6 +639,21 @@ def reset_profile_user(request: Request) -> ProfileResponse:
     )
 
 
+@app.post("/api/profile/clear-chat-derived")
+def clear_profile_chat_derived(request: Request) -> dict[str, object]:
+    """Remove chat-inferred profile bullets and polluted scheduler snapshots."""
+    from secretary.services.profile_service import clear_polluted_derived_state
+
+    profile_service: ProfileService = _svc(request).profile_service
+    view = profile_service.clear_chat_derived_facts()
+    removed = clear_polluted_derived_state(settings.resolved_data_dir())
+    return {
+        "status": "ok",
+        "removed_files": removed,
+        "profile_markdown": view.markdown,
+    }
+
+
 @app.get("/api/memory/search")
 def search_memory(q: str, limit: int = 10, request: Request = None) -> MemorySearchResponse:
     store: MemoryStore = _svc(request).store
