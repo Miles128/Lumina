@@ -24,7 +24,15 @@ def test_reverse_geocode_city_parses_chinese_city() -> None:
 
 
 def test_reverse_geocode_city_returns_none_on_failure() -> None:
-    with patch("secretary.services.geolocation.httpx.Client") as client_cls:
-        client = client_cls.return_value.__enter__.return_value
-        client.get.side_effect = OSError("network down")
-        assert reverse_geocode_city(30.27, 120.15) is None
+    with patch("secretary.services.geolocation._nominatim_reverse", return_value=None):
+        with patch("secretary.services.geolocation._bigdatacloud_reverse", return_value=None):
+            assert reverse_geocode_city(30.27, 120.15) is None
+
+
+def test_reverse_geocode_falls_back_to_bigdatacloud() -> None:
+    with patch("secretary.services.geolocation._nominatim_reverse", return_value=None):
+        with patch(
+            "secretary.services.geolocation._bigdatacloud_reverse",
+            return_value="杭州",
+        ):
+            assert reverse_geocode_city(30.27, 120.15) == "杭州"

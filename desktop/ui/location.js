@@ -3,9 +3,34 @@
 
   const STORAGE_KEY = "lumina.location.v1";
   const CACHE_MS = 60 * 60 * 1000;
-  const WEATHER_RE = /天气|气温|温度|下雨|下雪|降雪|降雨|weather|forecast/i;
   const CITY_WEATHER_RE = /([\u4e00-\u9fffA-Za-z·]{2,12}?)天气/;
   const NON_CITY_PREFIXES = new Set(["今天", "明天", "后天", "本地", "当地", "现在", "这边", "这里", "最近"]);
+
+  const WEB_SEARCH_MARKERS = [
+    "搜一下",
+    "搜索一下",
+    "查一下",
+    "帮我搜",
+    "帮我查",
+    "联网",
+    "网上",
+    "天气",
+    "气温",
+    "温度",
+    "下雨",
+    "下雪",
+    "最新新闻",
+    "热点",
+    "股价",
+    "汇率",
+    "实时",
+    "现在多少",
+    "多少钱",
+    "news",
+    "search for",
+    "weather",
+    "forecast",
+  ];
 
   function loadState() {
     try {
@@ -41,8 +66,13 @@
     return saveState({ enabled: Boolean(enabled) });
   }
 
-  function isWeatherQuery(text) {
-    return WEATHER_RE.test(String(text || "").trim());
+  function isWebSearchQuery(text) {
+    const cleaned = String(text || "").trim();
+    if (!cleaned) {
+      return false;
+    }
+    const lowered = cleaned.toLowerCase();
+    return WEB_SEARCH_MARKERS.some((marker) => cleaned.includes(marker) || lowered.includes(marker));
   }
 
   function hasExplicitCity(text) {
@@ -54,10 +84,13 @@
     return city && !NON_CITY_PREFIXES.has(city);
   }
 
-  function getCachedCity() {
+  function getCachedCity(allowStale) {
     const state = loadState();
     if (!state.city) {
       return "";
+    }
+    if (allowStale) {
+      return state.city;
     }
     if (state.updatedAt && Date.now() - state.updatedAt < CACHE_MS) {
       return state.city;
@@ -80,9 +113,9 @@
         },
         (error) => reject(error),
         {
-          enableHighAccuracy: false,
-          timeout: 15000,
-          maximumAge: 300000,
+          enableHighAccuracy: true,
+          timeout: 20000,
+          maximumAge: 120000,
         },
       );
     });
@@ -96,69 +129,64 @@
     return typeof result?.city === "string" ? result.city : "";
   }
 
-  async function ensureCity() {
+  async function ensurePosition() {
     if (!isEnabled()) {
-      return "";
+      const stale = loadState();
+      if (stale.lat != null && stale.lng != null) {
+        return { city: stale.city || "", lat: stale.lat, lng: stale.lng };
+      }
+      return { city: "", lat: null, lng: null };
     }
-    const cached = getCachedCity();
-    if (cached) {
-      return cached;
+
+    const fresh = getCachedCity(false);
+    const state = loadState();
+    if (fresh && state.lat != null && state.lng != null) {
+      return { city: fresh, lat: state.lat, lng: state.lng };
     }
-    const position = await getCurrentPosition();
-    const city = await reverseGeocode(position.lat, position.lng);
-    if (!city) {
-      return "";
+
+    const staleCity = getCachedCity(true);
+    try {
+      const position = await getCurrentPosition();
+      let city = "";
+      try {
+        city = await reverseGeocode(position.lat, position.lng);
+      } catch (error) {
+        console.warn("[Lumina] reverse geocode failed:", error);
+      }
+      if (!city) {
+        city = staleCity;
+      }
+      saveState({
+        enabled: true,
+        city,
+        lat: position.lat,
+        lng: position.lng,
+        updatedAt: Date.now(),
+      });
+      return { city, lat: position.lat, lng: position.lng };
+    } catch (error) {
+      console.warn("[Lumina] geolocation failed:", error);
+      if (state.lat != null && state.lng != null) {
+        return { city: staleCity, lat: state.lat, lng: state.lng };
+      }
+      return { city: staleCity, lat: null, lng: null };
     }
-    saveState({
-      enabled: true,
-      city,
-      lat: position.lat,
-      lng: position.lng,
-      updatedAt: Date.now(),
-    });
-    return city;
   }
 
-  function isWebSearchQuery(text) {
-    const cleaned = String(text || "").trim();
-    if (!cleaned) {
-      return false;
+  async function payloadForWebSearch(text) {
+    if (!isWebSearchQuery(text) || hasExplicitCity(text)) {
+      return {};
     }
-    if (isWeatherQuery(cleaned)) {
-      return true;
+    const pos = await ensurePosition();
+    const payload = {};
+    if (pos.city) {
+      payload.location_city = pos.city;
     }
-    const markers = [
-      "搜一下",
-      "搜索一下",
-      "查一下",
-      "帮我搜",
-      "帮我查",
-      "联网",
-      "网上",
-      "最新新闻",
-      "热点",
-      "股价",
-      "汇率",
-      "实时",
-      "现在多少",
-      "多少钱",
-    ];
-    const lowered = cleaned.toLowerCase();
-    return markers.some((marker) => cleaned.includes(marker) || lowered.includes(marker));
-  }
-
-  async function cityForWeatherQuery(text) {
-    if (!isWeatherQuery(text) || hasExplicitCity(text)) {
-      return "";
+    if (typeof pos.lat === "number" && typeof pos.lng === "number") {
+      payload.location_lat = pos.lat;
+      payload.location_lng = pos.lng;
     }
-    return ensureCity();
-  }
-
-  async function locationCityForChat(text) {
-    if (!isWebSearchQuery(text)) {
-      return "";
-    }
-    return cityForWeatherQuery(text);
+    return payload;
   }
 
   window.LuminaLocation = {
@@ -166,12 +194,10 @@
     saveState,
     isEnabled,
     setEnabled,
-    isWeatherQuery,
     isWebSearchQuery,
     hasExplicitCity,
     getCachedCity,
-    ensureCity,
-    cityForWeatherQuery,
-    locationCityForChat,
+    ensurePosition,
+    payloadForWebSearch,
   };
 })();

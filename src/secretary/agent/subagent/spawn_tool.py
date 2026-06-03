@@ -13,9 +13,10 @@ from secretary.agent.subagent.runner import SubAgentRunner
 class SpawnSubagentTool(Tool):
     name = "spawn_subagent"
     description = (
-        "Delegate a focused sub-task to an isolated read-only sub-agent. "
+        "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
-        "Use archetype 'explore' for codebase/memory/web research."
+        "Archetypes: explore (read-only), worker (read/write), verify (read-only review). "
+        "Optional goals[] runs up to 2 explore tasks in parallel."
     )
     needs_confirmation = False
     risk_level = "low"
@@ -46,11 +47,16 @@ class SpawnSubagentTool(Tool):
                 },
                 "archetype": {
                     "type": "string",
-                    "enum": ["explore"],
-                    "description": "Sub-agent type. Phase 1 supports read-only 'explore' only.",
+                    "description": "explore | worker | verify, or a custom name from ~/.lumina/subagents/*.md",
+                },
+                "goals": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 2,
+                    "description": "Optional: up to 2 explore goals run in parallel (omit goal when set).",
                 },
             },
-            "required": ["goal"],
+            "required": [],
         }
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:

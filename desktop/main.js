@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, session } = require("electron");
+const { app, BrowserWindow, ipcMain, session, nativeImage } = require("electron");
+const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -197,6 +198,24 @@ async function loadUrlWithBackendRetry(win, targetUrl) {
   }
 }
 
+function appIconPath() {
+  return path.join(__dirname, "icons", "icon.icns");
+}
+
+function applyAppIcon() {
+  const iconFile = appIconPath();
+  if (!fs.existsSync(iconFile)) {
+    return;
+  }
+  const image = nativeImage.createFromPath(iconFile);
+  if (image.isEmpty()) {
+    return;
+  }
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(image);
+  }
+}
+
 function setupGeolocationPermissions() {
   const ses = session.defaultSession;
   ses.setPermissionCheckHandler((_webContents, permission) => permission === "geolocation");
@@ -218,7 +237,10 @@ async function waitForBackend(retries = 30) {
   return false;
 }
 
+app.setName("灵犀");
+
 app.whenReady().then(async () => {
+  applyAppIcon();
   setupGeolocationPermissions();
   await ensureBackend();
   createMainWindow();

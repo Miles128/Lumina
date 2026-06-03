@@ -30,7 +30,7 @@
 |------|------|
 | **对话 Agent** | 自研 `AgentLoop`：读/写文件、Shell、搜文件、联网、MCP；高风险操作需确认 |
 | **联网 / 天气** | `resolve_web_search` → `web_search`（`engine=auto`：多引擎降级 + DuckDuckGo Instant API 兜底）→ LLM |
-| **Sub-agent（Phase 1）** | `spawn_subagent` 委派只读 `explore` 子任务，隔离 context，只回摘要 |
+| **Sub-agent（Phase 2）** | `spawn_subagent`：`explore` / `worker` / `verify` + `~/.lumina/subagents/*.md`；最多 2 路并行 explore |
 | **防幻觉 Grounding** | 文件类问题强制工具查证；`search_files` 结果可正常用于列表回复 |
 | **持久记忆** | Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理 |
 | **数据源同步** | 飞书、微信读书、小红书、邮箱、云盘、本地文档 |
@@ -78,6 +78,11 @@ cd desktop && npm start
 # 方式 B：分开启动
 ./scripts/start-backend.sh    # http://127.0.0.1:8765
 cd desktop && npm start
+
+# 方式 C：打包 macOS 应用（图标 = 项目 logo，系统显示「灵犀」）
+cd desktop && npm install && npm run pack
+# 产物：desktop/dist/灵犀-*.dmg
+# 仍需本机已安装 Python 3.11+ 且 pip install -e ".[dev]"
 ```
 
 ## 品牌资源
@@ -87,6 +92,7 @@ cd desktop && npm start
 | `docs/assets/screenshot.jpg` | README 主界面配图 |
 | `docs/assets/logo.png` | README / 文档 |
 | `desktop/ui/logo.png` | 顶栏、favicon、助手头像 |
+| `desktop/icons/icon.icns` | 打包后 macOS 应用图标（由 logo 生成） |
 
 ## MCP 配置示例
 
@@ -149,7 +155,7 @@ Lumina/
 ## 开发
 
 ```bash
-pytest          # 205 tests（CI 在 push/PR 时自动跑）
+pytest          # 214+ tests（CI 在 push/PR 时自动跑）
 ruff check src tests
 mypy src
 ```

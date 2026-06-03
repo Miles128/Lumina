@@ -14,11 +14,17 @@ from secretary.agent.loop import AgentLoop
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.policy import (
+    MAX_PARALLEL_EXPLORE,
     MAX_SPAWNS_PER_TURN,
     MAX_SPAWN_DEPTH,
     SUBAGENT_TIMEOUT_SEC,
 )
-from secretary.agent.subagent.registry import build_messages, get_archetype, resolve_tools
+from secretary.agent.subagent.registry import (
+    build_messages,
+    get_archetype,
+    list_archetype_names,
+    resolve_tools,
+)
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.hermes_memory import HermesMemory
@@ -33,6 +39,7 @@ class SubAgentDeps:
     file_auth: FileAuthService | None
     memory_store: MemoryStore
     hermes: HermesMemory
+    lumina_dir: Path | None = None
     temperature: float = 0.3
 
 
@@ -48,19 +55,30 @@ class SubAgentRunner:
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> str:
-        goal = str(arguments.get("goal", "")).strip()
-        if not goal:
-            return "Error: spawn_subagent requires a non-empty goal."
         context = str(arguments.get("context", "")).strip()
         archetype = str(arguments.get("archetype", "explore")).strip().lower() or "explore"
+        parallel_goals = _parse_parallel_goals(arguments.get("goals"))
+        goal = str(arguments.get("goal", "")).strip()
+        if parallel_goals:
+            if archetype != "explore":
+                return "Error: parallel goals are only supported for archetype 'explore'."
+            return self._run_parallel_explore(
+                parallel_goals,
+                context=context,
+                spawn_context=spawn_context,
+                working_dir=working_dir,
+                progress_callback=progress_callback,
+            )
+        if not goal:
+            return "Error: spawn_subagent requires a non-empty goal."
 
         policy_error = self._check_policy(spawn_context, archetype)
         if policy_error:
             return policy_error
 
-        spec = get_archetype(archetype)
+        spec = get_archetype(archetype, self._deps.lumina_dir)
         if spec is None:
-            supported = ", ".join(sorted({"explore"}))
+            supported = ", ".join(list_archetype_names(self._deps.lumina_dir))
             return f"Error: unknown or unsupported archetype '{archetype}'. Supported: {supported}."
 
         run_id = uuid.uuid4().hex[:12]
@@ -158,9 +176,44 @@ class SubAgentRunner:
                 f"Error: spawn quota exceeded ({MAX_SPAWNS_PER_TURN} per turn). "
                 "Finish current sub-tasks before delegating more."
             )
-        if get_archetype(archetype) is None:
-            return None
+        if get_archetype(archetype, self._deps.lumina_dir) is None:
+            return f"Error: unknown archetype '{archetype}'."
         return None
+
+    def _run_parallel_explore(
+        self,
+        goals: list[str],
+        *,
+        context: str,
+        spawn_context: SpawnContext,
+        working_dir: Path,
+        progress_callback: Callable[[ProgressEvent], None] | None,
+    ) -> str:
+        if spawn_context.depth >= MAX_SPAWN_DEPTH:
+            return f"Error: spawn depth limit reached ({MAX_SPAWN_DEPTH})."
+        remaining = MAX_SPAWNS_PER_TURN - spawn_context.spawns_this_turn
+        if remaining < len(goals):
+            return (
+                f"Error: spawn quota exceeded; need {len(goals)} slots, "
+                f"{remaining} remaining ({MAX_SPAWNS_PER_TURN} per turn)."
+            )
+
+        summaries: list[str] = []
+
+        def _run_one(goal: str) -> str:
+            return self.run_from_tool(
+                {"goal": goal, "context": context, "archetype": "explore"},
+                spawn_context,
+                working_dir,
+                progress_callback=progress_callback,
+            )
+
+        with ThreadPoolExecutor(max_workers=min(len(goals), MAX_PARALLEL_EXPLORE)) as pool:
+            futures = [pool.submit(_run_one, goal) for goal in goals]
+            for future in futures:
+                summaries.append(future.result(timeout=SUBAGENT_TIMEOUT_SEC))
+
+        return "\n\n---\n\n".join(summaries)
 
     @staticmethod
     def _wrap_progress(
@@ -201,3 +254,16 @@ class SubAgentRunner:
 
 
 MAX_MESSAGE_LEN = 2000
+
+
+def _parse_parallel_goals(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    goals: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if text:
+            goals.append(text)
+        if len(goals) >= MAX_PARALLEL_EXPLORE:
+            break
+    return goals if len(goals) >= 2 else []

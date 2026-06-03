@@ -84,6 +84,8 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     trace_id: str = Field(default="", max_length=64)
     location_city: str = Field(default="", max_length=64)
+    location_lat: float | None = Field(default=None, ge=-90, le=90)
+    location_lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 class LocationReverseRequest(BaseModel):
@@ -702,6 +704,8 @@ def chat(request: Request, body: ChatRequest) -> ChatResponse:
                 message,
                 progress_callback=progress,
                 location_city=location_city or None,
+                location_lat=body.location_lat,
+                location_lng=body.location_lng,
             )
         return _to_chat_response(result, usage)
     finally:

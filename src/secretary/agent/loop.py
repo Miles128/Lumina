@@ -1298,10 +1298,14 @@ def _human_size(size: int) -> str:
 _READ_ONLY_SHELL_CMDS = {
     "ls",
     "find",
+    "mdfind",
+    "mdls",
     "pwd",
     "cat",
     "head",
     "tail",
+    "less",
+    "more",
     "grep",
     "rg",
     "wc",
@@ -1315,6 +1319,12 @@ _READ_ONLY_SHELL_CMDS = {
     "tree",
     "fd",
     "echo",
+    "which",
+    "file",
+    "realpath",
+    "readlink",
+    "basename",
+    "dirname",
 }
 
 

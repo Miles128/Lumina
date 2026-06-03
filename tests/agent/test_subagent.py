@@ -47,8 +47,41 @@ def test_explore_archetype_resolves_read_only_tools(tmp_path: Path) -> None:
     assert "file_write" not in names
 
 
-def test_unknown_archetype_returns_none() -> None:
-    assert get_archetype("worker") is None
+def test_worker_and_verify_archetypes_exist() -> None:
+    worker = get_archetype("worker")
+    verify = get_archetype("verify")
+    assert worker is not None and worker.name == "worker"
+    assert verify is not None and verify.name == "verify"
+    assert get_archetype("not-a-real-type") is None
+
+
+def test_worker_includes_write_tools(tmp_path: Path) -> None:
+    tools = resolve_tools("worker", _deps(tmp_path))
+    names = {tool.name for tool in tools}
+    assert "file_write" in names
+    assert "shell" in names
+    assert "spawn_subagent" not in names
+
+
+def test_custom_archetype_from_lumina_dir(tmp_path: Path) -> None:
+    sub_dir = tmp_path / "subagents"
+    sub_dir.mkdir()
+    (sub_dir / "scout.md").write_text(
+        "---\nname: scout\nmax_steps: 5\ntools: list_dir,file_read,web_search\n---\n"
+        "You are a scout sub-agent.\n",
+        encoding="utf-8",
+    )
+    spec = get_archetype("scout", tmp_path)
+    assert spec is not None
+    assert spec.name == "scout"
+    tools = resolve_tools("scout", SubAgentDeps(
+        llm_config=_llm_config(),
+        file_auth=None,
+        memory_store=MemoryStore(tmp_path / "m.db"),
+        hermes=HermesMemory(tmp_path),
+        lumina_dir=tmp_path,
+    ))
+    assert {t.name for t in tools} == {"file_read", "list_dir", "web_search"}
 
 
 def test_spawn_quota_blocks_excess_delegations(tmp_path: Path) -> None:

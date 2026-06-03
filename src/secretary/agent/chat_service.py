@@ -28,7 +28,7 @@ from secretary.agent.loop import (
     WebFetchTool,
 )
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.web_routing import WEATHER_ASK_LOCATION, resolve_web_search
+from secretary.agent.web_routing import resolve_web_search
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
     LUMINA_IDENTITY_SYSTEM_BLOCK,
@@ -146,6 +146,8 @@ class ChatService:
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         location_city: str | None = None,
+        location_lat: float | None = None,
+        location_lng: float | None = None,
     ) -> ChatResult:
         cleaned = message.strip()
         history = self._load_history()
@@ -154,14 +156,14 @@ class ChatService:
         if is_identity_request(cleaned, history):
             return self._handle_identity_gate(cleaned)
 
-        web_plan = resolve_web_search(cleaned, history, location_city=location_city)
+        web_plan = resolve_web_search(
+            cleaned,
+            history,
+            location_city=location_city,
+            location_lat=location_lat,
+            location_lng=location_lng,
+        )
         if web_plan is not None:
-            if web_plan.needs_location:
-                return self._finish_gate_reply(
-                    cleaned,
-                    WEATHER_ASK_LOCATION,
-                    used_llm=False,
-                )
             llm_config = resolve_llm_config(self._settings, self._agent_config_store)
             if llm_config is None:
                 return self._finish_gate_reply(
@@ -786,6 +788,7 @@ class ChatService:
             file_auth=self._file_auth,
             memory_store=self._store,
             hermes=self._hermes,
+            lumina_dir=self._settings.resolved_data_dir(),
             temperature=min(self._temperature(), 0.5),
         )
         runner = SubAgentRunner(deps)
@@ -846,7 +849,8 @@ class ChatService:
             f"{style_rule}"
             "- 用户在本轮明确提供的个人信息，应在回复后写入 durable memory（USER.md）与用户画像\n"
             "- 完成复杂任务后，总结关键事实到 durable memory\n"
-            "- 复杂调研可调用 spawn_subagent（archetype=explore）委派只读子任务；"
+            "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
+            "可用 goals 数组并行最多 2 个 explore；"
             "子任务只回摘要，关键结论需你自行整合后再回复用户"
         )
 

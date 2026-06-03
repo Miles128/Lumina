@@ -250,19 +250,20 @@
       const controller = createActiveController();
       const traceId = createTraceId();
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
-      let locationCity = "";
-      const needsDeviceLocation =
-        window.LuminaLocation?.isWeatherQuery(text) &&
-        !window.LuminaLocation.hasExplicitCity(text);
-      if (needsDeviceLocation) {
+      const chatBody = { message: text, trace_id: traceId };
+      if (window.LuminaLocation?.isWebSearchQuery(text)) {
         showTyping(true, "正在获取位置…");
-        locationCity = await window.LuminaLocation.locationCityForChat(text).catch(() => "");
+        try {
+          Object.assign(chatBody, await window.LuminaLocation.payloadForWebSearch(text));
+        } catch (error) {
+          console.warn("[Lumina] location for web search failed:", error);
+        }
         showTyping(true, t("chat.typing.understand"));
       }
       const response = await window.SecretaryAPI.request(
         "POST",
         "/api/chat",
-        { message: text, trace_id: traceId, location_city: locationCity || "" },
+        chatBody,
         {
           signal: controller.signal,
           timeoutMs: 120_000,

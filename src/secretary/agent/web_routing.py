@@ -5,23 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-WEATHER_ASK_LOCATION = (
-    "无法获取你的位置。要查实时天气，请告诉我你在哪个城市（例如：杭州、上海），"
-    "或在设置 → 外观中开启位置权限。"
-)
-
-_WEATHER_MARKERS = (
-    "天气",
-    "气温",
-    "温度",
-    "下雨",
-    "下雪",
-    "降雪",
-    "降雨",
-    "forecast",
-    "weather",
-)
-
 _WEB_SEARCH_MARKERS = (
     "搜一下",
     "搜索一下",
@@ -40,8 +23,32 @@ _WEB_SEARCH_MARKERS = (
     "实时",
     "现在多少",
     "多少钱",
+    "天气",
+    "气温",
+    "温度",
+    "下雨",
+    "下雪",
+    "降雪",
+    "降雨",
+    "forecast",
+    "weather",
     "news",
     "search for",
+)
+
+_LOCAL_CONTEXT_MARKERS = (
+    "天气",
+    "气温",
+    "温度",
+    "下雨",
+    "下雪",
+    "附近",
+    "周边",
+    "本地",
+    "当地",
+    "这里",
+    "这边",
+    "附近有什么",
 )
 
 _NON_CITY_PREFIXES = frozenset(
@@ -49,28 +56,23 @@ _NON_CITY_PREFIXES = frozenset(
 )
 
 _CITY_WEATHER_RE = re.compile(r"([\u4e00-\u9fffA-Za-z·]{2,12}?)天气")
-
 _CITY_ONLY = re.compile(r"^[\u4e00-\u9fffA-Za-z·]{2,12}市?$")
 
 
-def is_weather_request(text: str, history: list[dict[str, str]] | None = None) -> bool:
+def is_web_search_query(text: str) -> bool:
     cleaned = text.strip()
     if not cleaned:
         return False
     lowered = cleaned.lower()
-    if any(marker in cleaned or marker in lowered for marker in _WEATHER_MARKERS):
-        return True
-    if resolve_weather_city(cleaned, history):
-        return True
-    return False
+    return any(marker in cleaned or marker in lowered for marker in _WEB_SEARCH_MARKERS)
 
 
-def resolve_weather_city(
-    text: str,
-    history: list[dict[str, str]] | None = None,
-    *,
-    location_city: str | None = None,
-) -> str | None:
+def _query_needs_location_context(text: str) -> bool:
+    cleaned = text.strip()
+    return any(marker in cleaned for marker in _LOCAL_CONTEXT_MARKERS)
+
+
+def _city_from_message(text: str, history: list[dict[str, str]] | None = None) -> str | None:
     cleaned = text.strip()
     if not cleaned:
         return None
@@ -79,41 +81,59 @@ def resolve_weather_city(
         city = match.group(1).strip().strip("的")
         if city and city not in _NON_CITY_PREFIXES:
             return city.rstrip("市")
-    if history and _recently_asked_weather_location(history):
+    if history and _recent_local_context_without_city(history):
         if _CITY_ONLY.fullmatch(cleaned):
             return cleaned.rstrip("市")
+    return None
+
+
+def resolve_client_location(
+    location_city: str | None = None,
+    *,
+    location_lat: float | None = None,
+    location_lng: float | None = None,
+) -> str | None:
+    """City from client hint or reverse-geocode coordinates."""
     if location_city:
         city = location_city.strip().rstrip("市")
         if city:
             return city
+    if location_lat is not None and location_lng is not None:
+        from secretary.services.geolocation import reverse_geocode_city
+
+        return reverse_geocode_city(location_lat, location_lng)
     return None
 
 
-def build_weather_search_query(city: str) -> str:
-    name = city.strip().rstrip("市")
-    return f"{name} 今天天气 气温"
-
-
-def is_web_search_query(text: str) -> bool:
-    cleaned = text.strip()
-    if not cleaned:
-        return False
-    lowered = cleaned.lower()
-    if is_weather_request(cleaned):
-        return True
-    return any(marker in cleaned or marker in lowered for marker in _WEB_SEARCH_MARKERS)
-
-
-def build_web_search_query(
+def build_search_query(
     text: str,
     history: list[dict[str, str]] | None = None,
     *,
     location_city: str | None = None,
+    location_lat: float | None = None,
+    location_lng: float | None = None,
 ) -> str:
+    """Build Bing query; inject device city only when the question needs local context."""
     cleaned = text.strip()
-    city = resolve_weather_city(cleaned, history, location_city=location_city)
-    if city and is_weather_request(cleaned, history):
-        return build_weather_search_query(city)
+    city = _city_from_message(cleaned, history) or resolve_client_location(
+        location_city,
+        location_lat=location_lat,
+        location_lng=location_lng,
+    )
+    needs_local = _query_needs_location_context(cleaned) or (
+        history is not None and city is not None and _recent_local_context_without_city(history)
+    )
+    if city and needs_local:
+        weather_turn = any(
+            m in cleaned for m in ("天气", "气温", "温度", "下雨", "下雪", "weather", "forecast")
+        ) or (
+            history is not None
+            and _CITY_ONLY.fullmatch(cleaned)
+            and _recent_weather_without_city(history)
+        )
+        if weather_turn:
+            return f"{city} 今天天气 气温"
+        return f"{cleaned} {city}"
     return cleaned
 
 
@@ -122,7 +142,6 @@ class WebSearchPlan:
     """Resolved web_search pipeline input for chat_service."""
 
     search_query: str
-    needs_location: bool = False
 
 
 def resolve_web_search(
@@ -130,25 +149,47 @@ def resolve_web_search(
     history: list[dict[str, str]] | None = None,
     *,
     location_city: str | None = None,
+    location_lat: float | None = None,
+    location_lng: float | None = None,
 ) -> WebSearchPlan | None:
     """Return a web search plan, or None if this turn is not a realtime/web query."""
     cleaned = text.strip()
     if not cleaned or not is_web_search_query(cleaned):
         return None
-    chat_history = history or []
-    if is_weather_request(cleaned, chat_history):
-        city = resolve_weather_city(cleaned, chat_history, location_city=location_city)
-        if not city:
-            return WebSearchPlan(search_query="", needs_location=True)
-        return WebSearchPlan(search_query=build_weather_search_query(city))
-    return WebSearchPlan(search_query=build_web_search_query(cleaned, chat_history))
+    query = build_search_query(
+        cleaned,
+        history,
+        location_city=location_city,
+        location_lat=location_lat,
+        location_lng=location_lng,
+    )
+    return WebSearchPlan(search_query=query)
 
 
-def _recently_asked_weather_location(history: list[dict[str, str]]) -> bool:
+def _recent_weather_without_city(history: list[dict[str, str]]) -> bool:
     for item in reversed(history[-6:]):
-        if item.get("role") != "assistant":
+        if item.get("role") != "user":
             continue
-        content = str(item.get("content", ""))
-        if "哪个城市" in content or WEATHER_ASK_LOCATION[:8] in content:
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        if any(
+            m in content for m in ("天气", "气温", "温度", "下雨", "下雪", "weather", "forecast")
+        ) and _city_from_message(content) is None:
             return True
+        return False
+    return False
+
+
+def _recent_local_context_without_city(history: list[dict[str, str]]) -> bool:
+    """Prior user turn needed local context (e.g. weather) but named no city."""
+    for item in reversed(history[-6:]):
+        if item.get("role") != "user":
+            continue
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        if _query_needs_location_context(content) and _city_from_message(content) is None:
+            return True
+        return False
     return False

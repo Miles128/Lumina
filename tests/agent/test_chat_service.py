@@ -124,13 +124,26 @@ def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     assert result.used_llm is False
 
 
-def test_chat_weather_without_city_asks_location(tmp_path: Path) -> None:
-    from secretary.agent.web_routing import WEATHER_ASK_LOCATION
-
+def test_chat_weather_without_location_still_web_searches(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
     service = _build_chat_service(tmp_path, api_key="test-key")
-    result = service.reply("今天天气怎么样")
-    assert result.reply == WEATHER_ASK_LOCATION
-    assert result.used_llm is False
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.web_search.WebSearchTool.execute",
+            return_value="🔍 '今天天气怎么样' — 1 results\n1. 天气",
+        ):
+            with patch(
+                "secretary.agent.chat_service.chat_completion",
+                return_value="今天多云。",
+            ) as llm:
+                result = service.reply("今天天气怎么样")
+    llm.assert_called_once()
+    assert result.route == "web_search"
 
 
 def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
@@ -197,7 +210,12 @@ def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None
                 "secretary.agent.chat_service.chat_completion",
                 return_value="杭州今天晴，约 20°C。",
             ) as llm:
-                result = service.reply("今天天气怎么样", location_city="杭州")
+                result = service.reply(
+                    "今天天气怎么样",
+                    location_city="杭州",
+                    location_lat=30.27,
+                    location_lng=120.15,
+                )
     llm.assert_called_once()
     assert "web_search" in (result.used_tools or [])
     assert "20" in result.reply

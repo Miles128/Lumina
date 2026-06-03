@@ -89,7 +89,7 @@ Design principles:
 
 - Multi-turn agent loop (8 steps full / 3 light)
 - Tools: filesystem, shell, search, memory, web, todo, skills, clarify, MCP
-- **Sub-agent Phase 1:** `spawn_subagent` with `explore` archetype (read-only); depth=1; summary-only return
+- **Sub-agent Phase 2:** `spawn_subagent` with `explore` / `worker` / `verify` + `~/.lumina/subagents/*.md`; parallel explore (≤2); depth=1; summary-only return
 - Prompt gate: sync / profile / direct / light / full / reject
 - Confirmation for shell and file mutations
 - Streaming via SSE (`reply_delta`, tool progress, `subagent_started` / `subagent_finished`)
@@ -219,7 +219,7 @@ Design principles:
 | FR-11 | Think + daily memory summary · 后台 Think | P1 | Done |
 | FR-12 | Thread persistence · 线程持久化 | P1 | Done |
 | FR-13 | Hermes import · Hermes 导入 | P1 | Done |
-| FR-14 | Sub-agents · 子 Agent | P2 | **Phase 1 Done** (`explore` only) |
+| FR-14 | Sub-agents · 子 Agent | P2 | **Phase 2 Done** (`explore` / `worker` / `verify` + custom md) |
 | FR-15 | MCP HTTP transport | P2 | Planned |
 | FR-16 | IM integration | P3 | Backlog |
 | FR-17 | Project logo & branding · Logo 品牌 | P1 | Done |

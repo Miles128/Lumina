@@ -489,7 +489,7 @@
             <span>位置权限</span>
             <input id="ui-location-enabled" type="checkbox"${locationEnabled ? " checked" : ""} />
           </label>
-          <p class="muted settings-hint">开启后，问「今天天气怎么样」时会自动使用你的位置，无需手动说城市。${cachedCity ? `当前：${escapeHtml(cachedCity)}` : ""}</p>
+          <p class="muted settings-hint">开启后，联网搜索（天气、附近、实时信息等）会自动带上你的位置。${cachedCity ? `当前：${escapeHtml(cachedCity)}` : ""}</p>
           <div class="platform-actions">
             <button class="btn-text" type="button" id="btn-refresh-location">刷新位置</button>
           </div>
@@ -513,7 +513,8 @@
     showFeedback(feedback, "info", "正在获取位置…");
     try {
       window.LuminaLocation.setEnabled(true);
-      const city = await window.LuminaLocation.ensureCity();
+      const pos = await window.LuminaLocation.ensurePosition();
+      const city = pos.city;
       if (!city) {
         showFeedback(feedback, "error", "获取位置失败，请检查系统位置权限");
         return;
