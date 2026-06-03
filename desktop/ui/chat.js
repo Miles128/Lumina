@@ -569,7 +569,7 @@
     if (/\bopen\s*[-_]?\s*design\b/i.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
       return true;
     }
-    if ((/~|\/Users\/|\/)/.test(t)) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+    if (/(~|\/Users\/|\/)/.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
       return true;
     }
     return false;
