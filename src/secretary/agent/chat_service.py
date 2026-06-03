@@ -647,7 +647,7 @@ class ChatService:
         from secretary.agent.grounding import is_filesystem_question
 
         filesystem_turn = is_filesystem_question(cleaned)
-        max_steps = 3 if light_mode and not filesystem_turn else 8
+        max_steps = 4 if filesystem_turn else (3 if light_mode else 8)
         suggested = decision.intent.suggested_tools if decision.intent else ()
         if filesystem_turn:
             tools = self._build_tools()

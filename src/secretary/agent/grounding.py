@@ -67,6 +67,10 @@ _FILE_QUESTION_MARKERS = (
     "列出来",
     "列出所有",
     "有哪些",
+    "哪些项目",
+    "手上",
+    "my project",
+    "my projects",
     "所有文件",
     "简历",
     "文件夹",
@@ -131,6 +135,9 @@ _DEFERRAL_MARKERS = (
 )
 
 _MCP_READ_HINTS = ("read", "list", "search", "glob", "directory", "file")
+_MCP_DIR_LINE = re.compile(r"^\s*\[DIR\]\s+(.+?)\s*$", re.MULTILINE)
+_MCP_FILE_LINE = re.compile(r"^\s*\[FILE\]\s+(.+?)\s*$", re.MULTILINE)
+_MY_PROJECTS_DIR = Path.home() / "Documents" / "My Projects"
 _FILE_HEADER = re.compile(r"^📄\s+(\S+)", re.MULTILINE)
 _DIR_HEADER = re.compile(r"^📂\s+(\S+)", re.MULTILINE)
 _LISTED_FILE = re.compile(r"📄\s+(\S+)")
@@ -261,6 +268,11 @@ def infer_list_dir_target(user_message: str, reply: str = "") -> str | None:
     candidates: list[str] = []
     for text in (user_message, reply):
         candidates.extend(_extract_path_candidates(text))
+        lowered = text.lower()
+        if re.search(r"my\s*projects?", lowered) or "my project" in lowered:
+            candidates.append(str(_MY_PROJECTS_DIR))
+        if "我的项目" in text or "哪些项目" in text:
+            candidates.append(str(_MY_PROJECTS_DIR))
     if not candidates:
         return None
 
@@ -404,8 +416,16 @@ def enforce_grounded_reply(
     reply = sanitize_filesystem_reply(reply)
     # Tool-backed replies that passed verification may list many filenames (e.g. search_files
     # hits); reply_simulates_file_listing would false-positive on those.
-    if has_read_grounding(used_tools) and grounding_verified:
-        return reply, grounding_verified, grounding_note
+    if has_read_grounding(used_tools):
+        if grounding_verified:
+            return reply, grounding_verified, grounding_note
+        if not (
+            reply_simulates_file_listing(reply)
+            or reply_fabricates_file_inspection(reply)
+            or reply_injects_lumina_identity_as_project_author(reply)
+        ):
+            note = grounding_note or "已通过 list_dir / file_read / MCP 读盘工具核实"
+            return reply, True, note
 
     if is_filesystem_question(user_message) and not has_read_grounding(used_tools):
         note = grounding_note or "未调用 list_dir / file_read / search_files，已阻止未核实内容"
@@ -450,7 +470,7 @@ def collect_read_evidence(steps: list[Any]) -> ReadEvidence:
         elif name == "search_files":
             _absorb_search_files(evidence, output)
         elif name.startswith("mcp_"):
-            _absorb_mcp_output(evidence, output)
+            _absorb_mcp_output(evidence, output, arguments)
     return evidence
 
 
@@ -644,13 +664,32 @@ def _absorb_search_files(evidence: ReadEvidence, output: str) -> None:
             evidence.search_hits.add(_norm_path(path))
 
 
-def _absorb_mcp_output(evidence: ReadEvidence, output: str) -> None:
+def _absorb_mcp_output(
+    evidence: ReadEvidence,
+    output: str,
+    arguments: dict[str, Any] | None = None,
+) -> None:
     if output.startswith("Error:"):
         return
+    if arguments:
+        base = str(arguments.get("path", "") or arguments.get("directory", "")).strip()
+        if base:
+            try:
+                evidence.listed_dirs.add(_norm_path(str(Path(base).expanduser())))
+            except (OSError, ValueError):
+                evidence.listed_dirs.add(_norm_token(base))
     for match in _PATH_PATTERNS[0].finditer(output):
         evidence.read_files.add(_norm_path(match.group(0)))
     for match in _LISTED_FILE.finditer(output):
         evidence.listed_names.add(match.group(1).split()[0])
+    for match in _MCP_DIR_LINE.finditer(output):
+        name = match.group(1).strip().rstrip("/")
+        if name:
+            evidence.listed_names.add(name)
+    for match in _MCP_FILE_LINE.finditer(output):
+        name = match.group(1).strip()
+        if name:
+            evidence.listed_names.add(name)
     try:
         import json
 

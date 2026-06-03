@@ -203,6 +203,39 @@ def test_is_personal_memory_question_and_enforce_memory() -> None:
     assert kept == reply
 
 
+def test_mcp_list_directory_populates_evidence() -> None:
+    from secretary.agent.grounding import collect_read_evidence, enforce_grounded_reply
+
+    output = (
+        "[FILE] .DS_Store\n"
+        "[DIR] Lumina\n"
+        "[DIR] open-design\n"
+    )
+    steps = [
+        _FakeStep(
+            tool_call=_FakeToolCall(
+                name="mcp_filesystem_list_directory",
+                arguments={"path": "/Users/me/Documents/My Projects"},
+            ),
+            tool_output=output,
+        )
+    ]
+    evidence = collect_read_evidence(steps)
+    assert "Lumina" in evidence.listed_names
+    assert "open-design" in evidence.listed_names
+
+    reply = "你的 My Projects 里有：Lumina、open-design 等。"
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "我手上都有哪些项目，在 my project 文件夹",
+        ["mcp_filesystem_list_directory"],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert verified
+    assert kept == reply
+
+
 def test_enforce_grounded_reply_allows_search_files_listing_when_verified() -> None:
     from secretary.agent.grounding import enforce_grounded_reply, reply_simulates_file_listing
 
