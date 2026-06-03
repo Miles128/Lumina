@@ -33,6 +33,10 @@ from secretary.agent.grounding import (
     collect_read_evidence,
     enforce_grounded_reply,
     format_verify_retry,
+    has_read_grounding,
+    infer_list_dir_target,
+    is_filesystem_question,
+    reply_defers_filesystem_work,
     requires_forced_read_tool,
     sanitize_filesystem_reply,
     should_retry_for_grounding,
@@ -187,6 +191,9 @@ class AgentLoop:
         max_grounding_retries = 2
         verify_retries = 0
         max_verify_retries = 1
+        auto_list_dir_used = False
+        preflight_list_dir_used = False
+        user_message = self._latest_user_message(current_messages)
 
         for step_idx in range(self._max_steps):
             iteration = step_idx + 1
@@ -223,7 +230,67 @@ class AgentLoop:
             payload = self._build_payload(current_messages, tool_schemas, native=self._native_tools_enabled)
             user_message = self._latest_user_message(current_messages)
             force_read = requires_forced_read_tool(user_message, used_tools)
-            on_delta = None if force_read else self._build_reply_delta_callback(iteration)
+            needs_preflight = (
+                step_idx == 0
+                and not preflight_list_dir_used
+                and not has_read_grounding(used_tools)
+                and is_filesystem_question(user_message)
+                and "list_dir" in self._tools
+            )
+            if needs_preflight:
+                target = infer_list_dir_target(user_message)
+                if target:
+                    preflight_list_dir_used = True
+                    auto_list_dir_used = True
+                    list_tool = self._tools["list_dir"]
+                    list_args = {"path": target}
+                    try:
+                        list_output = list_tool.execute(list_args, self._working_dir)
+                    except Exception as exc:
+                        list_output = f"Error: {exc}"
+                    list_call = ToolCall(
+                        name="list_dir",
+                        arguments=list_args,
+                        id="call_preflight_list_dir",
+                    )
+                    steps.append(
+                        StepResult(
+                            thought="",
+                            tool_call=list_call,
+                            tool_output=list_output,
+                        )
+                    )
+                    used_tools.append("list_dir")
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_started",
+                            iteration=iteration,
+                            tool_name="list_dir",
+                            detail=_tool_action_detail(list_tool, list_args, self._working_dir),
+                        )
+                    )
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_finished",
+                            iteration=iteration,
+                            tool_name="list_dir",
+                            success=not str(list_output).startswith("Error:"),
+                        )
+                    )
+                    current_messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[System] list_dir 已执行: {target}\n"
+                            f"{list_output}\n"
+                            "请根据以上真实列表直接回答用户，禁止说「稍等」或声称无读权限。"
+                        ),
+                    })
+                    force_read = False
+
+            block_stream = force_read or (
+                is_filesystem_question(user_message) and not has_read_grounding(used_tools)
+            )
+            on_delta = None if block_stream else self._build_reply_delta_callback(iteration)
 
             raw, tool_call, assistant_message, native_used = self._invoke_model(
                 payload,
@@ -244,6 +311,62 @@ class AgentLoop:
             if tool_call is None:
                 reply = self._sanitize_reply(thought, snapshot)
                 reply = sanitize_filesystem_reply(reply)
+                if (
+                    not auto_list_dir_used
+                    and not has_read_grounding(used_tools)
+                    and is_filesystem_question(user_message)
+                    and reply_defers_filesystem_work(reply)
+                    and "list_dir" in self._tools
+                ):
+                    target = infer_list_dir_target(user_message, reply)
+                    if target:
+                        auto_list_dir_used = True
+                        list_tool = self._tools["list_dir"]
+                        list_args = {"path": target}
+                        try:
+                            list_output = list_tool.execute(list_args, self._working_dir)
+                        except Exception as exc:
+                            list_output = f"Error: {exc}"
+                        list_call = ToolCall(
+                            name="list_dir",
+                            arguments=list_args,
+                            id=f"call_auto_list_dir_{step_idx}",
+                        )
+                        steps.append(
+                            StepResult(
+                                thought=thought,
+                                tool_call=list_call,
+                                tool_output=list_output,
+                            )
+                        )
+                        used_tools.append("list_dir")
+                        self._emit_progress(
+                            ProgressEvent(
+                                kind="tool_started",
+                                iteration=iteration,
+                                tool_name="list_dir",
+                                detail=_tool_action_detail(list_tool, list_args, self._working_dir),
+                            )
+                        )
+                        self._emit_progress(
+                            ProgressEvent(
+                                kind="tool_finished",
+                                iteration=iteration,
+                                tool_name="list_dir",
+                                success=not str(list_output).startswith("Error:"),
+                            )
+                        )
+                        self._append_tool_result_messages(
+                            current_messages,
+                            raw=raw or f"[auto] list_dir {target}",
+                            tool_call=list_call,
+                            tool_output=list_output,
+                            assistant_message=assistant_message,
+                            native_used=native_used,
+                            step_idx=step_idx,
+                        )
+                        continue
+
                 if (
                     grounding_retries < max_grounding_retries
                     and should_retry_for_grounding(user_message, reply, used_tools)
@@ -717,6 +840,7 @@ class AgentLoop:
                 "- For local files, directories, or project structure: call list_dir, file_read, or search_files BEFORE answering.\n"
                 "- Never invent file paths, filenames, or file contents.\n"
                 "- Never paste simulated `$ ls`, `total N`, permission lines, or directory trees (├──) in your reply.\n"
+                "- Never tell the user Lumina lacks read permission; list_dir names are enough for project lists; use file_read for contents.\n"
                 "- In final answers, only mention files that appeared in tool results.\n"
                 "- Use one tool call per step.\n"
                 "- Write tools (file_write, patch, file_delete, shell) need user confirmation.\n"
@@ -738,7 +862,8 @@ class AgentLoop:
                 "- Use only one tool per step.\n"
                 "- After receiving tool results, decide if you need more steps or can answer.\n"
                 "- When done, provide the final answer without any tool-call blocks.\n"
-                "- Read tools (file_read, list_dir) execute immediately without confirmation.\n"
+                "- Read tools (file_read, list_dir, search_files) execute immediately without confirmation.\n"
+                "- Never claim you can only see directory structure — list_dir already returns real file and folder names.\n"
                 "- New files can be created without repeated prompts after session write authorization.\n"
                 "- Modifying or deleting files always needs user confirmation.\n"
                 "- Write tools (file_write, patch, file_delete, shell) follow the authorization rules above.\n"
@@ -836,12 +961,6 @@ class ListDirTool(Tool):
         if not path.is_dir():
             return f"Error: not a directory: {path}"
 
-        try:
-            if not os.access(path, os.R_OK):
-                return f"Error: no read permission: {path}"
-        except OSError as exc:
-            return f"Error: {exc}"
-
         recursive = arguments.get("recursive", False)
         pattern = arguments.get("pattern", "*")
 
@@ -856,19 +975,11 @@ class ListDirTool(Tool):
                         dirs.clear()
                         continue
                     for d in sorted(dirs):
-                        dp = Path(root) / d
-                        try:
-                            if os.access(dp, os.R_OK):
-                                lines.append(f"  {'  ' * depth}📁 {d}/")
-                            else:
-                                lines.append(f"  {'  ' * depth}🔒 {d}/")
-                        except OSError:
-                            lines.append(f"  {'  ' * depth}🔒 {d}/")
+                        lines.append(f"  {'  ' * depth}📁 {d}/")
                     for f in sorted(files):
                         fp = Path(root) / f
                         try:
-                            size = fp.stat().st_size
-                            size_str = _human_size(size)
+                            size_str = _human_size(fp.stat().st_size)
                         except OSError:
                             size_str = "?"
                         lines.append(f"  {'  ' * depth}📄 {f}  ({size_str})")
@@ -879,17 +990,12 @@ class ListDirTool(Tool):
                 entries = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
                 ext_counts: dict[str, int] = {}
                 for entry in entries:
-                    try:
-                        if not os.access(entry, os.R_OK):
-                            lines.append(f"🔒 {entry.name}")
-                            continue
-                    except OSError:
-                        lines.append(f"🔒 {entry.name}")
-                        continue
                     if entry.is_dir():
                         try:
                             count = sum(1 for _ in entry.iterdir())
                             lines.append(f"📁 {entry.name}/  ({count} items)")
+                        except PermissionError:
+                            lines.append(f"📁 {entry.name}/  (子项不可列)")
                         except OSError:
                             lines.append(f"📁 {entry.name}/")
                     else:
@@ -912,7 +1018,12 @@ class ListDirTool(Tool):
             return f"Error listing directory: {exc}"
 
         header = f"📂 {path} ({len(lines)} entries)"
-        return f"{header}\n" + "\n".join(lines)
+        footer = (
+            "注：📁/📄 行是真实目录项名称，可直接用于回答「有哪些文件夹/项目」。"
+            "需要文件内容时用 file_read；按关键词找目录/文件用 search_files。"
+            "不要对用户声称灵犀「没有读权限」或「只能看目录结构」。"
+        )
+        return f"{header}\n" + "\n".join(lines) + f"\n\n{footer}"
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         path = _resolve_path(str(arguments.get("path", ".")), working_dir)
@@ -949,12 +1060,6 @@ class FileReadTool(Tool):
             return f"Error: not a file: {path}"
 
         try:
-            if not os.access(path, os.R_OK):
-                return f"Error: no read permission: {path}"
-        except OSError as exc:
-            return f"Error: {exc}"
-
-        try:
             file_size = path.stat().st_size
             if file_size > READABLE_MAX_BYTES:
                 return f"Error: file too large ({_human_size(file_size)}), max {_human_size(READABLE_MAX_BYTES)}"
@@ -971,6 +1076,8 @@ class FileReadTool(Tool):
             if offset + limit < total_lines:
                 body += f"\n... ({total_lines - offset - limit} more lines)"
             return f"{header}\n{body}"
+        except PermissionError:
+            return f"Error: permission denied: {path}"
         except Exception as exc:
             return f"Error reading file: {exc}"
 

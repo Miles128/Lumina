@@ -156,6 +156,22 @@ class ChatService:
         if is_identity_request(cleaned, history):
             return self._handle_identity_gate(cleaned)
 
+        from secretary.agent.project_author import (
+            is_project_author_question,
+            lookup_project_author,
+        )
+
+        if is_project_author_question(cleaned):
+            fast = lookup_project_author(cleaned, self._shell_working_dir())
+            if fast:
+                return self._finish_gate_reply(
+                    cleaned,
+                    fast,
+                    used_llm=False,
+                    used_tools=["file_read"],
+                    grounding_verified=True,
+                )
+
         web_plan = resolve_web_search(
             cleaned,
             history,
@@ -217,9 +233,12 @@ class ChatService:
             )
 
         if decision.action == GateAction.DIRECT:
-            from secretary.agent.grounding import is_filesystem_question
+            from secretary.agent.grounding import (
+                is_filesystem_question,
+                is_personal_memory_question,
+            )
 
-            if is_filesystem_question(cleaned):
+            if is_filesystem_question(cleaned) or is_personal_memory_question(cleaned):
                 decision = GateDecision(action=GateAction.CONTINUE, intent=decision.intent)
             else:
                 return self._run_direct(
@@ -289,7 +308,14 @@ class ChatService:
             ]
             self._pending_llm_config = llm_config
 
-        safe_reply = self._prepare_user_reply(result.reply, "system:confirmed", llm_config)
+        safe_reply, _, _ = self._prepare_user_reply(
+            result.reply,
+            "system:confirmed",
+            llm_config,
+            used_tools=result.used_tools,
+            grounding_verified=result.grounding_verified,
+            grounding_note=result.grounding_note,
+        )
         self._append_history("system:confirmed", safe_reply)
         self._save_to_session("assistant", safe_reply)
 
@@ -316,8 +342,17 @@ class ChatService:
         used_llm: bool,
         profile_excerpt: str = "",
         memory_hits: int = 0,
+        used_tools: list[str] | None = None,
+        grounding_verified: bool = True,
     ) -> ChatResult:
-        safe_reply = self._prepare_user_reply(reply, user_message, None)
+        tools = list(used_tools or [])
+        safe_reply, verified, note = self._prepare_user_reply(
+            reply,
+            user_message,
+            None,
+            used_tools=tools,
+            grounding_verified=grounding_verified,
+        )
         self._append_history(user_message, safe_reply)
         self._save_to_session("user", user_message)
         self._save_to_session("assistant", safe_reply)
@@ -326,6 +361,9 @@ class ChatService:
             profile_excerpt=profile_excerpt,
             used_llm=used_llm,
             memory_hits=memory_hits,
+            used_tools=tools or None,
+            grounding_verified=verified,
+            grounding_note=note,
         )
 
     def _handle_sync_gate(self, user_message: str) -> ChatResult:
@@ -429,7 +467,7 @@ class ChatService:
             )
             if progress_callback and stream_started:
                 progress_callback(ProgressEvent(kind="reply_end", iteration=1))
-            reply = self._prepare_user_reply(reply, cleaned, llm_config)
+            reply, verified, note = self._prepare_user_reply(reply, cleaned, llm_config)
             self._hermes.end_session(session_id, summary=reply[:200])
             self._append_history(cleaned, reply)
             self._save_to_session("assistant", reply)
@@ -440,6 +478,8 @@ class ChatService:
                 used_llm=True,
                 memory_hits=len(hits),
                 total_steps=1,
+                grounding_verified=verified,
+                grounding_note=note,
             )
         except AgentError as error:
             fallback = (
@@ -521,7 +561,7 @@ class ChatService:
                 temperature=self._temperature(),
                 timeout=120.0,
             )
-            reply = self._prepare_user_reply(reply, cleaned, llm_config)
+            reply, verified, note = self._prepare_user_reply(reply, cleaned, llm_config)
             self._hermes.end_session(session_id, summary=reply[:200])
             self._append_history(cleaned, reply)
             self._save_to_session("assistant", reply)
@@ -532,6 +572,8 @@ class ChatService:
                 used_llm=True,
                 memory_hits=memory_hits,
                 used_tools=["web_search"],
+                grounding_verified=verified,
+                grounding_note=note,
                 total_steps=2,
                 route="web_search",
             )
@@ -587,7 +629,7 @@ class ChatService:
                 f"⚡ 执行命令: `{forced_shell_command}`\n\n"
                 "是否允许？"
             )
-            safe_reply = self._prepare_user_reply(raw_reply, cleaned, llm_config)
+            safe_reply, _, _ = self._prepare_user_reply(raw_reply, cleaned, llm_config)
             self._append_history(cleaned, safe_reply)
             self._save_to_session("assistant", safe_reply)
             return ChatResult(
@@ -662,7 +704,14 @@ class ChatService:
         *,
         memory_hits: int,
     ) -> ChatResult:
-        safe_reply = self._prepare_user_reply(result.reply, cleaned, llm_config)
+        safe_reply, grounding_verified, grounding_note = self._prepare_user_reply(
+            result.reply,
+            cleaned,
+            llm_config,
+            used_tools=result.used_tools,
+            grounding_verified=result.grounding_verified,
+            grounding_note=result.grounding_note,
+        )
 
         if result.pending_confirmation:
             self._pending = result.pending_confirmation
@@ -706,8 +755,8 @@ class ChatService:
             used_tools=result.used_tools,
             total_steps=result.total_steps,
             pending_confirmation=result.pending_confirmation,
-            grounding_verified=result.grounding_verified,
-            grounding_note=result.grounding_note,
+            grounding_verified=grounding_verified,
+            grounding_note=grounding_note,
             files_read=result.files_read or None,
             **_confirmation_ui(result.pending_confirmation),
         )
@@ -717,9 +766,22 @@ class ChatService:
         raw_reply: str,
         user_message: str,
         llm_config: LlmConfig | None,
-    ) -> str:
+        *,
+        used_tools: list[str] | None = None,
+        grounding_verified: bool = True,
+        grounding_note: str = "",
+    ) -> tuple[str, bool, str]:
+        from secretary.agent.grounding import enforce_grounded_reply
+
         rewritten = rewrite_if_forbidden_label(raw_reply, user_message, llm_config)
-        return sanitize_user_facing_reply(rewritten, user_message)
+        sanitized = sanitize_user_facing_reply(rewritten, user_message)
+        return enforce_grounded_reply(
+            sanitized,
+            user_message,
+            list(used_tools or []),
+            grounding_verified=grounding_verified,
+            grounding_note=grounding_note,
+        )
 
     def _temperature(self) -> float:
         if self._agent_config_store is not None:
@@ -842,7 +904,9 @@ class ChatService:
             "- 需要执行操作时，使用 tool-call 调用工具\n"
             "- 实时信息（天气、新闻、股价、汇率等）必须先调用 web_search 联网搜索；"
             "不要说「无法联网」或让用户安装天气/搜索技能\n"
-            "- 读文件和浏览目录可以直接执行，不需要确认\n"
+            "- 读文件和浏览目录可以直接执行，不需要确认；禁止对用户说「读权限有限」「只能看目录结构」\n"
+            "- 回答「有哪些项目/文件夹」时，list_dir 返回的 📁/📄 名称即可，不必先读每个文件内容；"
+            "需要内容时用 file_read，按关键词用 search_files\n"
             "- 新建文件可在「本次授权」后免重复确认；修改或删除文件每次都要确认\n"
             "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
             "- 不要分析用户情绪，直接回应具体问题\n"

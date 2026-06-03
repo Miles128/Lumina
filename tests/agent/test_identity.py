@@ -12,6 +12,11 @@ def test_author_request_markers() -> None:
     assert is_author_request("你的作者是谁")
     assert not is_author_request("你是谁")
     assert not is_author_request("做一下自我介绍")
+    assert not is_author_request("open-design 作者是谁")
+    assert not is_author_request("找 open design 的作者")
+    assert not is_author_request("open design 的作者是谁啊")
+    assert not is_author_request("Lumina 项目作者是谁")
+    assert not is_author_request("~/Documents/My Projects/open-design 谁写的")
 
 
 def test_identity_not_author() -> None:

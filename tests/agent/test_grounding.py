@@ -32,13 +32,54 @@ class _FakeStep:
 def test_is_filesystem_question_detects_file_queries() -> None:
     assert is_filesystem_question("帮我看看 README.md 写了什么")
     assert is_filesystem_question("Lumina 项目里有哪些 Python 文件")
+    assert is_filesystem_question("open-design 作者是谁")
     assert not is_filesystem_question("今天天气怎么样")
 
 
 def test_mentions_local_files_detects_paths() -> None:
     assert mentions_local_files("在 src/secretary/agent/loop.py 里")
     assert mentions_local_files("config.json 里配置了 API key")
+    assert mentions_local_files("好，那我再查一下 ~/Documents/My Projects/ 目录下的内容。")
     assert not mentions_local_files("你可以先列一下需求")
+
+
+def test_deferral_reply_triggers_retry() -> None:
+    from secretary.agent.grounding import reply_defers_filesystem_work
+
+    promise = "好，那我再查一下 ~/Documents/My Projects/ 目录。稍等，查完告诉你。"
+    assert reply_defers_filesystem_work(promise)
+    assert should_retry_for_grounding(
+        "查一下 ~/Documents/My Projects/ 里有哪些项目",
+        promise,
+        [],
+    )
+
+
+def test_infer_list_dir_target_handles_spaces() -> None:
+    from secretary.agent.grounding import infer_list_dir_target
+
+    target = infer_list_dir_target(
+        "查一下 ~/Documents/My Projects/ 目录下的内容",
+        "我再查 ~/Documents/My Projects/",
+    )
+    assert target is not None
+    assert "My Projects" in target
+    assert "有哪些" not in target
+
+
+def test_infer_list_dir_target_strips_chinese_suffix(tmp_path: Path) -> None:
+    from secretary.agent.grounding import infer_list_dir_target
+
+    projects = tmp_path / "My Projects"
+    projects.mkdir()
+    target = infer_list_dir_target(
+        f"查一下 {projects} 里有哪些项目",
+        "好，我查 /Users/sihai/Documents/My Projects/ 目录下的内容。稍等，查完告诉你。",
+    )
+    assert target is not None
+    assert str(projects.resolve()) == target or "My Projects" in target
+    assert "稍等" not in target
+    assert "有哪些" not in target
 
 
 def test_has_read_grounding() -> None:
@@ -125,6 +166,41 @@ def test_reply_simulates_file_listing_detects_fake_ls() -> None:
     assert not verified
     assert "无法确认" in replaced
     assert note
+
+
+def test_is_personal_memory_question_and_enforce_memory() -> None:
+    from secretary.agent.grounding import (
+        UNGROUNDED_MEMORY_FALLBACK,
+        enforce_grounded_reply,
+        is_personal_memory_question,
+    )
+
+    assert is_personal_memory_question("再找")
+    assert is_personal_memory_question("总结一下我最近在读什么")
+    reply = (
+        "翻了对话历史，你提到的书就这两本：\n"
+        "1. **《启示录》**\n"
+        "2. **《俞军产品方法论》**"
+    )
+    blocked, verified, _note = enforce_grounded_reply(
+        reply,
+        "再找",
+        [],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert not verified
+    assert blocked == UNGROUNDED_MEMORY_FALLBACK
+
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "再找",
+        ["search_memory"],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert verified
+    assert kept == reply
 
 
 def test_enforce_grounded_reply_allows_search_files_listing_when_verified() -> None:

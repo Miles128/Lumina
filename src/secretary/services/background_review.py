@@ -23,9 +23,11 @@ _REVIEW_SYSTEM = """你是记忆整理器。根据本轮对话，判断是否应
 {"action":"none"|"add"|"replace","target":"memory"|"user","text":"","old_text":"","reason":""}
 
 规则：
+- 只从 User 消息提取事实；禁止从 Assistant 回复中提取或固化（助手可能幻觉）
 - 用户明确说出的个人信息（姓名、职业、所在地、习惯、偏好、目标、家庭关系等）→ action=add, target=user
 - 用户画像类稳定事实优先写入 target=user；任务/项目/环境类稳定事实 → target=memory
 - 只记录稳定、可复用的事实，不要记临时闲聊、单次问答
+- 阅读书目、项目作者、文件列表等须由用户亲口说出；助手推断的 action=none
 - 不确定时 action=none
 - replace/remove 需要 old_text 精确匹配现有内容片段
 - text 用简洁中文陈述句，不要引号套话

@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, nativeImage } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 
 const BACKEND_HOST = "127.0.0.1";
 const BACKEND_PORT = 8765;
@@ -21,6 +21,29 @@ function projectRoot() {
   return path.resolve(__dirname, "..");
 }
 
+function killPortHolder(port) {
+  return new Promise((resolve) => {
+    exec(`lsof -ti :${port} 2>/dev/null`, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve();
+        return;
+      }
+      for (const pid of stdout.trim().split("\n")) {
+        const numeric = Number(pid);
+        if (!Number.isFinite(numeric) || numeric === process.pid) {
+          continue;
+        }
+        try {
+          process.kill(numeric, "SIGKILL");
+        } catch (_killError) {
+          // ignore stale pid
+        }
+      }
+      setTimeout(resolve, 600);
+    });
+  });
+}
+
 function startBackend() {
   if (backendProcess) return;
   const env = { ...process.env, PYTHONPATH: path.join(projectRoot(), "src") };
@@ -33,15 +56,23 @@ function startBackend() {
     console.log(`[backend] ${data.toString().trimEnd()}`);
   });
   backendProcess.stderr.on("data", (data) => {
-    console.error(`[backend:err] ${data.toString().trimEnd()}`);
+    const text = data.toString();
+    console.error(`[backend:err] ${text.trimEnd()}`);
+    if (text.includes("address already in use")) {
+      killPortHolder(BACKEND_PORT).then(() => {
+        backendProcess = null;
+        startBackend();
+      });
+    }
   });
   backendProcess.on("exit", (code) => {
     console.log(`[backend] exited with code ${code}`);
     backendProcess = null;
     if (isQuitting) return;
-    waitForBackend(2).then((stillUp) => {
+    waitForBackend(2).then(async (stillUp) => {
       if (stillUp) return;
       console.log(`[backend] restarting in ${RESTART_DELAY_MS / 1000}s...`);
+      await killPortHolder(BACKEND_PORT);
       setTimeout(startBackend, RESTART_DELAY_MS);
     });
   });
@@ -49,6 +80,11 @@ function startBackend() {
 
 async function ensureBackend() {
   if (await waitForBackend(2)) return;
+  await killPortHolder(BACKEND_PORT);
+  startBackend();
+  if (await waitForBackend(30)) return;
+  await killPortHolder(BACKEND_PORT);
+  backendProcess = null;
   startBackend();
   await waitForBackend(30);
 }

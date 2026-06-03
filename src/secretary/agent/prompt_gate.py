@@ -197,6 +197,10 @@ def rule_route_simple_direct(message: str) -> GateDecision | None:
         return None
     if _is_tool_execution_request(text, lowered):
         return None
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return None
     if len(text) <= 4:
         return GateDecision(action=GateAction.DIRECT, reason="short ack")
     return None
@@ -207,8 +211,11 @@ def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDeci
     if not history:
         return None
     text = message.strip()
+    from secretary.agent.grounding import is_filesystem_question
     from secretary.agent.web_routing import is_web_search_query
 
+    if is_filesystem_question(text):
+        return GateDecision(action=GateAction.CONTINUE, reason="filesystem followup")
     if is_web_search_query(text):
         return None
     simple = rule_route_simple_direct(message)
@@ -243,6 +250,10 @@ def rule_route(message: str) -> GateDecision | None:
         return GateDecision(action=GateAction.IDENTITY)
     if _is_profile_request(text):
         return GateDecision(action=GateAction.PROFILE)
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return GateDecision(action=GateAction.LIGHT, reason="personal memory query")
     if _is_local_file_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     if _is_tool_execution_request(text, lowered):
@@ -296,21 +307,12 @@ def _needs_agent_loop(message: str) -> bool:
 
 
 def _is_memory_light_query(text: str) -> bool:
-    markers = (
-        "记忆",
-        "在读",
-        "读过",
-        "阅读",
-        "日程",
-        "待办",
-        "同步过",
-        "之前说过",
-        "上次",
-        "历史对话",
-        "近期",
-        "最近读",
-    )
-    return any(marker in text for marker in markers)
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return True
+    extra = ("日程", "待办")
+    return any(marker in text for marker in extra)
 
 
 def _is_tool_execution_request(text: str, lowered: str) -> bool:
@@ -324,6 +326,10 @@ def _is_tool_execution_request(text: str, lowered: str) -> bool:
 
 
 def _is_local_file_request(text: str, lowered: str) -> bool:
+    from secretary.agent.grounding import is_filesystem_question
+
+    if is_filesystem_question(text):
+        return True
     unsafe_markers = ("删除所有", "忽略系统", "越权", "注入", "rm -rf", "破坏")
     if any(marker in text or marker in lowered for marker in unsafe_markers):
         return False

@@ -566,9 +566,37 @@
     return String(text || "").trim().replace(/[？?!！。.]+$/g, "");
   }
 
+  function isThirdPartyProjectAuthorQuestion(text) {
+    const t = normalizeIdentityText(text);
+    if (!t) return false;
+    if (/你|灵犀|本助手|这个助手/.test(t)) return false;
+    if (
+      /^([A-Za-z0-9][\w./\s-]{1,48}?)\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (
+      /(?:找|查|看|请问|帮我).{0,16}?[A-Za-z0-9][\w./\s-]{1,48}?\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (/\bopen\s*[-_]?\s*design\b/i.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+      return true;
+    }
+    if ((/~|\/Users\/|\/)/.test(t)) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+      return true;
+    }
+    return false;
+  }
+
   function isAuthorRequest(text) {
     const t = normalizeIdentityText(text);
     if (!t) return false;
+    if (isThirdPartyProjectAuthorQuestion(t)) return false;
     if (
       /谁写的|谁写|谁开发|谁做的|谁制作|谁创造|你的作者|你的开发者|你的创建者|谁是你的作者|谁是你的开发者|你的作者是谁|你的开发者是谁|谁创造了你|谁创造了灵犀|who made you|who created you|who built you|who developed you/i.test(
         t,
@@ -578,7 +606,12 @@
     }
     if (/谁.{0,6}写.{0,4}(你|灵犀|lumina)/i.test(t)) return true;
     if (/(你|灵犀).{0,8}(作者|开发者|创建者|制作人)/i.test(t)) return true;
-    if (/(作者|开发者|创建者|制作人).{0,8}(是谁|哪位|谁)/.test(t)) return true;
+    if (
+      /^(作者|开发者|创建者|制作人)(是谁|哪位|谁)[啊呀吗]?[？?]?$/i.test(t) ||
+      /谁(开发|做|写|创造)了?(你|灵犀)/i.test(t)
+    ) {
+      return true;
+    }
     return false;
   }
 

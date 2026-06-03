@@ -8,6 +8,45 @@ from pathlib import Path
 from typing import Any
 
 READ_TOOL_NAMES = frozenset({"list_dir", "file_read", "search_files"})
+MEMORY_TOOL_NAMES = frozenset({"search_memory", "session_search"})
+
+_PERSONAL_MEMORY_MARKERS = (
+    "在读",
+    "读过",
+    "阅读",
+    "读书",
+    "书目",
+    "书籍",
+    "书《",
+    "记忆",
+    "说过",
+    "之前说",
+    "上次",
+    "历史对话",
+    "近期",
+    "最近读",
+    "微信读书",
+    "weread",
+    "同步过",
+    "个人经历",
+    "再找",
+    "再查",
+    "重新找",
+    "重新查",
+)
+
+_CHAT_HISTORY_EVIDENCE_MARKERS = (
+    "翻了对话历史",
+    "对话历史",
+    "聊天记录",
+    "你提到过",
+    "你之前说",
+    "你说过",
+    "没有其他阅读",
+    "没有新的阅读",
+    "就这两本",
+    "只有这两",
+)
 
 _FILE_QUESTION_MARKERS = (
     "文件",
@@ -38,6 +77,13 @@ _FILE_QUESTION_MARKERS = (
     "有没有",
     "内容是什么",
     "里面有什么",
+    "作者是谁",
+    "作者",
+    "谁写的",
+    "谁开发",
+    "维护者",
+    "package.json",
+    "readme",
     "src/",
     "config/",
     ".py",
@@ -53,10 +99,35 @@ _FILE_QUESTION_MARKERS = (
     "search_files",
 )
 
+_CJK_START = re.compile(r"[\u4e00-\u9fff]")
 _PATH_PATTERNS = (
-    re.compile(r"(?:~/|/Users/|\./|\../)[^\s\"'`]+"),
+    re.compile(
+        r"(?:~/[^\s\u4e00-\u9fff\"'`<>|，。；;!?]+|"
+        r"/Users/[^/\s\u4e00-\u9fff\"'`<>|]+(?:/[^\s\u4e00-\u9fff\"'`<>|，。；;!?]+)*)"
+    ),
+    re.compile(
+        r"/(?:[A-Za-z0-9_.]+)(?:/(?:[A-Za-z0-9_.][A-Za-z0-9_. -]*))*"
+    ),
+    re.compile(r"(?:\./|\../)[^\s\"'`]+"),
     re.compile(r"\b[\w./-]+\.(?:py|js|ts|tsx|jsx|json|md|yaml|yml|toml|txt|csv)\b", re.IGNORECASE),
     re.compile(r"`([^`]+\.(?:py|js|ts|md|json|yaml|yml|toml|txt))`"),
+)
+
+_DEFERRAL_MARKERS = (
+    "稍等",
+    "等一下",
+    "等等",
+    "查完",
+    "马上",
+    "我去查",
+    "我再查",
+    "正在查",
+    "稍后",
+    "一会儿",
+    "待会",
+    "完成后",
+    "告诉你",
+    "回复你",
 )
 
 _MCP_READ_HINTS = ("read", "list", "search", "glob", "directory", "file")
@@ -75,6 +146,13 @@ UNGROUNDED_LISTING_FALLBACK = (
     "或工具结果不足以支撑当前回答。\n"
     "请再发一次「列出 ~/Documents/简历/ 里所有文件」，我会在进度里显示「浏览目录」或「搜索文件」后再回答；"
     "或者你在终端运行 `ls ~/Documents/简历/` 把输出贴给我。"
+)
+
+UNGROUNDED_MEMORY_FALLBACK = (
+    "我无法核实你的阅读或个人记录——本轮没有调用 search_memory / session_search，"
+    "不能把对话里助手自己说过的话当成事实。\n"
+    "请点右上角「同步」导入微信读书等数据，或直接告诉我书名；"
+    "也可以说「搜索记忆里我读过的书」让我先查本地记忆库。"
 )
 
 
@@ -123,6 +201,14 @@ def mentions_local_files(text: str) -> bool:
     return any(marker in cleaned for marker in file_talk)
 
 
+def is_personal_memory_question(message: str) -> bool:
+    text = message.strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in text or marker in lowered for marker in _PERSONAL_MEMORY_MARKERS)
+
+
 def has_read_grounding(used_tools: list[str]) -> bool:
     for name in used_tools:
         if name in READ_TOOL_NAMES:
@@ -131,6 +217,73 @@ def has_read_grounding(used_tools: list[str]) -> bool:
         if name.startswith("mcp_") and any(hint in lowered for hint in _MCP_READ_HINTS):
             return True
     return False
+
+
+def has_memory_grounding(used_tools: list[str]) -> bool:
+    return any(name in MEMORY_TOOL_NAMES for name in used_tools)
+
+
+def reply_cites_chat_history_as_fact(reply: str) -> bool:
+    text = reply.strip()
+    if not text:
+        return False
+    return any(marker in text for marker in _CHAT_HISTORY_EVIDENCE_MARKERS)
+
+
+def reply_defers_filesystem_work(reply: str) -> bool:
+    """Model promised to check later without calling tools in this turn."""
+    text = reply.strip()
+    if not text:
+        return False
+    return any(marker in text for marker in _DEFERRAL_MARKERS)
+
+
+def _normalize_path_token(raw: str) -> str:
+    token = raw.strip().strip("`\"'").rstrip("。，,.!?；;")
+    match = _CJK_START.search(token)
+    if match and match.start() > 0:
+        token = token[: match.start()].rstrip("/ ").strip()
+    return token
+
+
+def _extract_path_candidates(text: str) -> list[str]:
+    found: list[str] = []
+    for pattern in _PATH_PATTERNS:
+        for match in pattern.finditer(text):
+            token = _normalize_path_token(match.group(0))
+            if len(token) >= 3:
+                found.append(token)
+    return found
+
+
+def infer_list_dir_target(user_message: str, reply: str = "") -> str | None:
+    """Best-effort directory path from user text or assistant reply."""
+    candidates: list[str] = []
+    for text in (user_message, reply):
+        candidates.extend(_extract_path_candidates(text))
+    if not candidates:
+        return None
+
+    resolved: list[Path] = []
+    for token in sorted(set(candidates), key=len, reverse=True):
+        try:
+            path = Path(token).expanduser()
+        except (OSError, ValueError):
+            continue
+        if path.is_dir():
+            resolved.append(path.resolve())
+            continue
+        parent = path.parent
+        if parent.is_dir() and token.rstrip().endswith("/"):
+            resolved.append(parent.resolve())
+
+    if resolved:
+        return str(resolved[0])
+
+    for token in sorted(set(candidates), key=len, reverse=True):
+        if token.startswith("~") or token.startswith("/"):
+            return token
+    return candidates[0]
 
 
 def should_retry_for_grounding(
@@ -144,6 +297,8 @@ def should_retry_for_grounding(
         return True
     if not is_filesystem_question(user_message):
         return False
+    if reply_defers_filesystem_work(reply):
+        return True
     if mentions_local_files(reply):
         return True
     return True
@@ -205,6 +360,38 @@ def sanitize_filesystem_reply(reply: str) -> str:
     return cleaned.strip()
 
 
+def reply_fabricates_file_inspection(reply: str) -> bool:
+    """Claims to have opened/read specific project files without tool evidence."""
+    text = reply.strip().lower()
+    if not text:
+        return False
+    markers = (
+        "package.json",
+        "readme.md",
+        "readme",
+        "author 字段",
+        "authors",
+        "我查了",
+        "我读了",
+        "重新查",
+        "打开看了",
+        "读取了",
+        "文件里",
+        "字段为",
+    )
+    return any(marker in text for marker in markers)
+
+
+def reply_injects_lumina_identity_as_project_author(reply: str) -> bool:
+    """Blocks answering 四海 / Lumina dev as a repo author without tool proof."""
+    if "四海" not in reply:
+        return False
+    return any(
+        marker in reply
+        for marker in ("作者", "author", "开发者", "维护者", "谁写", "谁开发")
+    )
+
+
 def enforce_grounded_reply(
     reply: str,
     user_message: str,
@@ -220,10 +407,23 @@ def enforce_grounded_reply(
     if has_read_grounding(used_tools) and grounding_verified:
         return reply, grounding_verified, grounding_note
 
+    if is_filesystem_question(user_message) and not has_read_grounding(used_tools):
+        note = grounding_note or "未调用 list_dir / file_read / search_files，已阻止未核实内容"
+        return UNGROUNDED_LISTING_FALLBACK, False, note
+
+    if is_personal_memory_question(user_message) and not has_memory_grounding(used_tools):
+        note = grounding_note or "未调用 search_memory / session_search，已阻止未核实的个人记录"
+        return UNGROUNDED_MEMORY_FALLBACK, False, note
+
+    if reply_cites_chat_history_as_fact(reply) and not has_memory_grounding(used_tools):
+        note = grounding_note or "回复仅引用对话历史，未检索本地记忆"
+        return UNGROUNDED_MEMORY_FALLBACK, False, note
+
     risky = reply_simulates_file_listing(reply) or (
-        is_filesystem_question(user_message)
-        and mentions_local_files(reply)
-        and not has_read_grounding(used_tools)
+        mentions_local_files(reply)
+        or reply_defers_filesystem_work(reply)
+        or reply_fabricates_file_inspection(reply)
+        or reply_injects_lumina_identity_as_project_author(reply)
     )
     if not risky:
         return reply, grounding_verified, grounding_note
@@ -269,6 +469,16 @@ def verify_reply_against_evidence(
         )
 
     if not has_evidence(evidence):
+        if reply_defers_filesystem_work(reply):
+            return VerificationResult(
+                ok=False,
+                note="回复声称稍后再查，但未在本轮调用 list_dir/file_read/search_files",
+            )
+        if mentions_local_files(reply):
+            return VerificationResult(
+                ok=False,
+                note="回复含路径但未调用文件工具核实",
+            )
         return VerificationResult(ok=True)
 
     claimed = _extract_claimed_references(reply)
@@ -327,6 +537,7 @@ def evidence_summary(evidence: ReadEvidence) -> str:
 GROUNDING_RETRY_USER = (
     "[System] 你尚未用 list_dir、file_read 或 search_files 核实本地文件系统，"
     "禁止编造路径、文件名或文件内容；禁止在正文里伪造 `$ ls` 输出、目录树（├──）或假装已列目录。"
+    "禁止只说「稍等」「查完告诉你」却不调用工具——必须在本轮内完成 list_dir 并给出结果。"
     "请先调用只读工具查证，再仅复述工具返回的原始结果。"
     "若文件不存在，明确说「未找到」，不要猜测。"
 )

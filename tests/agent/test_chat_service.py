@@ -268,7 +268,8 @@ def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
         ) as mocked:
             result = service.reply("列出 src 目录下的文件")
     assert mocked.called
-    assert result.reply == "好的，我来处理。"
+    assert "list_dir" in result.reply or "file_read" in result.reply
+    assert result.grounding_verified is False
 
 
 def test_prepare_user_reply_runs_rewriter_then_sanitizer(tmp_path: Path) -> None:

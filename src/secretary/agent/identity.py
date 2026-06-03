@@ -117,10 +117,68 @@ def get_author_reply() -> str:
     return LUMINA_AUTHOR_REPLY
 
 
+def _targets_lumina_assistant(cleaned: str) -> bool:
+    """Author question is about the Lumina app / assistant, not a local repo or folder."""
+    lowered = cleaned.lower()
+    if re.search(r"(你|灵犀|本助手|这个助手|本应用)", cleaned, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\blumina\b", cleaned, flags=re.IGNORECASE) and not re.search(
+        r"(项目|仓库|repo|package|库|文件夹|目录)",
+        cleaned,
+    ):
+        return True
+    if any(marker in cleaned or marker in lowered for marker in _AUTHOR_MARKERS):
+        return True
+    if re.fullmatch(
+        r"(作者|开发者|创建者|制作人)(是谁|哪位|谁)[啊呀吗]?[？?]?",
+        cleaned,
+    ):
+        return True
+    if re.search(r"谁(开发|做|写|创造)了?(你|灵犀)", cleaned, flags=re.IGNORECASE):
+        return True
+    return False
+
+
+def _targets_third_party_project(cleaned: str) -> bool:
+    """e.g. open-design 作者是谁 — should use file tools, not Lumina author gate."""
+    if re.search(r"(你|灵犀|本助手|这个助手)", cleaned, flags=re.IGNORECASE):
+        return False
+    if re.search(
+        r"^([A-Za-z0-9][\w./~-]*(?:\s+[A-Za-z0-9][\w./~-]*)*)\s*(?:项目|仓库|repo)?\s*的?\s*"
+        r"(作者|开发者|创建者|维护者|谁写|谁开发)",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"(?:找|查|看|请问|帮我).{0,16}?"
+        r"[A-Za-z0-9][\w./\s-]{1,48}?\s*(?:项目|仓库|repo)?\s*的?\s*"
+        r"(作者|开发者|创建者|维护者|谁写|谁开发)",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"\bopen\s*[-_]?\s*design\b", cleaned, flags=re.IGNORECASE) and re.search(
+        r"(作者|开发者|创建者|维护者|谁写|谁开发)",
+        cleaned,
+    ):
+        return True
+    if re.search(r"(~|/Users/|/)", cleaned) and re.search(
+        r"(作者|开发者|创建者|维护者|谁写|谁开发)",
+        cleaned,
+    ):
+        return True
+    return False
+
+
 def is_author_request(text: str) -> bool:
-    """True when the user asks who created/developed Lumina."""
+    """True when the user asks who created/developed Lumina (the assistant app)."""
     cleaned = _normalize_request_text(text)
     if not cleaned:
+        return False
+    if _targets_third_party_project(cleaned):
+        return False
+    if not _targets_lumina_assistant(cleaned):
         return False
     lowered = cleaned.lower()
     if any(marker in cleaned or marker in lowered for marker in _AUTHOR_MARKERS):

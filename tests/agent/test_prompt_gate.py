@@ -297,6 +297,18 @@ def test_prompt_gate_clarify_always_passes_through(tmp_path) -> None:
     assert decision.action == GateAction.CONTINUE
 
 
+def test_rule_route_zai_zhao_not_direct() -> None:
+    from secretary.agent.prompt_gate import rule_route_followup, rule_route_simple_direct
+
+    assert rule_route_simple_direct("再找") is None
+    followup = rule_route_followup(
+        "再找",
+        [{"role": "user", "content": "最近在读什么"}, {"role": "assistant", "content": "..."}],
+    )
+    assert followup is not None
+    assert followup.action != GateAction.DIRECT
+
+
 def test_prompt_gate_routes_light_for_memory_query(tmp_path) -> None:
     settings = Settings(
         data_dir=tmp_path / "data",
