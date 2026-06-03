@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 WEATHER_ASK_LOCATION = (
     "无法获取你的位置。要查实时天气，请告诉我你在哪个城市（例如：杭州、上海），"
@@ -103,12 +104,44 @@ def is_web_search_query(text: str) -> bool:
     return any(marker in cleaned or marker in lowered for marker in _WEB_SEARCH_MARKERS)
 
 
-def build_web_search_query(text: str) -> str:
+def build_web_search_query(
+    text: str,
+    history: list[dict[str, str]] | None = None,
+    *,
+    location_city: str | None = None,
+) -> str:
     cleaned = text.strip()
-    city = resolve_weather_city(cleaned)
-    if city and is_weather_request(cleaned):
+    city = resolve_weather_city(cleaned, history, location_city=location_city)
+    if city and is_weather_request(cleaned, history):
         return build_weather_search_query(city)
     return cleaned
+
+
+@dataclass(frozen=True)
+class WebSearchPlan:
+    """Resolved web_search pipeline input for chat_service."""
+
+    search_query: str
+    needs_location: bool = False
+
+
+def resolve_web_search(
+    text: str,
+    history: list[dict[str, str]] | None = None,
+    *,
+    location_city: str | None = None,
+) -> WebSearchPlan | None:
+    """Return a web search plan, or None if this turn is not a realtime/web query."""
+    cleaned = text.strip()
+    if not cleaned or not is_web_search_query(cleaned):
+        return None
+    chat_history = history or []
+    if is_weather_request(cleaned, chat_history):
+        city = resolve_weather_city(cleaned, chat_history, location_city=location_city)
+        if not city:
+            return WebSearchPlan(search_query="", needs_location=True)
+        return WebSearchPlan(search_query=build_weather_search_query(city))
+    return WebSearchPlan(search_query=build_web_search_query(cleaned, chat_history))
 
 
 def _recently_asked_weather_location(history: list[dict[str, str]]) -> bool:

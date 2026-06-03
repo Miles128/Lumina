@@ -37,7 +37,7 @@ def _build_chat_service(tmp_path: Path, *, api_key: str = "") -> ChatService:
 def test_chat_fallback_without_llm(tmp_path: Path) -> None:
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=None):
         service = _build_chat_service(tmp_path)
-        result = service.reply("你好，今天天气怎么样")
+        result = service.reply("你好")
     assert result.used_llm is False
     assert "你好" in result.reply
     assert "还没有查到相关的本地记忆" not in result.reply
@@ -70,7 +70,7 @@ def test_chat_uses_llm_without_memory(tmp_path: Path) -> None:
     )
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
         with patch(
-            "secretary.agent.loop.chat_completion",
+            "secretary.agent.chat_service.chat_completion",
             return_value="我可以正常聊天，本地记忆为空也没关系。",
         ):
             service = _build_chat_service(tmp_path, api_key="test-key")
@@ -157,6 +157,29 @@ def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
     assert result.route == "web_search"
 
 
+def test_chat_web_search_markers_use_unified_pipeline(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.web_search.WebSearchTool.execute",
+            return_value="🔍 '搜一下 OpenAI 最新动态' — 1 results\n1. OpenAI Blog",
+        ):
+            with patch(
+                "secretary.agent.chat_service.chat_completion",
+                return_value="OpenAI 最近发布了新模型。",
+            ) as llm:
+                result = service.reply("搜一下 OpenAI 最新动态")
+    llm.assert_called_once()
+    assert "web_search" in (result.used_tools or [])
+    assert result.route == "web_search"
+
+
 def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None:
     config = LlmConfig(
         api_key="test-key",
@@ -225,7 +248,7 @@ def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
             "run_agent_turn",
             return_value=fake_result,
         ) as mocked:
-            result = service.reply("帮我整理一下")
+            result = service.reply("列出 src 目录下的文件")
     assert mocked.called
     assert result.reply == "好的，我来处理。"
 

@@ -65,11 +65,13 @@ def test_rule_route_simple_direct_skips_file_question() -> None:
     assert rule_route_simple_direct("列出简历目录") is None
 
 
-def test_prompt_gate_routes_web_search_to_light(tmp_path) -> None:
+def test_prompt_gate_web_search_not_routed_in_gate(tmp_path) -> None:
+    """Realtime/web queries are handled in chat_service before PromptGate."""
     settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
     gate = PromptGate(settings)
+    assert rule_route("搜一下 OpenAI 最新动态") is None
     decision = gate.evaluate("搜一下 OpenAI 最新动态")
-    assert decision.action == GateAction.LIGHT
+    assert decision.action != GateAction.LIGHT
 
 
 def test_rule_route_followup_trivial_goes_direct() -> None:

@@ -220,20 +220,6 @@ def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDeci
     return GateDecision(action=GateAction.DIRECT, reason="followup chat")
 
 
-def _should_route_web_search(text: str, history: list[dict[str, str]] | None = None) -> bool:
-    from secretary.agent.web_routing import (
-        is_weather_request,
-        is_web_search_query,
-        resolve_weather_city,
-    )
-
-    if not is_web_search_query(text):
-        return False
-    if is_weather_request(text, history) and not resolve_weather_city(text, history or []):
-        return False
-    return True
-
-
 def rule_route(message: str) -> GateDecision | None:
     text = message.strip()
     if not text:
@@ -250,8 +236,6 @@ def rule_route(message: str) -> GateDecision | None:
         return GateDecision(action=GateAction.IDENTITY)
     if _is_profile_request(text):
         return GateDecision(action=GateAction.PROFILE)
-    if _should_route_web_search(text):
-        return GateDecision(action=GateAction.LIGHT, reason="web search")
     if _is_local_file_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     if _is_tool_execution_request(text, lowered):
@@ -438,13 +422,6 @@ class PromptGate:
         followup = rule_route_followup(message, chat_history)
         if followup is not None:
             return followup
-
-        from secretary.agent.web_routing import is_web_search_query, is_weather_request
-
-        if is_web_search_query(message.strip()) and not is_weather_request(
-            message.strip(), chat_history
-        ):
-            return GateDecision(action=GateAction.LIGHT, reason="web search")
 
         if not _needs_agent_loop(message):
             if _is_memory_light_query(message.strip()):

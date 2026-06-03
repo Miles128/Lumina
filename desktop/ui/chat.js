@@ -251,9 +251,12 @@
       const traceId = createTraceId();
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
       let locationCity = "";
-      if (window.LuminaLocation?.isWeatherQuery(text) && !window.LuminaLocation.hasExplicitCity(text)) {
+      const needsDeviceLocation =
+        window.LuminaLocation?.isWeatherQuery(text) &&
+        !window.LuminaLocation.hasExplicitCity(text);
+      if (needsDeviceLocation) {
         showTyping(true, "正在获取位置…");
-        locationCity = await window.LuminaLocation.cityForWeatherQuery(text).catch(() => "");
+        locationCity = await window.LuminaLocation.locationCityForChat(text).catch(() => "");
         showTyping(true, t("chat.typing.understand"));
       }
       const response = await window.SecretaryAPI.request(

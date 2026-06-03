@@ -31,7 +31,7 @@ def reverse_geocode_city(latitude: float, longitude: float) -> str | None:
             response = client.get(NOMINATIM_URL, params=params, headers=headers)
             response.raise_for_status()
             payload = response.json()
-    except (httpx.HTTPError, ValueError) as error:
+    except (httpx.HTTPError, OSError, ValueError) as error:
         logger.warning("reverse geocode failed: %s", error)
         return None
 

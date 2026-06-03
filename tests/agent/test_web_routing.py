@@ -8,6 +8,7 @@ from secretary.agent.web_routing import (
     is_weather_request,
     is_web_search_query,
     resolve_weather_city,
+    resolve_web_search,
 )
 
 
@@ -40,3 +41,16 @@ def test_weather_followup_city() -> None:
 def test_web_search_query_markers() -> None:
     assert is_web_search_query("搜一下 OpenAI 最新新闻")
     assert not is_web_search_query("你好")
+
+
+def test_resolve_web_search_weather_needs_location() -> None:
+    plan = resolve_web_search("今天天气怎么样")
+    assert plan is not None
+    assert plan.needs_location is True
+
+
+def test_resolve_web_search_general_query() -> None:
+    plan = resolve_web_search("搜一下 OpenAI 最新动态")
+    assert plan is not None
+    assert plan.needs_location is False
+    assert plan.search_query == "搜一下 OpenAI 最新动态"

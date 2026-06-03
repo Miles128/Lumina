@@ -119,11 +119,46 @@
     return city;
   }
 
+  function isWebSearchQuery(text) {
+    const cleaned = String(text || "").trim();
+    if (!cleaned) {
+      return false;
+    }
+    if (isWeatherQuery(cleaned)) {
+      return true;
+    }
+    const markers = [
+      "搜一下",
+      "搜索一下",
+      "查一下",
+      "帮我搜",
+      "帮我查",
+      "联网",
+      "网上",
+      "最新新闻",
+      "热点",
+      "股价",
+      "汇率",
+      "实时",
+      "现在多少",
+      "多少钱",
+    ];
+    const lowered = cleaned.toLowerCase();
+    return markers.some((marker) => cleaned.includes(marker) || lowered.includes(marker));
+  }
+
   async function cityForWeatherQuery(text) {
     if (!isWeatherQuery(text) || hasExplicitCity(text)) {
       return "";
     }
     return ensureCity();
+  }
+
+  async function locationCityForChat(text) {
+    if (!isWebSearchQuery(text)) {
+      return "";
+    }
+    return cityForWeatherQuery(text);
   }
 
   window.LuminaLocation = {
@@ -132,9 +167,11 @@
     isEnabled,
     setEnabled,
     isWeatherQuery,
+    isWebSearchQuery,
     hasExplicitCity,
     getCachedCity,
     ensureCity,
     cityForWeatherQuery,
+    locationCityForChat,
   };
 })();

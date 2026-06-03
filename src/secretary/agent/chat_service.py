@@ -28,12 +28,7 @@ from secretary.agent.loop import (
     WebFetchTool,
 )
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.web_routing import (
-    WEATHER_ASK_LOCATION,
-    build_weather_search_query,
-    is_weather_request,
-    resolve_weather_city,
-)
+from secretary.agent.web_routing import WEATHER_ASK_LOCATION, resolve_web_search
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
     LUMINA_IDENTITY_SYSTEM_BLOCK,
@@ -159,9 +154,9 @@ class ChatService:
         if is_identity_request(cleaned, history):
             return self._handle_identity_gate(cleaned)
 
-        if is_weather_request(cleaned, history):
-            city = resolve_weather_city(cleaned, history, location_city=location_city)
-            if not city:
+        web_plan = resolve_web_search(cleaned, history, location_city=location_city)
+        if web_plan is not None:
+            if web_plan.needs_location:
                 return self._finish_gate_reply(
                     cleaned,
                     WEATHER_ASK_LOCATION,
@@ -171,14 +166,14 @@ class ChatService:
             if llm_config is None:
                 return self._finish_gate_reply(
                     cleaned,
-                    "还没配置大模型，暂时无法联网查天气。",
+                    "还没配置大模型，暂时无法联网查询。",
                     used_llm=False,
                 )
             view = self._profile_service.get_view()
             hits = self._store.search(cleaned, limit=5)
             return self._run_web_search_reply(
                 cleaned,
-                build_weather_search_query(city),
+                web_plan.search_query,
                 llm_config,
                 view.markdown[:800],
                 memory_hits=len(hits),
