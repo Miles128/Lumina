@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 
 MAX_HISTORY_TURNS = 16
 MAX_MESSAGE_CHARS = 2000
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -513,6 +516,20 @@ class ChatService:
                 used_llm=False,
                 memory_hits=len(hits),
             )
+        except Exception as exc:
+            logger.exception("Unexpected error in chat turn")
+            fallback = (
+                f"抱歉，处理请求时出错（{type(exc).__name__}）。\n\n"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+            )
+            self._append_history(cleaned, fallback)
+            self._save_to_session("assistant", fallback)
+            return ChatResult(
+                reply=fallback,
+                profile_excerpt=profile_excerpt,
+                used_llm=False,
+                memory_hits=len(hits),
+            )
 
     def _run_web_agent_turn(
         self,
@@ -693,6 +710,20 @@ class ChatService:
             fallback = (
                 f"{error}\n\n"
                 "我先切换到离线模式：\n"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+            )
+            self._append_history(cleaned, fallback)
+            self._save_to_session("assistant", fallback)
+            return ChatResult(
+                reply=fallback,
+                profile_excerpt=profile_excerpt,
+                used_llm=False,
+                memory_hits=len(hits),
+            )
+        except Exception as exc:
+            logger.exception("Unexpected error in chat turn")
+            fallback = (
+                f"抱歉，处理请求时出错（{type(exc).__name__}）。\n\n"
                 f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
             )
             self._append_history(cleaned, fallback)
@@ -1009,15 +1040,14 @@ class ChatService:
                     snippet = snippet[:140] + "…"
                 lines.append(f"{index}. {item.title} — {snippet}")
             lines.append(
-                "\n配置 LLM_API_KEY 或在 Hermes config.yaml 里配好模型后，我可以更自然地对话。"
+                "\n配置 LLM_API_KEY 后我可以更自然地对话。请在灵犀的 .env 或 agent.json 中设置。"
             )
             return "\n".join(lines)
         return (
-            "我可以和你对话。当前还没配置大模型 API（可在 `.env` 设置 LLM_API_KEY，"
-            "或沿用 Hermes 的 ~/.hermes/config.yaml）。\n\n"
+            "还没配置大模型 API。请在你的灵犀项目目录创建 `.env` 文件：\n\n"
+            "```\nLLM_API_KEY=你的KEY\nLLM_BASE_URL=https://api.deepseek.com/v1\nLLM_MODEL=deepseek-chat\n```\n\n"
             f"你刚才说：{message}\n\n"
-            "即使没有本地记忆，配置好模型后我也能正常聊天。"
-            "想让我了解你的真实情况，可以点右上角「同步」。"
+            "配置好模型后我就能正常聊天了。想让我了解你的真实情况，可以点右上角「同步」。"
         )
 
     def _history_limit(self) -> int:
