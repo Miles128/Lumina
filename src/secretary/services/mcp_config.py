@@ -197,12 +197,14 @@ def _load_hermes_servers() -> dict[str, McpServerConfig]:
         url = str(item.get("url") or "")
         if not command and not url:
             continue
-        env = item.get("env") if isinstance(item.get("env"), dict) else {}
-        args = item.get("args") if isinstance(item.get("args"), list) else []
+        raw_env = item.get("env")
+        raw_args = item.get("args")
+        env: dict[str, str] = {str(k): str(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else {}
+        args: list[str] = [str(arg) for arg in raw_args] if isinstance(raw_args, list) else []
         parsed[str(name)] = McpServerConfig(
             command=command,
-            args=[str(arg) for arg in args],
-            env={str(k): str(v) for k, v in env.items()},
+            args=args,
+            env=env,
             url=url,
             transport=str(item.get("transport") or ("stdio" if command else "http")),
             timeout=int(item.get("timeout") or 120),

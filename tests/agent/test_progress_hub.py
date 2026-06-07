@@ -28,6 +28,19 @@ async def test_progress_hub_streams_events() -> None:
     assert any('"kind": "done"' in chunk for chunk in chunks)
 
 
+def test_progress_event_label_for_web_tools_shows_network() -> None:
+    started = progress_event_label(
+        ProgressEvent(kind="tool_started", iteration=1, tool_name="web_search"),
+    )
+    finished = progress_event_label(
+        ProgressEvent(kind="tool_finished", iteration=1, tool_name="web_fetch", success=True),
+    )
+    assert "网络连接" in started
+    assert "联网搜索" in started
+    assert "网络连接" in finished
+    assert "抓取网页" in finished
+
+
 def test_progress_event_label_for_mcp_tool() -> None:
     label = progress_event_label(
         ProgressEvent(kind="tool_started", iteration=2, tool_name="mcp_filesystem_read_file"),

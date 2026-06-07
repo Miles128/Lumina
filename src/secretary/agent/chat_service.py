@@ -13,22 +13,14 @@ from typing import TYPE_CHECKING, Callable
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig, resolve_llm_config
-from secretary.agent.loop import (
-    FileDeleteTool,
-    FileReadTool,
-    FileWriteTool,
-    ListDirTool,
-    LoopResult,
-    MemoryTool,
-    PendingConfirmation,
-    SearchMemoryTool,
-    SessionSearchTool,
-    ShellTool,
-    Tool,
-    WebFetchTool,
-)
+from secretary.agent.loop import LoopResult, PendingConfirmation
+from secretary.agent.tools.base import Tool
+from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
+from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
+from secretary.agent.tools.shell import ShellTool
+from secretary.agent.tools.web import WebFetchTool
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.web_routing import resolve_web_search
+from secretary.agent.web_routing import WebSearchPlan, resolve_web_search
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
     LUMINA_IDENTITY_SYSTEM_BLOCK,
@@ -189,9 +181,11 @@ class ChatService:
                 )
             view = self._profile_service.get_view()
             hits = self._store.search(cleaned, limit=5)
-            return self._run_web_search_reply(
+            return self._run_web_agent_turn(
                 cleaned,
-                web_plan.search_query,
+                web_plan,
+                view.markdown,
+                hits,
                 llm_config,
                 view.markdown[:800],
                 memory_hits=len(hits),
@@ -319,6 +313,7 @@ class ChatService:
         self._append_history("system:confirmed", safe_reply)
         self._save_to_session("assistant", safe_reply)
 
+        cui = _confirmation_ui(result.pending_confirmation)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt="",
@@ -327,7 +322,9 @@ class ChatService:
             used_tools=result.used_tools,
             total_steps=result.total_steps,
             pending_confirmation=result.pending_confirmation,
-            **_confirmation_ui(result.pending_confirmation),
+            confirmation_kind=cui.confirmation_kind,
+            allow_permanent_read=cui.allow_permanent_read,
+            allow_session_write=cui.allow_session_write,
         )
 
     def clear_history(self) -> None:
@@ -496,89 +493,82 @@ class ChatService:
                 memory_hits=len(hits),
             )
 
-    def _run_web_search_reply(
+    def _run_web_agent_turn(
         self,
         cleaned: str,
-        search_query: str,
+        plan: WebSearchPlan,
+        profile_markdown: str,
+        hits: list[MemoryChunk],
         llm_config: LlmConfig,
         profile_excerpt: str,
         *,
         memory_hits: int = 0,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
-        from secretary.agent.web_search import WebSearchTool
+        """Realtime/web queries: agent loop with web_search + web_fetch (model picks tools)."""
+        from secretary.agent.web_research import WEB_RESEARCH_APPENDIX
 
         session_id = self._get_or_create_session_id()
         self._hermes.create_session(session_id)
         self._save_to_session("user", cleaned)
 
-        if progress_callback is not None:
-            progress_callback(
-                ProgressEvent(
-                    kind="tool_started",
-                    iteration=1,
-                    tool_name="web_search",
-                    detail=search_query,
-                )
-            )
+        from secretary.agent.browser_tools import agent_browser_available
+        from secretary.agent.web_research import BROWSER_TOOL_GUIDANCE
 
-        tool = WebSearchTool()
-        search_output = tool.execute(
-            {"query": search_query, "engine": "auto", "limit": 5},
-            self._shell_working_dir(),
-        )
-        search_ok = not str(search_output).startswith("Error")
+        appendix = WEB_RESEARCH_APPENDIX
+        if agent_browser_available():
+            appendix += "\n\n" + BROWSER_TOOL_GUIDANCE
+        if plan.search_query.strip() != cleaned.strip():
+            appendix += f"\n- 若首轮检索不佳，可尝试关键词：{plan.search_query}"
 
-        if progress_callback is not None:
-            progress_callback(
-                ProgressEvent(
-                    kind="tool_finished",
-                    iteration=1,
-                    tool_name="web_search",
-                    success=search_ok,
-                    detail=str(search_output)[:320],
-                )
-            )
-
-        messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": (
-                    "你是灵犀。下面是一次 web_search 联网检索结果。"
-                    "请基于结果简洁回答用户；不要声称「无法联网」或让用户安装天气/搜索技能。"
-                    "若检索失败（以 Error 开头）或结果不足，如实说明并建议稍后重试或补充城市/关键词。"
-                ),
-            },
-        ]
+        system_prompt = self._build_system_prompt(profile_markdown, hits) + "\n\n" + appendix
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         messages.extend(self._load_history())
         messages.append({"role": "user", "content": cleaned})
-        messages.append({"role": "user", "content": f"[web_search 结果]\n{search_output}"})
+
+        tools = self._pick_web_tools(cleaned)
+        agent_plan = AgentTurnPlan(messages=messages, max_steps=8, tools=tools)
+
+        if progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    kind="iteration_started",
+                    iteration=1,
+                    message="网络连接 · 开始联网检索",
+                )
+            )
 
         try:
-            reply = chat_completion(
+            result = self._turn_orchestrator.run_agent_turn(
                 llm_config,
-                messages,
+                agent_plan,
                 temperature=self._temperature(),
-                timeout=120.0,
+                working_dir=self._shell_working_dir(),
+                progress_callback=progress_callback,
             )
-            reply, verified, note = self._prepare_user_reply(reply, cleaned, llm_config)
-            self._hermes.end_session(session_id, summary=reply[:200])
-            self._append_history(cleaned, reply)
-            self._save_to_session("assistant", reply)
-            self._background_review.schedule(cleaned, reply, llm_config)
-            return ChatResult(
-                reply=reply,
-                profile_excerpt=profile_excerpt,
-                used_llm=True,
+            chat = self._finalize_agent_result(
+                cleaned,
+                messages,
+                result,
+                llm_config,
+                session_id,
+                profile_excerpt,
                 memory_hits=memory_hits,
-                used_tools=["web_search"],
-                grounding_verified=verified,
-                grounding_note=note,
-                total_steps=2,
-                route="web_search",
+            )
+            return ChatResult(
+                reply=chat.reply,
+                profile_excerpt=chat.profile_excerpt,
+                used_llm=chat.used_llm,
+                memory_hits=chat.memory_hits,
+                used_tools=chat.used_tools,
+                total_steps=chat.total_steps,
+                pending_confirmation=chat.pending_confirmation,
+                grounding_verified=chat.grounding_verified,
+                grounding_note=chat.grounding_note,
+                route="web_agent",
             )
         except AgentError as error:
-            fallback = f"{error}\n\n检索结果摘要：\n{search_output[:1200]}"
+            fallback = f"{error}\n\n请稍后重试，或把问题收窄（例如指定平台/语言/时间范围）。"
             self._append_history(cleaned, fallback)
             self._save_to_session("assistant", fallback)
             return ChatResult(
@@ -586,8 +576,7 @@ class ChatService:
                 profile_excerpt=profile_excerpt,
                 used_llm=False,
                 memory_hits=memory_hits,
-                used_tools=["web_search"] if search_ok else [],
-                route="web_search",
+                route="web_agent",
             )
 
     def _run_agent(
@@ -632,6 +621,7 @@ class ChatService:
             safe_reply, _, _ = self._prepare_user_reply(raw_reply, cleaned, llm_config)
             self._append_history(cleaned, safe_reply)
             self._save_to_session("assistant", safe_reply)
+            cui2 = _confirmation_ui(pending)
             return ChatResult(
                 reply=safe_reply,
                 profile_excerpt=profile_excerpt,
@@ -640,7 +630,9 @@ class ChatService:
                 used_tools=[],
                 total_steps=1,
                 pending_confirmation=pending,
-                **_confirmation_ui(pending),
+                confirmation_kind=cui2.confirmation_kind,
+                allow_permanent_read=cui2.allow_permanent_read,
+                allow_session_write=cui2.allow_session_write,
             )
 
         light_mode = decision.action == GateAction.LIGHT
@@ -654,7 +646,7 @@ class ChatService:
         elif light_mode:
             tools = self._pick_tools(suggested)
         else:
-            tools = self._build_tools()
+            tools = self._append_browser_tools(self._build_tools(), cleaned)
 
         if filesystem_turn or not light_mode:
             tools = [*tools, self._make_spawn_tool(llm_config, session_id)]
@@ -747,6 +739,7 @@ class ChatService:
         if result.pending_confirmation is None:
             self._background_review.schedule(cleaned, safe_reply, llm_config)
 
+        cui3 = _confirmation_ui(result.pending_confirmation)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt=profile_excerpt,
@@ -755,10 +748,12 @@ class ChatService:
             used_tools=result.used_tools,
             total_steps=result.total_steps,
             pending_confirmation=result.pending_confirmation,
+            confirmation_kind=cui3.confirmation_kind,
+            allow_permanent_read=cui3.allow_permanent_read,
+            allow_session_write=cui3.allow_session_write,
             grounding_verified=grounding_verified,
             grounding_note=grounding_note,
             files_read=result.files_read or None,
-            **_confirmation_ui(result.pending_confirmation),
         )
 
     def _prepare_user_reply(
@@ -797,6 +792,35 @@ class ChatService:
             if path.is_dir():
                 return path.resolve()
         return Path.home()
+
+    def _pick_web_tools(self, user_message: str) -> list[Tool]:
+        from secretary.agent.tools.web import WebFetchTool
+        from secretary.agent.web_search import WebSearchTool
+
+        tools: list[Tool] = [WebSearchTool(), WebFetchTool()]
+        tools.extend(self._browser_tool_instances(user_message))
+        return tools
+
+    def _append_browser_tools(self, tools: list[Tool], user_message: str) -> list[Tool]:
+        from secretary.agent.browser_routing import needs_browser_tools
+
+        if not needs_browser_tools(user_message):
+            return tools
+        existing = {tool.name for tool in tools}
+        merged = list(tools)
+        for tool in self._browser_tool_instances(user_message):
+            if tool.name not in existing:
+                merged.append(tool)
+                existing.add(tool.name)
+        return merged
+
+    def _browser_tool_instances(self, user_message: str) -> list[Tool]:
+        from secretary.agent.browser_routing import needs_browser_tools
+        from secretary.agent.browser_tools import build_browser_tools
+
+        if not needs_browser_tools(user_message):
+            return []
+        return build_browser_tools(self._get_or_create_session_id())
 
     def _pick_tools(self, suggested: tuple[str, ...]) -> list[Tool]:
         all_tools = {tool.name: tool for tool in self._build_tools()}
@@ -857,6 +881,9 @@ class ChatService:
         return SpawnSubagentTool(runner, spawn_context)
 
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
+        from secretary.agent.browser_tools import agent_browser_available
+        from secretary.agent.web_research import BROWSER_TOOL_GUIDANCE
+
         soul = load_soul(self._settings.resolved_data_dir())
         skills = self._skills.prompt_block()
         exec_skills = self._exec_skills.prompt_block()
@@ -872,6 +899,12 @@ class ChatService:
             if self._response_style() == "brief"
             else f"- 语气档位：标准；在「{LUMINA_DEFAULT_STYLE}」基础上，先给结论，再补关键细节，避免啰嗦。\n"
         )
+        browser_rule = ""
+        if agent_browser_available():
+            browser_rule = (
+                "- 静态页优先 web_fetch；JS 渲染/登录/榜单等用 browser_open → browser_snapshot → "
+                "browser_click/browser_fill；完成后 browser_close\n"
+            )
 
         return (
             f"{soul}\n\n"
@@ -902,8 +935,10 @@ class ChatService:
             "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
             "- 记忆和画像里的片段不等于真实文件内容，不能当作文本引用\n"
             "- 需要执行操作时，使用 tool-call 调用工具\n"
-            "- 实时信息（天气、新闻、股价、汇率等）必须先调用 web_search 联网搜索；"
-            "不要说「无法联网」或让用户安装天气/搜索技能\n"
+            "- 实时信息（天气、新闻、股价、汇率、榜单等）必须先 web_search；"
+            "摘要不够时用 web_fetch 打开一手页面，可换关键词多搜几次；"
+            "禁止只给链接让用户自己去看；不要说「无法联网」\n"
+            f"{browser_rule}"
             "- 读文件和浏览目录可以直接执行，不需要确认；禁止对用户说「读权限有限」「只能看目录结构」\n"
             "- 回答「有哪些项目/文件夹」时，list_dir 返回的 📁/📄 名称即可，不必先读每个文件内容；"
             "需要内容时用 file_read，按关键词用 search_files\n"
@@ -916,6 +951,8 @@ class ChatService:
             "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
             "可用 goals 数组并行最多 2 个 explore；"
             "子任务只回摘要，关键结论需你自行整合后再回复用户"
+        ) + (
+            f"\n\n{BROWSER_TOOL_GUIDANCE}" if agent_browser_available() else ""
         )
 
     def _response_style(self) -> str:
@@ -1016,19 +1053,22 @@ class ChatService:
         self._hermes.add_message(session_id, role, content)
 
 
-def _confirmation_ui(pending: PendingConfirmation | None) -> dict[str, str | bool]:
+@dataclass(frozen=True)
+class _ConfirmationUi:
+    confirmation_kind: str = ""
+    allow_permanent_read: bool = False
+    allow_session_write: bool = False
+
+
+def _confirmation_ui(pending: PendingConfirmation | None) -> _ConfirmationUi:
     if pending is None:
-        return {
-            "confirmation_kind": "",
-            "allow_permanent_read": False,
-            "allow_session_write": False,
-        }
+        return _ConfirmationUi()
     kind = pending.confirmation_kind
-    return {
-        "confirmation_kind": kind,
-        "allow_permanent_read": False,
-        "allow_session_write": kind == "write_new",
-    }
+    return _ConfirmationUi(
+        confirmation_kind=kind,
+        allow_permanent_read=False,
+        allow_session_write=kind == "write_new",
+    )
 
 
 def _extract_forced_shell_command(text: str) -> str | None:

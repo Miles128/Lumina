@@ -141,7 +141,7 @@ class SubAgentRunner:
         self,
         *,
         messages: list[dict[str, str]],
-        tools: list,
+        tools: list[Any],
         max_steps: int,
         working_dir: Path,
         progress_callback: Callable[[ProgressEvent], None] | None,

@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import httpx
 
-from secretary.agent.loop import Tool
+from secretary.agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -197,16 +197,18 @@ def _bing(query: str, limit: int) -> list[SearchResult]:
         params={"q": query, "count": str(limit), "setlang": "zh-CN", "cc": "CN"},
     )
     lowered = html.lower()
-    if (
+    has_results = "b_algo" in html or "bing.com/ck/a" in html
+    if not has_results and (
         "captcha" in lowered
-        or "turnstile" in lowered
         or "unusual traffic" in lowered
-        or ("b_algo" not in html and "b_search" in lowered)
+        or "b_search" in lowered
     ):
         logger.info("Bing blocked or returned no result markup")
         return []
 
     results: list[SearchResult] = []
+    seen_urls: set[str] = set()
+
     for block in re.split(r'<li class="b_algo"[^>]*>', html)[1:]:
         heading = re.search(
             r'<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>\s*</h2>',
@@ -218,9 +220,46 @@ def _bing(query: str, limit: int) -> list[SearchResult]:
         url = _decode_bing_url(heading.group(1))
         if not title or not url or "bing.com/aclick" in url:
             continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         snippet_match = re.search(r'<p[^>]*>([\s\S]*?)</p>', block)
         snippet = _strip_html(snippet_match.group(1)) if snippet_match else ""
         results.append(SearchResult(title=title, url=url, snippet=snippet, engine="bing"))
+        if len(results) >= limit:
+            return results
+
+    for match in re.finditer(r'href="(https://www\.bing\.com/ck/a[^"]+)"', html):
+        raw_href = match.group(1).replace("&amp;", "&")
+        url = _decode_bing_url(raw_href)
+        if (
+            not url
+            or not url.startswith("http")
+            or "bing.com" in url
+            or "microsoft.com" in url
+            or url in seen_urls
+        ):
+            continue
+        seen_urls.add(url)
+        block_start = max(0, match.start() - 400)
+        block_end = min(len(html), match.end() + 600)
+        block = html[block_start:block_end]
+        title = ""
+        aria = re.search(r'aria-label="([^"]{3,120})"', block)
+        if aria:
+            title = _strip_html(aria.group(1))
+        if not title:
+            clamp = re.search(
+                r'class="[^"]*b_lineclamp[^"]*"[^>]*>([^<]{4,200})<',
+                block,
+            )
+            if clamp:
+                title = _strip_html(clamp.group(1))
+        if not title:
+            title = url
+        results.append(
+            SearchResult(title=title, url=url, snippet="", engine="bing"),
+        )
         if len(results) >= limit:
             break
     return results

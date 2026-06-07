@@ -37,5 +37,11 @@ jobs:
       - name: Prepare CI data directory
         run: mkdir -p "$LUMINA_DATA_DIR"
 
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Type check (mypy)
+        run: mypy src
+
       - name: Run tests
         run: pytest -q

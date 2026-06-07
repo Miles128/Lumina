@@ -34,6 +34,34 @@ def test_is_filesystem_question_detects_file_queries() -> None:
     assert is_filesystem_question("Lumina 项目里有哪些 Python 文件")
     assert is_filesystem_question("open-design 作者是谁")
     assert not is_filesystem_question("今天天气怎么样")
+    assert not is_filesystem_question("GitHub 最近一周最火的项目都有哪些？")
+    assert is_filesystem_question("我手上都有哪些项目，在 my project 文件夹里")
+
+
+def test_enforce_does_not_block_web_questions() -> None:
+    from secretary.agent.grounding import UNGROUNDED_LISTING_FALLBACK, enforce_grounded_reply
+
+    reply = "根据检索，本周 GitHub 上较热的 repo 包括 …"
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "GitHub 最近一周最火的项目都有哪些？",
+        [],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert kept == reply
+    assert verified is True
+    assert UNGROUNDED_LISTING_FALLBACK not in kept
+
+    kept2, verified2, _ = enforce_grounded_reply(
+        reply,
+        "GitHub 最近一周最火的项目都有哪些？",
+        ["web_search"],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert kept2 == reply
+    assert verified2 is True
 
 
 def test_mentions_local_files_detects_paths() -> None:
@@ -41,6 +69,45 @@ def test_mentions_local_files_detects_paths() -> None:
     assert mentions_local_files("config.json 里配置了 API key")
     assert mentions_local_files("好，那我再查一下 ~/Documents/My Projects/ 目录下的内容。")
     assert not mentions_local_files("你可以先列一下需求")
+
+
+def test_resolve_turn_user_message_skips_grounding_retry() -> None:
+    from secretary.agent.grounding import GROUNDING_RETRY_USER, resolve_turn_user_message
+
+    messages = [
+        {"role": "system", "content": "你是灵犀"},
+        {"role": "user", "content": "GitHub 最近一周最火的项目都有哪些？"},
+        {"role": "assistant", "content": "稍等"},
+        {"role": "user", "content": GROUNDING_RETRY_USER},
+    ]
+    assert resolve_turn_user_message(messages) == "GitHub 最近一周最火的项目都有哪些？"
+
+
+def test_should_not_retry_grounding_after_web_search() -> None:
+    from secretary.agent.grounding import should_retry_for_grounding
+
+    reply = "1. harry0703/MoneyPrinterTurbo\n2. microsoft/markitdown\n3. Lum1104/Understand-Anything"
+    assert not should_retry_for_grounding(
+        "GitHub 最近一周最火的项目都有哪些？",
+        reply,
+        ["web_search", "web_fetch"],
+    )
+
+
+def test_enforce_after_web_search_with_grounding_retry_in_history() -> None:
+    from secretary.agent.grounding import enforce_grounded_reply
+
+    reply = "本周 GitHub Trending：MoneyPrinterTurbo、markitdown、Understand-Anything …"
+    kept, verified, note = enforce_grounded_reply(
+        reply,
+        "你会上网查这个信息吗？GitHub 最近一周最火的项目都有哪些？",
+        ["web_search", "web_fetch"],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert verified
+    assert "无法确认" not in kept
+    assert "web_search" in note or "联网" in note
 
 
 def test_deferral_reply_triggers_retry() -> None:

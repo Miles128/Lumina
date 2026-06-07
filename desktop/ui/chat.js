@@ -376,8 +376,19 @@
     return false;
   }
 
+  function isOfflineOrSetupReply(response) {
+    if (!response || response.used_llm !== false) return false;
+    const reply = String(response.reply || "");
+    return (
+      /离线模式/.test(reply) ||
+      /还没配置大模型/.test(reply) ||
+      /无法连接大模型/.test(reply)
+    );
+  }
+
   function groundingUnverifiedReason(response) {
     if (!response) return "";
+    if (isOfflineOrSetupReply(response)) return "";
     if (response.grounding_note) return response.grounding_note;
     const reply = String(response.reply || "");
     if (replySimulatesFileListing(reply) && !usesFileTools(response)) {
@@ -394,6 +405,7 @@
 
   function shouldShowGroundingUnverified(response) {
     if (!response) return false;
+    if (isOfflineOrSetupReply(response)) return false;
     if (response.grounding_verified === false) return true;
     const reply = String(response.reply || "");
     if (replySimulatesFileListing(reply) && !usesFileTools(response)) return true;
@@ -661,6 +673,7 @@
       maxIteration: 0,
       hasTools: false,
       hasSubagent: false,
+      hasNetwork: false,
       panelVisible: false,
     };
     if (!progressListEl) return;
@@ -671,7 +684,11 @@
   }
 
   function shouldShowProgressPanel() {
-    return progressSession.maxIteration > 0;
+    return (
+      progressSession.maxIteration > 0 ||
+      progressSession.hasTools ||
+      progressSession.hasNetwork
+    );
   }
 
   function isSubagentProgressEvent(event) {
@@ -699,6 +716,18 @@
     const kind = String(event?.kind || "");
     if (isSubagentProgressEvent(event)) {
       item.classList.add("is-subagent");
+    }
+    const toolName = String(event?.tool_name || "");
+    if (
+      (kind === "tool_started" || kind === "tool_finished") &&
+      (toolName === "web_search" ||
+        toolName === "web_fetch" ||
+        toolName.startsWith("browser_"))
+    ) {
+      item.classList.add("is-network");
+    }
+    if (kind === "iteration_started" && /网络连接/.test(label)) {
+      item.classList.add("is-network");
     }
     if (kind === "tool_finished" && event.success === false) {
       item.classList.add("is-error");
@@ -735,6 +764,18 @@
       kind === "subagent_finished"
     ) {
       progressSession.hasTools = true;
+    }
+    const toolName = String(event?.tool_name || "");
+    if (
+      (kind === "tool_started" || kind === "tool_finished") &&
+      (toolName === "web_search" ||
+        toolName === "web_fetch" ||
+        toolName.startsWith("browser_"))
+    ) {
+      progressSession.hasNetwork = true;
+    }
+    if (kind === "iteration_started" && /网络连接/.test(String(event?.message || label))) {
+      progressSession.hasNetwork = true;
     }
     if (kind === "subagent_started" || kind === "subagent_finished" || event?.sub_run_id) {
       progressSession.hasSubagent = true;

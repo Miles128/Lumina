@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
@@ -53,8 +54,8 @@ class MemoryCompressionService:
         self,
         llm_config: LlmConfig,
         *,
-        read,
-        write,
+        read: Callable[[], str],
+        write: Callable[[str], None],
         max_chars: int,
         label: str,
     ) -> bool:

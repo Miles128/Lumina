@@ -481,6 +481,10 @@ html, body {
   padding-left: 10px;
 }
 
+.agent-progress li.is-network .progress-label {
+  color: var(--accent, #3b82f6);
+}
+
 .agent-progress li.is-subagent .progress-label {
   color: #4338ca;
 }

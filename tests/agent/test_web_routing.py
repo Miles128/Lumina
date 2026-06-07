@@ -43,6 +43,19 @@ def test_web_search_query_markers() -> None:
     assert not is_web_search_query("你好")
 
 
+def test_strip_rhetorical_prefix_for_github_query() -> None:
+    from secretary.agent.web_routing import build_search_query
+
+    query = build_search_query("你会上网查这个信息吗？GitHub 最近一周最火的项目都有哪些？")
+    assert "GitHub" in query
+    assert "你会上网查" not in query
+
+
+def test_local_path_lookup_is_not_web_search() -> None:
+    assert not is_web_search_query("查一下 ~/Documents/My Projects/ 里有哪些项目")
+    assert is_web_search_query("GitHub 最近一周最火的项目都有哪些？")
+
+
 def test_resolve_web_search_never_blocks_on_missing_location() -> None:
     plan = resolve_web_search("今天天气怎么样")
     assert plan is not None

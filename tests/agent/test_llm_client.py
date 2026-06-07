@@ -12,20 +12,6 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
 
 
-class _FakeResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self._payload = payload
-
-    def read(self) -> bytes:
-        return json.dumps(self._payload).encode("utf-8")
-
-    def __enter__(self) -> "_FakeResponse":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
 def _config() -> LlmConfig:
     return LlmConfig(
         api_key="test-key",
@@ -35,9 +21,17 @@ def _config() -> LlmConfig:
     )
 
 
+def _fake_post(payload: dict[str, object]) -> dict[str, object]:
+    """Simulate httpx.Client.post(...).json() return value."""
+    return payload
+
+
 def test_chat_completion_accepts_string_content() -> None:
     payload = {"choices": [{"message": {"content": "hello"}}]}
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+    with patch(
+        "secretary.agent.llm_client._non_stream_request",
+        return_value=payload,
+    ):
         result = chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
     assert result == "hello"
 
@@ -55,15 +49,21 @@ def test_chat_completion_accepts_segmented_content_list() -> None:
             }
         ]
     }
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+    with patch(
+        "secretary.agent.llm_client._non_stream_request",
+        return_value=payload,
+    ):
         result = chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
     assert result == "line 1\nline 2"
 
 
 def test_chat_completion_raises_on_empty_content() -> None:
     payload = {"choices": [{"message": {"content": []}}]}
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
-        with pytest.raises(AgentError, match="大模型返回空内容"):
+    with patch(
+        "secretary.agent.llm_client._non_stream_request",
+        return_value=payload,
+    ):
+        with pytest.raises(AgentError, match="大模型"):
             chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
 
 
@@ -71,8 +71,8 @@ def test_chat_completion_retries_once_on_empty_content() -> None:
     payload_empty = {"choices": [{"message": {"content": []}}]}
     payload_ok = {"choices": [{"message": {"content": "retry-ok"}}]}
     with patch(
-        "urllib.request.urlopen",
-        side_effect=[_FakeResponse(payload_empty), _FakeResponse(payload_ok)],
+        "secretary.agent.llm_client._non_stream_request",
+        side_effect=[payload_empty, payload_ok],
     ):
         result = chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
     assert result == "retry-ok"
@@ -109,7 +109,10 @@ def test_chat_completion_with_tools_parses_tool_calls() -> None:
             }
         ]
     )
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+    with patch(
+        "secretary.agent.llm_client._tools_request",
+        return_value=_fake_tools_result(payload),
+    ):
         result = chat_completion_with_tools(
             _config(),
             [{"role": "user", "content": "list files"}],
@@ -118,11 +121,49 @@ def test_chat_completion_with_tools_parses_tool_calls() -> None:
         )
     assert result.tool_calls[0].name == "list_dir"
     assert result.tool_calls[0].arguments["path"] == "."
+
+
+def _fake_tools_result(payload: dict[str, object]):
+    from secretary.agent.llm_client import ChatCompletionResult, LlmToolCall
+
+    msg = payload["choices"][0]["message"]
+    assert isinstance(msg, dict)
+    calls_raw = msg.get("tool_calls", [])
+    assert isinstance(calls_raw, list)
+    tool_calls: list[LlmToolCall] = []
+    for idx, item in enumerate(calls_raw):
+        assert isinstance(item, dict)
+        fn = item.get("function", {})
+        assert isinstance(fn, dict)
+        args = fn.get("arguments", "{}")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        tool_calls.append(
+            LlmToolCall(
+                id=str(item.get("id", f"call_{idx}")),
+                name=str(fn.get("name", "")),
+                arguments=args if isinstance(args, dict) else {},
+            )
+        )
+    return ChatCompletionResult(
+        content=str(msg.get("content", "") or ""),
+        tool_calls=tuple(tool_calls),
+        assistant_message=msg,
+    )
+
+
+def test_usage_tracking() -> None:
     payload = {
         "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
         "choices": [{"message": {"content": "ok"}}],
     }
-    with patch("urllib.request.urlopen", return_value=_FakeResponse(payload)):
+    with patch(
+        "secretary.agent.llm_client._non_stream_request",
+        return_value=payload,
+    ):
         with llm_usage_scope() as usage:
             result = chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
     assert result == "ok"

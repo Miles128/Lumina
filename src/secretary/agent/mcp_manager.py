@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.loop import Tool
+from secretary.agent.tools.base import Tool
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class McpManager:
         *,
         timeout: int,
     ) -> str:
-        return self._run(
+        return self._run(  # type: ignore[no-any-return]
             self._async_call_tool(server_name, tool_name, arguments),
             timeout=timeout + 5,
         )

@@ -36,7 +36,9 @@ class BriefingService:
         email = self._store.list_by_source(SourceKind.EMAIL, limit=5)
         weread = self._store.list_by_source(SourceKind.WEREAD, limit=5)
 
-        def titles(chunks: list[object]) -> str:
+        from collections.abc import Sequence
+
+        def titles(chunks: Sequence[object]) -> str:
             lines: list[str] = []
             for chunk in chunks:
                 title = getattr(chunk, "title", "")

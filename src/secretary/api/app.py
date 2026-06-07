@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from secretary.agent.chat_service import ChatResult, ChatService
 from secretary.agent.mcp_manager import McpManager
+from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
 from secretary.agent.llm_config import resolve_llm_config
@@ -420,8 +421,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Lumina", version="0.1.0", lifespan=lifespan)
 
-for key, value in _init_services().items():
-    setattr(app.state, key, value)
+# Ensure app.state is populated at import time (TestClient without context manager
+# may not trigger lifespan). The lifespan guard (hasattr check) prevents double init.
+if not hasattr(app.state, "store"):
+    for key, value in _init_services().items():
+        setattr(app.state, key, value)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -434,17 +439,20 @@ app.add_middleware(
 )
 
 
-def _svc(request: Request) -> object:
+from typing import Any
+
+
+def _svc(request: Request) -> Any:
     return request.app.state
 
 
-def _build_progress_callback(request: Request, trace_id: str):
+def _build_progress_callback(request: Request, trace_id: str) -> Callable[[ProgressEvent], None] | None:
     if not trace_id:
         return None
     hub: ProgressHub = request.app.state.progress_hub
     hub.open(trace_id)
 
-    def callback(event) -> None:
+    def callback(event: ProgressEvent) -> None:
         hub.publish(trace_id, event)
 
     return callback
@@ -655,7 +663,7 @@ def clear_profile_chat_derived(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/memory/search")
-def search_memory(q: str, limit: int = 10, request: Request = None) -> MemorySearchResponse:
+def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResponse:
     store: MemoryStore = _svc(request).store
     chunks = store.search(q, limit=limit)
     return MemorySearchResponse(
@@ -779,14 +787,14 @@ def update_durable_memory(
 
 
 @app.get("/api/memory/sessions/search")
-def search_sessions(q: str, limit: int = 10, request: Request = None) -> dict[str, object]:
+def search_sessions(request: Request, q: str, limit: int = 10) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     results = chat_service.hermes_memory.search_sessions(q, limit=limit)
     return {"query": q, "results": results}
 
 
 @app.get("/api/memory/episodes/search")
-def search_episodes(q: str, limit: int = 5, request: Request = None) -> dict[str, object]:
+def search_episodes(request: Request, q: str, limit: int = 5) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     results = chat_service.hermes_memory.search_episodes(q, limit=limit)
     return {"query": q, "results": results}
@@ -938,7 +946,7 @@ def test_agent_config(request: Request) -> AgentTestResponse:
 @app.get("/api/skills/sources")
 def list_skill_sources(request: Request) -> list[SkillSourceResponse]:
     skill_manager: SkillManager = _svc(request).skill_manager
-    return [SkillSourceResponse(**item) for item in skill_manager.list_sources()]
+    return [SkillSourceResponse(**item) for item in skill_manager.list_sources()]  # type: ignore[arg-type]
 
 
 @app.get("/api/skills/categories")
@@ -948,7 +956,7 @@ def list_skill_categories(request: Request) -> dict[str, list[str]]:
 
 
 @app.get("/api/skills/catalog")
-def list_skill_catalog(source: str | None = None, request: Request = None) -> list[SkillRecordResponse]:
+def list_skill_catalog(request: Request, source: str | None = None) -> list[SkillRecordResponse]:
     skill_manager: SkillManager = _svc(request).skill_manager
     records = skill_manager.catalog(source_key=source)
     return [
@@ -997,9 +1005,9 @@ def list_installed_skills(request: Request) -> list[SkillRecordResponse]:
 
 @app.post("/api/skills/install-all")
 def install_all_skills(
+    request: Request,
     source: str | None = None,
     install_mode: str = "link",
-    request: Request = None,
 ) -> SkillInstallAllResponse:
     skill_manager: SkillManager = _svc(request).skill_manager
     key = source.strip() if source else None
@@ -1138,7 +1146,7 @@ def briefing_latest() -> BriefingResponse:
 
 
 @app.get("/api/graph")
-def graph_data(filter: str = "all", request: Request = None) -> GraphResponse:
+def graph_data(request: Request, filter: str = "all") -> GraphResponse:
     workspace: KnowledgeWorkspace = _svc(request).workspace
     store: MemoryStore = _svc(request).store
     graph = GraphBuilder(workspace, store).build(filter_mode=filter)
@@ -1169,7 +1177,7 @@ async def kb_rebuild(request: Request) -> dict[str, int]:
 
 def _platform_field_values(source: SourceKind, request: Request) -> dict[str, object]:
     platform_store: PlatformConfigStore = _svc(request).platform_store
-    section = platform_store.get_section(source)
+    section: dict[str, object] = platform_store.get_section(source)  # type: ignore[assignment]
     if source is SourceKind.EMAIL:
         return mask_secrets(section)
     return section
@@ -1189,7 +1197,7 @@ def _build_platform_cards(request: Request) -> list[PlatformCardResponse]:
         for field in definition.fields:
             raw_value = values.get(field.key, "")
             if field.field_type == "number":
-                display_value: str | int | bool = int(raw_value or 1000)
+                display_value: str | int | bool = int(str(raw_value or "1000"))
             elif field.field_type == "checkbox":
                 display_value = bool(raw_value)
             else:
@@ -1235,7 +1243,7 @@ def update_platform_settings(
 ) -> PlatformCardResponse:
     platform_store: PlatformConfigStore = _svc(request).platform_store
     sync_service: SyncService = _svc(request).sync_service
-    platform_store.update_section(source, body.values)
+    platform_store.update_section(source, body.values)  # type: ignore[arg-type]
     settings.load_platform_config(platform_store)
     sync_service.reload_connectors()
     for card in _build_platform_cards(request):

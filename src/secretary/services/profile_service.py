@@ -133,7 +133,7 @@ class ProfileService:
         view = self.get_view()
         self._persist_display(view.markdown)
 
-    def _chat_facts_path(self):
+    def _chat_facts_path(self) -> Path:
         return self._settings.resolved_data_dir() / _CHAT_FACTS_PATH_NAME
 
     def _load_chat_facts_markdown(self) -> str:

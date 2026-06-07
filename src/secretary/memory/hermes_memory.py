@@ -140,7 +140,7 @@ class HermesMemory:
         if conn is not None:
             try:
                 conn.execute("SELECT 1")
-                return conn
+                return conn  # type: ignore[no-any-return]
             except sqlite3.Error:
                 try:
                     conn.close()
@@ -331,7 +331,7 @@ class HermesMemory:
                 ),
             )
 
-    def search_episodes(self, query: str, limit: int = 5) -> list[dict[str, str]]:
+    def search_episodes(self, query: str, limit: int = 5) -> list[dict[str, object]]:
         safe_query = _sanitize_fts(query)
         with self._connect_session() as conn:
             rows = conn.execute(
@@ -358,7 +358,7 @@ class HermesMemory:
                     """,
                     (pattern, pattern, limit),
                 ).fetchall()
-        return [
+        items: list[dict[str, object]] = [
             {
                 "episode_id": str(r["episode_id"]),
                 "task": str(r["task"]),
@@ -369,6 +369,7 @@ class HermesMemory:
             }
             for r in rows
         ]
+        return items
 
 
 MAX_MESSAGE_LEN = 4000

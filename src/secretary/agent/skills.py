@@ -9,6 +9,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing import Any
+
 from secretary.exceptions import AgentError
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -264,8 +266,8 @@ class SkillManager:
     def update_category(self, name: str, category: str, tags: list[str] | None = None) -> None:
         cleaned_category = category.strip() if category.strip() in SKILL_CATEGORIES else "其他"
         cleaned_tags = [tag.strip() for tag in (tags or []) if tag.strip()][:8]
-        payload = self._load_index()
-        overrides = payload.setdefault("category_overrides", {})
+        payload: dict[str, Any] = self._load_index()
+        overrides: dict[str, Any] = payload.setdefault("category_overrides", {})
         overrides[name.lower()] = {
             "category": cleaned_category,
             "tags": cleaned_tags,
@@ -363,9 +365,9 @@ class SkillManager:
         )
 
     def _classify(self, name: str, description: str, path: Path) -> tuple[str, tuple[str, ...]]:
-        payload = self._load_index()
-        overrides = payload.get("category_overrides", {})
-        override = overrides.get(name.lower())
+        payload: dict[str, Any] = self._load_index()
+        overrides: dict[str, Any] = payload.get("category_overrides", {})
+        override: dict[str, Any] | None = overrides.get(name.lower()) if isinstance(overrides, dict) else None
         if isinstance(override, dict):
             category = str(override.get("category") or "其他")
             tags = override.get("tags") or []

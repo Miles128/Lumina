@@ -34,6 +34,15 @@ _WEB_SEARCH_MARKERS = (
     "weather",
     "news",
     "search for",
+    "github",
+    "gitlab",
+    "最火",
+    "热门",
+    "火的项目",
+    "trending",
+    "开源项目",
+    "上 GitHub",
+    "上 github",
 )
 
 _LOCAL_CONTEXT_MARKERS = (
@@ -58,10 +67,46 @@ _NON_CITY_PREFIXES = frozenset(
 _CITY_WEATHER_RE = re.compile(r"([\u4e00-\u9fffA-Za-z·]{2,12}?)天气")
 _CITY_ONLY = re.compile(r"^[\u4e00-\u9fffA-Za-z·]{2,12}市?$")
 
+# Paths with spaces (e.g. ~/Documents/My Projects/) — broader than grounding._PATH_PATTERNS[0]
+_LOCAL_PATH_RE = re.compile(
+    r"(?:~/[^\s\u4e00-\u9fff\"'`<>|，。；;!?]+(?:\s[^\s\u4e00-\u9fff\"'`<>|，。；;!?]+)*|"
+    r"/Users/[^/\s]+(?:/[^\s\u4e00-\u9fff\"'`<>|，。；;!?]+)*|"
+    r"/(?:[A-Za-z0-9_.]+)(?:/(?:[A-Za-z0-9_.][A-Za-z0-9_. -]*))*)"
+)
+
+_LOCAL_FS_MARKERS = (
+    "目录",
+    "文件夹",
+    "文件",
+    "项目",
+    "列出",
+    "有哪些",
+    "my project",
+    "my projects",
+    "简历",
+    "readme",
+    "本地",
+    "list_dir",
+    "file_read",
+    "打开",
+    "读取",
+    "里有什么",
+)
+
+
+def _looks_like_local_filesystem_query(text: str) -> bool:
+    """「查一下 ~/…」类本地盘问题不应走 web_search。"""
+    if not _LOCAL_PATH_RE.search(text):
+        return False
+    lowered = text.lower()
+    return any(marker in text or marker in lowered for marker in _LOCAL_FS_MARKERS)
+
 
 def is_web_search_query(text: str) -> bool:
     cleaned = text.strip()
     if not cleaned:
+        return False
+    if _looks_like_local_filesystem_query(cleaned):
         return False
     lowered = cleaned.lower()
     return any(marker in cleaned or marker in lowered for marker in _WEB_SEARCH_MARKERS)
@@ -105,6 +150,26 @@ def resolve_client_location(
     return None
 
 
+def _strip_rhetorical_web_prefix(text: str) -> str:
+    """Remove filler before the real web query (e.g. 「你会上网查吗？GitHub…」)."""
+    cleaned = text.strip()
+    prefixes = (
+        "你会上网查这个信息吗？",
+        "你会上网查吗？",
+        "你能上网查一下吗？",
+        "你能上网查吗？",
+        "帮我联网查一下",
+        "帮我联网查",
+        "上网查一下",
+        "联网查一下",
+    )
+    for prefix in prefixes:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip().lstrip("，,？? ")
+            break
+    return cleaned or text.strip()
+
+
 def build_search_query(
     text: str,
     history: list[dict[str, str]] | None = None,
@@ -114,7 +179,7 @@ def build_search_query(
     location_lng: float | None = None,
 ) -> str:
     """Build Bing query; inject device city only when the question needs local context."""
-    cleaned = text.strip()
+    cleaned = _strip_rhetorical_web_prefix(text)
     city = _city_from_message(cleaned, history) or resolve_client_location(
         location_city,
         location_lat=location_lat,

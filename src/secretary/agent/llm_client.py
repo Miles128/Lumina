@@ -1,16 +1,17 @@
-"""OpenAI-compatible chat completion client."""
+"""OpenAI-compatible chat completion client with httpx and retry logic."""
 
 from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
-from collections.abc import Callable, Iterator
+import time
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
+
+import httpx
 
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
@@ -18,6 +19,34 @@ from secretary.exceptions import AgentError
 logger = logging.getLogger(__name__)
 
 Role = Literal["system", "user", "assistant", "tool"]
+
+_MAX_RETRIES = 3
+_BASE_BACKOFF_SECONDS = 1.0
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.NetworkError):
+        return True
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_STATUSES
+    return False
+
+
+def _sleep_for_retry(attempt: int) -> None:
+    delay = _BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    time.sleep(delay)
+
+
+def _build_http_client(timeout: float) -> httpx.Client:
+    return httpx.Client(
+        timeout=httpx.Timeout(timeout, connect=15.0),
+        limits=httpx.Limits(max_keepalive_connections=5, max_connections=20),
+    )
 
 
 @dataclass
@@ -47,14 +76,32 @@ _USAGE_TRACKER: ContextVar[LlmUsage | None] = ContextVar(
 )
 
 
-@contextmanager
-def llm_usage_scope() -> LlmUsage:
-    usage = LlmUsage()
-    token = _USAGE_TRACKER.set(usage)
-    try:
-        yield usage
-    finally:
-        _USAGE_TRACKER.reset(token)
+class _UsageScope:
+    """Manual context manager (avoiding @contextmanager typing issues with mypy strict)."""
+
+    def __init__(self) -> None:
+        self._usage = LlmUsage()
+        self._token: Any = None
+
+    def __enter__(self) -> LlmUsage:
+        self._token = _USAGE_TRACKER.set(self._usage)
+        return self._usage
+
+    def __exit__(self, *args: object) -> None:
+        if self._token is not None:
+            _USAGE_TRACKER.reset(self._token)
+            self._token = None
+
+
+def llm_usage_scope() -> _UsageScope:
+    """Track token usage across multiple LLM calls in a single scope.
+
+    Usage:
+        with llm_usage_scope() as usage:
+            reply = chat_completion(config, messages)
+            print(usage.total_tokens)
+    """
+    return _UsageScope()
 
 
 def chat_completion(
@@ -71,7 +118,6 @@ def chat_completion(
             messages,
             timeout=timeout,
             temperature=temperature,
-            allow_retry=True,
         )
     return chat_completion_stream(
         config,
@@ -97,46 +143,62 @@ def chat_completion_stream(
         "temperature": temperature,
         "stream": True,
     }
-    request = urllib.request.Request(
+    last_error: str | None = None
+    with _build_http_client(timeout) as client:
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                return _stream_request(client, url, payload, config.api_key, on_delta)
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                last_error = str(exc)
+                logger.warning("LLM stream attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
+                if attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+            except httpx.HTTPStatusError as exc:
+                detail = _read_error_body(exc)
+                logger.warning("LLM stream HTTP error %s: %s", exc.response.status_code, detail[:300])
+                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+                    continue
+                message = _extract_api_error(detail) or f"大模型请求失败 ({exc.response.status_code})"
+                raise AgentError(message) from exc
+    raise AgentError(f"大模型流式请求失败（{_MAX_RETRIES} 次重试后）: {last_error or '未知错误'}")
+
+
+def _stream_request(
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+    on_delta: Callable[[str], None],
+) -> str:
+    parts: list[str] = []
+    with client.stream(
+        "POST",
         url,
-        data=json.dumps(payload).encode("utf-8"),
+        json=payload,
         headers={
-            "Authorization": f"Bearer {config.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        method="POST",
-    )
-    parts: list[str] = []
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            for line in _iter_sse_lines(response):
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:].strip()
-                if not data or data == "[DONE]":
-                    continue
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                usage = chunk.get("usage")
-                if isinstance(usage, dict):
-                    _record_usage(usage)
-                delta = _extract_stream_delta(chunk)
-                if delta:
-                    parts.append(delta)
-                    on_delta(delta)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        logger.warning("LLM stream HTTP error %s: %s", error.code, detail[:300])
-        message = _extract_api_error(detail) or f"大模型请求失败 ({error.code})"
-        raise AgentError(message) from error
-    except urllib.error.URLError as error:
-        logger.warning("LLM stream network error: %s", error.reason)
-        raise AgentError("无法连接大模型服务") from error
-    except TimeoutError as error:
-        raise AgentError("大模型响应超时") from error
-
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            usage = chunk.get("usage")
+            if isinstance(usage, dict):
+                _record_usage(usage)
+            delta = _extract_stream_delta(chunk)
+            if delta:
+                parts.append(delta)
+                on_delta(delta)
     content = "".join(parts).strip()
     if not content:
         raise AgentError("大模型返回空内容")
@@ -183,29 +245,43 @@ def chat_completion_with_tools(
         "tools": tools,
         "tool_choice": tool_choice,
     }
-    request = urllib.request.Request(
+    last_error: str | None = None
+    with _build_http_client(timeout) as client:
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                return _tools_request(client, url, payload, config.api_key)
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                last_error = str(exc)
+                logger.warning("LLM tools attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
+                if attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+            except httpx.HTTPStatusError as exc:
+                detail = _read_error_body(exc)
+                logger.warning("LLM tools HTTP error %s: %s", exc.response.status_code, detail[:300])
+                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+                    continue
+                message = _extract_api_error(detail) or f"大模型工具调用失败 ({exc.response.status_code})"
+                raise AgentError(message) from exc
+    raise AgentError(f"大模型工具调用失败（{_MAX_RETRIES} 次重试后）: {last_error or '未知错误'}")
+
+
+def _tools_request(
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+) -> ChatCompletionResult:
+    response = client.post(
         url,
-        data=json.dumps(payload).encode("utf-8"),
+        json=payload,
         headers={
-            "Authorization": f"Bearer {config.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        logger.warning("LLM tools HTTP error %s: %s", error.code, detail[:300])
-        message = _extract_api_error(detail) or f"大模型工具调用失败 ({error.code})"
-        raise AgentError(message) from error
-    except urllib.error.URLError as error:
-        logger.warning("LLM tools network error: %s", error.reason)
-        raise AgentError("无法连接大模型服务") from error
-    except TimeoutError as error:
-        raise AgentError("大模型响应超时") from error
-
+    response.raise_for_status()
+    body = response.json()
     _record_usage(body.get("usage"))
     try:
         message = body["choices"][0]["message"]
@@ -279,15 +355,6 @@ def _assistant_message_dict(
     return {"role": "assistant", "content": content}
 
 
-def _iter_sse_lines(response: object) -> Iterator[str]:
-    for raw in response:
-        if not raw:
-            continue
-        line = raw.decode("utf-8", errors="replace").strip()
-        if line:
-            yield line
-
-
 def _extract_stream_delta(chunk: dict[str, object]) -> str:
     choices = chunk.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -313,7 +380,6 @@ def _chat_completion_once(
     *,
     timeout: float,
     temperature: float,
-    allow_retry: bool,
 ) -> str:
     url = f"{config.base_url.rstrip('/')}/chat/completions"
     payload = {
@@ -321,48 +387,65 @@ def _chat_completion_once(
         "messages": messages,
         "temperature": temperature,
     }
-    request = urllib.request.Request(
+    last_error: str | None = None
+    with _build_http_client(timeout) as client:
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                body = _non_stream_request(client, url, payload, config.api_key)
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                last_error = str(exc)
+                logger.warning("LLM attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
+                if attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+                continue
+            except httpx.HTTPStatusError as exc:
+                detail = _read_error_body(exc)
+                logger.warning("LLM HTTP error %s: %s", exc.response.status_code, detail[:300])
+                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                    _sleep_for_retry(attempt)
+                    continue
+                message = _extract_api_error(detail) or f"大模型请求失败 ({exc.response.status_code})"
+                raise AgentError(message) from exc
+
+            _record_usage(body.get("usage"))
+            try:
+                message = body["choices"][0]["message"]
+            except (KeyError, IndexError, TypeError) as error:
+                raise AgentError("大模型返回格式异常") from error
+            content = _extract_message_text(message)
+            if content:
+                return content
+            # Empty content — retry once more specifically
+            if attempt < _MAX_RETRIES:
+                logger.warning("LLM returned empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
+                _sleep_for_retry(attempt)
+                continue
+    raise AgentError(f"大模型请求失败（{_MAX_RETRIES} 次重试后）: {last_error or '大模型返回空内容'}")
+
+
+def _non_stream_request(
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any]:
+    response = client.post(
         url,
-        data=json.dumps(payload).encode("utf-8"),
+        json=payload,
         headers={
-            "Authorization": f"Bearer {config.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        logger.warning("LLM HTTP error %s: %s", error.code, detail[:300])
-        message = _extract_api_error(detail) or f"大模型请求失败 ({error.code})"
-        raise AgentError(message) from error
-    except urllib.error.URLError as error:
-        logger.warning("LLM network error: %s", error.reason)
-        raise AgentError("无法连接大模型服务") from error
-    except TimeoutError as error:
-        raise AgentError("大模型响应超时") from error
+    response.raise_for_status()
+    return response.json()  # type: ignore[no-any-return]
 
-    _record_usage(body.get("usage"))
 
+def _read_error_body(exc: httpx.HTTPStatusError) -> str:
     try:
-        message = body["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError) as error:
-        raise AgentError("大模型返回格式异常") from error
-    content = _extract_message_text(message)
-    if not content and allow_retry:
-        logger.warning("LLM returned empty content, retrying once")
-        return _chat_completion_once(
-            config,
-            messages,
-            timeout=timeout,
-            temperature=temperature,
-            allow_retry=False,
-        )
-    if not content:
-        raise AgentError("大模型返回空内容")
-    return content
+        return exc.response.text
+    except Exception:
+        return ""
 
 
 def _extract_api_error(detail: str) -> str | None:
@@ -424,7 +507,7 @@ def _record_usage(usage_payload: object) -> None:
 
 def _to_int(value: object) -> int:
     try:
-        parsed = int(value)
+        parsed = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return 0
     return parsed if parsed > 0 else 0

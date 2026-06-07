@@ -124,6 +124,16 @@ def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     assert result.used_llm is False
 
 
+def _web_agent_loop_result(reply: str) -> LoopResult:
+    return LoopResult(
+        reply=reply,
+        steps=[],
+        used_tools=["web_search"],
+        total_steps=2,
+        grounding_verified=True,
+    )
+
+
 def test_chat_weather_without_location_still_web_searches(tmp_path: Path) -> None:
     config = LlmConfig(
         api_key="test-key",
@@ -133,17 +143,14 @@ def test_chat_weather_without_location_still_web_searches(tmp_path: Path) -> Non
     )
     service = _build_chat_service(tmp_path, api_key="test-key")
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
-        with patch(
-            "secretary.agent.web_search.WebSearchTool.execute",
-            return_value="🔍 '今天天气怎么样' — 1 results\n1. 天气",
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("今天多云。"),
         ):
-            with patch(
-                "secretary.agent.chat_service.chat_completion",
-                return_value="今天多云。",
-            ) as llm:
-                result = service.reply("今天天气怎么样")
-    llm.assert_called_once()
-    assert result.route == "web_search"
+            result = service.reply("今天天气怎么样")
+    assert result.route == "web_agent"
+    assert "web_search" in (result.used_tools or [])
 
 
 def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
@@ -155,19 +162,15 @@ def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
     )
     service = _build_chat_service(tmp_path, api_key="test-key")
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
-        with patch(
-            "secretary.agent.web_search.WebSearchTool.execute",
-            return_value="🔍 '杭州 今天天气 气温' — 2 results\n1. 杭州天气\n   晴 18°C",
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("杭州今天晴，约 18°C。"),
         ):
-            with patch(
-                "secretary.agent.chat_service.chat_completion",
-                return_value="杭州今天晴，约 18°C。",
-            ) as llm:
-                result = service.reply("杭州天气怎么样")
-    llm.assert_called_once()
+            result = service.reply("杭州天气怎么样")
     assert "web_search" in (result.used_tools or [])
     assert "18" in result.reply
-    assert result.route == "web_search"
+    assert result.route == "web_agent"
 
 
 def test_chat_web_search_markers_use_unified_pipeline(tmp_path: Path) -> None:
@@ -179,18 +182,14 @@ def test_chat_web_search_markers_use_unified_pipeline(tmp_path: Path) -> None:
     )
     service = _build_chat_service(tmp_path, api_key="test-key")
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
-        with patch(
-            "secretary.agent.web_search.WebSearchTool.execute",
-            return_value="🔍 '搜一下 OpenAI 最新动态' — 1 results\n1. OpenAI Blog",
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("OpenAI 最近发布了新模型。"),
         ):
-            with patch(
-                "secretary.agent.chat_service.chat_completion",
-                return_value="OpenAI 最近发布了新模型。",
-            ) as llm:
-                result = service.reply("搜一下 OpenAI 最新动态")
-    llm.assert_called_once()
+            result = service.reply("搜一下 OpenAI 最新动态")
     assert "web_search" in (result.used_tools or [])
-    assert result.route == "web_search"
+    assert result.route == "web_agent"
 
 
 def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None:
@@ -202,24 +201,20 @@ def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None
     )
     service = _build_chat_service(tmp_path, api_key="test-key")
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
-        with patch(
-            "secretary.agent.web_search.WebSearchTool.execute",
-            return_value="🔍 '杭州 今天天气 气温' — 2 results\n1. 杭州天气\n   晴 20°C",
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("杭州今天晴，约 20°C。"),
         ):
-            with patch(
-                "secretary.agent.chat_service.chat_completion",
-                return_value="杭州今天晴，约 20°C。",
-            ) as llm:
-                result = service.reply(
-                    "今天天气怎么样",
-                    location_city="杭州",
-                    location_lat=30.27,
-                    location_lng=120.15,
-                )
-    llm.assert_called_once()
+            result = service.reply(
+                "今天天气怎么样",
+                location_city="杭州",
+                location_lat=30.27,
+                location_lng=120.15,
+            )
     assert "web_search" in (result.used_tools or [])
     assert "20" in result.reply
-    assert result.route == "web_search"
+    assert result.route == "web_agent"
 
 
 def test_chat_author_gate_is_hardcoded_without_llm(tmp_path: Path) -> None:

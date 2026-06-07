@@ -55,10 +55,16 @@ def is_placeholder_api_key(api_key: str) -> bool:
     return False
 
 
-def resolve_llm_config(settings: Settings, agent_config_store: AgentConfigStore | None = None) -> LlmConfig | None:
+def resolve_llm_config(
+    settings: Settings, agent_config_store: object | None = None
+) -> LlmConfig | None:
     from secretary.services.agent_config import AgentConfigStore, resolve_effective_llm_config
 
-    store = agent_config_store or AgentConfigStore(settings.resolved_data_dir() / "agent.json")
+    store: AgentConfigStore = (
+        agent_config_store  # type: ignore[assignment]
+        if agent_config_store is not None
+        else AgentConfigStore(settings.resolved_data_dir() / "agent.json")
+    )
     return resolve_effective_llm_config(settings, store)
 
 

@@ -32,7 +32,7 @@ class MemoryStore:
         if conn is not None:
             try:
                 conn.execute("SELECT 1")
-                return conn
+                return conn  # type: ignore[no-any-return]
             except sqlite3.Error:
                 try:
                     conn.close()
