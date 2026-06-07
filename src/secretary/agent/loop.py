@@ -562,6 +562,31 @@ class AgentLoop:
             max_iterations=self._max_steps,
             latest_user_message=self._latest_user_message(current_messages),
         )
+
+        # When max steps reached with tool evidence, make one final call
+        # without tools to produce a coherent answer from collected evidence.
+        if steps:
+            try:
+                self._emit_progress(
+                    ProgressEvent(
+                        kind="iteration_started",
+                        iteration=self._max_steps,
+                        message="整理回复",
+                    )
+                )
+                summary_prompt = (
+                    "你已用完所有工具轮次。请基于以上所有工具返回的结果，"
+                    "给用户一个完整的最终回答。不要调用工具，直接回答。"
+                )
+                current_messages.append({"role": "user", "content": summary_prompt})
+                payload = self._build_payload(current_messages, tool_schemas=[], native=False)
+                raw = chat_completion(
+                    self._llm_config, payload, temperature=temperature, timeout=120.0
+                )
+                thought = raw.strip()
+            except Exception:
+                pass
+
         reply = self._sanitize_reply(thought if steps else raw, snapshot)
         self._emit_progress(
             ProgressEvent(kind="final_reply", iteration=self._max_steps, message=reply)
