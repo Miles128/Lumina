@@ -1,4 +1,4 @@
-"""Resolve LLM credentials from local config, env, or Hermes."""
+"""Resolve LLM credentials from Lumina's own .env or agent.json. Hermes fallback is opt-in only."""
 
 from __future__ import annotations
 

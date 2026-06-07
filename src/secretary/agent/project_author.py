@@ -95,8 +95,14 @@ def infer_project_root(message: str, working_dir: Path) -> Path | None:
     parent = wd.parent
     if parent.is_dir() and parent not in search_roots:
         search_roots.append(parent)
+    try:
+        from secretary.config import settings
+        projects_dir = Path(settings.projects_dir).expanduser()
+    except Exception:
+        projects_dir = Path.home() / "Documents" / "My Projects"
+
     for base in (
-        Path.home() / "Documents" / "My Projects",
+        projects_dir,
         Path.home() / "Projects",
         Path.home(),
     ):

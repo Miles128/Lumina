@@ -36,7 +36,6 @@ class SyncService:
         self._connectors = build_connectors(self._settings)
         self._local_docs = LocalDocumentsPlatform(self._settings)
         self._local_profiler = LocalDocumentsProfiler(self._settings)
-        self._store.purge_source(SourceKind.LOCAL_DOCUMENTS)
 
     def list_connectors(self) -> list[BaseConnector]:
         return list(self._connectors)

@@ -67,7 +67,7 @@ cp .env.example .env
 # 编辑 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 ```
 
-或在 `~/.lumina/agent.json` 配置；留空时会尝试读取 `~/.hermes/config.yaml`。
+或在 `~/.lumina/agent.json` 配置。默认为仅使用灵犀自己的配置；如需复用 Hermes 密钥，可在 agent.json 中设置 `"use_hermes_fallback": true`。
 
 ### 3. 启动
 

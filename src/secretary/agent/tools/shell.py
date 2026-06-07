@@ -133,28 +133,54 @@ class ShellTool(Tool):
         if not command:
             return "Error: empty command"
         cwd = working_dir if working_dir.is_dir() else Path.home()
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=str(cwd),
-                env=os.environ.copy(),
-            )
-            output = result.stdout or ""
-            if result.stderr:
-                output += f"\n[stderr]\n{result.stderr}"
-            if result.returncode != 0:
-                output += f"\n[exit code: {result.returncode}]"
-            output = output.strip() or "(no output)"
-            if len(output) > self._MAX_OUTPUT_CHARS:
-                output = output[: self._MAX_OUTPUT_CHARS] + "\n...[truncated]"
-            return output
-        except subprocess.TimeoutExpired:
-            return f"Error: command timed out after {timeout}s"
-        except OSError as exc:
-            return f"Error: failed to run command in {cwd}: {exc}"
-        except Exception as exc:
-            return f"Error: {exc}"
+        env = os.environ.copy()
+
+        # Prefer shell=False for simple commands (safer).  Fall back to
+        # shell=True when the command contains pipes (which shlex.split
+        # cannot handle) or when the executable is a shell builtin.
+        needs_shell = "|" in command
+        for attempt in range(2):
+            try:
+                if needs_shell:
+                    result = subprocess.run(
+                        command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        cwd=str(cwd),
+                        env=env,
+                    )
+                else:
+                    argv = shlex.split(command)
+                    result = subprocess.run(
+                        argv,
+                        shell=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        cwd=str(cwd),
+                        env=env,
+                    )
+                break
+            except OSError:
+                # shell=False failed (e.g. shell builtin like "exit 3").
+                # Retry once with shell=True.
+                if attempt == 0 and not needs_shell:
+                    needs_shell = True
+                    continue
+                return f"Error: failed to run command in {cwd}"
+            except subprocess.TimeoutExpired:
+                return f"Error: command timed out after {timeout}s"
+            except Exception as exc:
+                return f"Error: {exc}"
+
+        output = result.stdout or ""
+        if result.stderr:
+            output += f"\n[stderr]\n{result.stderr}"
+        if result.returncode != 0:
+            output += f"\n[exit code: {result.returncode}]"
+        output = output.strip() or "(no output)"
+        if len(output) > self._MAX_OUTPUT_CHARS:
+            output = output[: self._MAX_OUTPUT_CHARS] + "\n...[truncated]"
+        return output

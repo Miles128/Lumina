@@ -49,7 +49,7 @@ class AgentConfigDocument(BaseModel):
     model: str = "deepseek-chat"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_history_turns: int = Field(default=16, ge=2, le=64)
-    use_hermes_fallback: bool = True
+    use_hermes_fallback: bool = False
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
     shell_working_dir: str = ""
 

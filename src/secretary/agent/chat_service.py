@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -104,6 +105,7 @@ class ChatService:
         self._pending: PendingConfirmation | None = None
         self._pending_messages: list[dict[str, str]] | None = None
         self._pending_llm_config: LlmConfig | None = None
+        self._pending_lock = threading.Lock()
         self._prompt_gate = PromptGate(settings, agent_config_store)
         self._turn_orchestrator = TurnOrchestrator(self._file_auth)
         self._mcp_manager = mcp_manager
@@ -118,7 +120,31 @@ class ChatService:
 
     @property
     def pending_confirmation(self) -> PendingConfirmation | None:
-        return self._pending
+        with self._pending_lock:
+            return self._pending
+
+    def _take_pending(self) -> tuple[PendingConfirmation | None, list[dict[str, str]] | None, LlmConfig | None]:
+        """Atomically take and clear the pending confirmation state."""
+        with self._pending_lock:
+            pending = self._pending
+            messages = self._pending_messages
+            llm_config = self._pending_llm_config
+            self._pending = None
+            self._pending_messages = None
+            self._pending_llm_config = None
+            return pending, messages, llm_config
+
+    def _set_pending(
+        self,
+        pending: PendingConfirmation,
+        messages: list[dict[str, str]],
+        llm_config: LlmConfig,
+    ) -> None:
+        """Atomically set the pending confirmation state."""
+        with self._pending_lock:
+            self._pending = pending
+            self._pending_messages = messages
+            self._pending_llm_config = llm_config
 
     def is_author_turn(self, message: str) -> bool:
         cleaned = message.strip()
@@ -262,12 +288,7 @@ class ChatService:
         grant_session_write: bool = False,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
-        pending = self._pending
-        messages = self._pending_messages
-        llm_config = self._pending_llm_config
-        self._pending = None
-        self._pending_messages = None
-        self._pending_llm_config = None
+        pending, messages, llm_config = self._take_pending()
 
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
@@ -296,11 +317,11 @@ class ChatService:
         )
 
         if result.pending_confirmation:
-            self._pending = result.pending_confirmation
-            self._pending_messages = messages + [
-                {"role": "assistant", "content": result.reply},
-            ]
-            self._pending_llm_config = llm_config
+            self._set_pending(
+                result.pending_confirmation,
+                messages + [{"role": "assistant", "content": result.reply}],
+                llm_config,
+            )
 
         safe_reply, _, _ = self._prepare_user_reply(
             result.reply,
@@ -610,9 +631,7 @@ class ChatService:
                 risk_level="high",
                 confirmation_kind="shell",
             )
-            self._pending = pending
-            self._pending_messages = messages
-            self._pending_llm_config = llm_config
+            self._set_pending(pending, messages, llm_config)
             raw_reply = (
                 "我需要你的确认才能继续：\n\n"
                 f"⚡ 执行命令: `{forced_shell_command}`\n\n"
@@ -706,11 +725,11 @@ class ChatService:
         )
 
         if result.pending_confirmation:
-            self._pending = result.pending_confirmation
-            self._pending_messages = messages + [
-                {"role": "assistant", "content": safe_reply},
-            ]
-            self._pending_llm_config = llm_config
+            self._set_pending(
+                result.pending_confirmation,
+                messages + [{"role": "assistant", "content": safe_reply}],
+                llm_config,
+            )
 
         self._hermes.end_session(session_id, summary=safe_reply[:200])
 
