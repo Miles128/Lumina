@@ -109,7 +109,7 @@ class ShibeiService:
         if str(src) not in sys.path:
             sys.path.insert(0, str(src))
         try:
-            from shibei import Shibei  # type: ignore[import-untyped]
+            from shibei import Shibei
 
             brain = Shibei(config_path)
             if method == "search":
