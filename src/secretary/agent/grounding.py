@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 
 READ_TOOL_NAMES = frozenset({"list_dir", "file_read", "search_files"})
-MEMORY_TOOL_NAMES = frozenset({"search_memory", "session_search"})
+MEMORY_TOOL_NAMES = frozenset(
+    {"search_memory", "session_search", "shibei_search", "shibei_list_sources"}
+)
 WEB_TOOL_NAMES = frozenset(
     {
         "web_search",

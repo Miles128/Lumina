@@ -13,8 +13,6 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-from secretary.exceptions import AgentError
-
 MEMORY_MD_MAX_CHARS = 2200
 USER_MD_MAX_CHARS = 1375
 

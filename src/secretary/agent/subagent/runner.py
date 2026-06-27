@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop
@@ -15,8 +17,8 @@ from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.policy import (
     MAX_PARALLEL_EXPLORE,
-    MAX_SPAWNS_PER_TURN,
     MAX_SPAWN_DEPTH,
+    MAX_SPAWNS_PER_TURN,
     SUBAGENT_TIMEOUT_SEC,
 )
 from secretary.agent.subagent.registry import (

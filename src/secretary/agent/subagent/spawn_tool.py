@@ -6,10 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.runner import SubAgentRunner
+from secretary.agent.tools.base import Tool
 
 
 class SpawnSubagentTool(Tool):

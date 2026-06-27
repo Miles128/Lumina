@@ -30,9 +30,16 @@ class SyncResult:
 
 
 class SyncService:
-    def __init__(self, settings: Settings, store: MemoryStore) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: MemoryStore,
+        *,
+        shibei_service: object | None = None,
+    ) -> None:
         self._settings = settings
         self._store = store
+        self._shibei_service = shibei_service
         self._connectors = build_connectors(self._settings)
         self._local_docs = LocalDocumentsPlatform(self._settings)
         self._local_profiler = LocalDocumentsProfiler(self._settings)
@@ -54,6 +61,7 @@ class SyncService:
         results.append(self.sync_source(SourceKind.LOCAL_DOCUMENTS))
         self._persist_profile()
         self.export_kb_from_memory()
+        self._maybe_import_shibei()
         return results
 
     def sync_source(self, source: SourceKind) -> SyncResult:
@@ -186,3 +194,20 @@ class SyncService:
         for source in SourceKind:
             chunks.extend(self._store.list_by_source(source, limit=200))
         return workspace.export_chunks(chunks)
+
+    def _maybe_import_shibei(self) -> None:
+        service = self._shibei_service
+        if service is None or not getattr(service, "is_enabled", lambda: False)():
+            return
+        store = getattr(service, "_store", None)
+        if store is None:
+            return
+        document = store.load()
+        if not document.auto_import_on_sync or not document.sources:
+            return
+        if not getattr(service, "is_available", lambda: False)():
+            return
+        try:
+            service.import_all(full=False)
+        except Exception:
+            return

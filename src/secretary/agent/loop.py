@@ -8,11 +8,28 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from secretary.agent.grounding import (
+    GROUNDING_RETRY_USER,
+    collect_read_evidence,
+    enforce_grounded_reply,
+    format_verify_retry,
+    has_read_grounding,
+    infer_list_dir_target,
+    is_filesystem_question,
+    reply_defers_filesystem_work,
+    requires_forced_read_tool,
+    resolve_turn_user_message,
+    sanitize_filesystem_reply,
+    should_retry_for_grounding,
+    should_retry_for_verification,
+    verify_reply_against_evidence,
+)
 from secretary.agent.llm_client import (
     ChatCompletionResult,
     chat_completion,
@@ -20,25 +37,7 @@ from secretary.agent.llm_client import (
     schemas_to_openai_tools,
 )
 from secretary.agent.llm_config import LlmConfig
-from secretary.exceptions import AgentError
-from secretary.services.file_auth import FileAuthService
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.grounding import (
-    GROUNDING_RETRY_USER,
-    collect_read_evidence,
-    enforce_grounded_reply,
-    resolve_turn_user_message,
-    format_verify_retry,
-    has_read_grounding,
-    infer_list_dir_target,
-    is_filesystem_question,
-    reply_defers_filesystem_work,
-    requires_forced_read_tool,
-    sanitize_filesystem_reply,
-    should_retry_for_grounding,
-    should_retry_for_verification,
-    verify_reply_against_evidence,
-)
 from secretary.agent.stop_hooks import (
     LoopSnapshot,
     MaxIterationsStopHook,
@@ -52,11 +51,15 @@ from secretary.agent.tools.fs import (
     FileReadTool,
     FileWriteTool,
     ListDirTool,
-    READABLE_MAX_BYTES,
 )
-from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
-from secretary.agent.tools.shell import ShellTool, _infer_shell_call_from_text, _is_read_only_shell_command
+from secretary.agent.tools.shell import (
+    ShellTool,
+    _infer_shell_call_from_text,
+    _is_read_only_shell_command,
+)
 from secretary.agent.tools.web import WebFetchTool
+from secretary.exceptions import AgentError
+from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
 

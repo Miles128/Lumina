@@ -21,6 +21,11 @@ dev = [
     "mypy>=1.13.0",
     "httpx>=0.27.0",
 ]
+e2e = [
+    "playwright>=1.49.0",
+    "pytest-playwright>=0.6.2",
+    "httpx>=0.27.0",
+]
 
 [project.scripts]
 secretary = "secretary.main:main"
@@ -36,6 +41,10 @@ packages = ["src/secretary"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+markers = [
+    "e2e: PRD release smoke via HTTP API (mock LLM)",
+    "ui: Playwright browser smoke against live backend",
+]
 filterwarnings = [
     "ignore:Using `httpx` with `starlette.testclient` is deprecated:DeprecationWarning",
 ]

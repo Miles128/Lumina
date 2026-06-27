@@ -34,6 +34,7 @@
 | **防幻觉 Grounding** | 文件类问题强制工具查证；`search_files` 结果可正常用于列表回复 |
 | **持久记忆** | Hermes 风格 `MEMORY.md` / `USER.md`，对话后自动整理 |
 | **数据源同步** | 飞书、微信读书、小红书、邮箱、云盘、本地文档 |
+| **Shibei 知识库** | 外挂中文语义 KB；设置里配置监控文件夹；Agent 工具 `shibei_search` / `shibei_import` |
 | **技能 & MCP** | 本地技能挂载；stdio MCP 扩展工具 |
 | **流式体验** | 回复逐字输出；工具进度 SSE 实时可见 |
 | **双语 UI** | English · 中文 标签（可切换 `en` / `zh` / `bi`） |
@@ -155,7 +156,8 @@ Lumina/
 ## 开发
 
 ```bash
-pytest          # 214+ tests（CI 在 push/PR 时自动跑）
+pytest          # 275+ tests；API + Playwright UI 见 scripts/e2e-smoke.sh
+./scripts/e2e-smoke.sh   # 发版冒烟（API + 浏览器 UI，端口 8766）
 ruff check src tests
 mypy src
 ```

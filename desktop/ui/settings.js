@@ -18,6 +18,7 @@
   let durableUserMd = "";
   let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi" };
   let mcpStatus = null;
+  let shibeiConfig = null;
   let backgroundTasks = null;
 
   function t(key, vars) {
@@ -58,13 +59,14 @@
 
   async function loadSettings() {
     contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
-    const [platformList, profile, config, soul, durable, mcp, background] = await Promise.all([
+    const [platformList, profile, config, soul, durable, mcp, shibei, background] = await Promise.all([
       window.SecretaryAPI.request("GET", "/api/settings/platforms"),
       window.SecretaryAPI.request("GET", "/api/profile"),
       window.SecretaryAPI.request("GET", "/api/agent/config"),
       window.SecretaryAPI.request("GET", "/api/agent/soul"),
       window.SecretaryAPI.request("GET", "/api/memory/durable"),
       window.SecretaryAPI.request("GET", "/api/mcp/status").catch(() => null),
+      window.SecretaryAPI.request("GET", "/api/shibei/config").catch(() => null),
       window.SecretaryAPI.request("GET", "/api/agent/background").catch(() => null),
     ]);
     platforms = platformList;
@@ -74,6 +76,7 @@
     durableMemoryMd = durable.memory_md || "";
     durableUserMd = durable.user_md || "";
     mcpStatus = mcp;
+    shibeiConfig = shibei;
     backgroundTasks = background;
     uiPreferences = loadUiPreferences();
     profileMarkdown = profile.markdown || "";
@@ -81,7 +84,7 @@
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
-      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "appearance"].includes(activeKey)
+      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_shibei", "appearance"].includes(activeKey)
     ) {
       activeKey = "agent_llm";
     }
@@ -101,6 +104,7 @@
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
       { key: "agent_mcp", label: t("settings.mcp"), status: mcpStatus?.tool_count ? "ready" : "not_configured" },
+      { key: "agent_shibei", label: t("settings.shibei"), status: shibeiConfig?.status || "not_configured" },
       { key: "appearance", label: t("settings.appearance"), status: "ready" },
     ]) {
       const btn = document.createElement("button");
@@ -166,6 +170,10 @@
     }
     if (key === "agent_mcp") {
       renderAgentMcpPane();
+      return;
+    }
+    if (key === "agent_shibei") {
+      renderAgentShibeiPane();
       return;
     }
     if (key === "profile") {
@@ -818,6 +826,116 @@
     document.getElementById("btn-mcp-quickstart-fs")?.addEventListener("click", quickstartFilesystemMcp);
     document.getElementById("btn-import-mcp-hermes")?.addEventListener("click", importMcpFromHermes);
     document.getElementById("btn-reload-mcp")?.addEventListener("click", reloadMcp);
+  }
+
+  function renderAgentShibeiPane() {
+    const cfg = shibeiConfig || {};
+    const sourcesText = (cfg.sources || []).join("\n");
+    const extensionsText = (cfg.extensions || [".md", ".txt"]).join("\n");
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <div class="settings-pane-title">
+            <h3>Shibei 外挂知识库</h3>
+            <span class="platform-status ${escapeAttr(cfg.status || "not_configured")}">${statusLabel(cfg.status || "not_configured")}</span>
+          </div>
+          <p>接入 Shibei 中文语义知识库（默认查找 ~/Documents/Projects/shibei）。Agent 可通过 <code>shibei_search</code> 检索监控文件夹里的 Markdown / 文档。</p>
+        </header>
+        <p class="platform-meta">${escapeHtml(cfg.status_message || "")}</p>
+        <div class="settings-fields">
+          <label class="settings-field settings-field-check">
+            <input id="shibei-enabled" type="checkbox"${cfg.enabled !== false ? " checked" : ""} />
+            <span>启用 Shibei 知识库工具</span>
+          </label>
+          <label class="settings-field">
+            <span>监控文件夹 · 每行一个路径</span>
+            <textarea id="shibei-sources" class="profile-editor" rows="6" placeholder="~/Documents/My Projects&#10;~/Documents/personal-notes">${escapeHtml(sourcesText)}</textarea>
+          </label>
+          <label class="settings-field">
+            <span>文件扩展名 · 每行一个</span>
+            <textarea id="shibei-extensions" class="profile-editor" rows="4" placeholder=".md&#10;.txt">${escapeHtml(extensionsText)}</textarea>
+          </label>
+          <label class="settings-field">
+            <span>搜索引擎</span>
+            <select id="shibei-engine">
+              <option value="bm25"${cfg.search_engine === "bm25" ? " selected" : ""}>BM25（快，默认）</option>
+              <option value="vector"${cfg.search_engine === "vector" ? " selected" : ""}>Vector 向量</option>
+              <option value="hybrid"${cfg.search_engine === "hybrid" ? " selected" : ""}>Hybrid 混合</option>
+            </select>
+          </label>
+          <label class="settings-field settings-field-check">
+            <input id="shibei-auto-import" type="checkbox"${cfg.auto_import_on_sync !== false ? " checked" : ""} />
+            <span>点「同步」时自动增量导入 Shibei</span>
+          </label>
+          <label class="settings-field">
+            <span>Shibei 安装路径（可选）</span>
+            <input id="shibei-install-path" type="text" value="${escapeAttr(cfg.install_path || "")}" placeholder="~/Documents/Projects/shibei" />
+          </label>
+          <p class="platform-meta muted">配置写入 ${escapeHtml(cfg.config_path || "~/.lumina/shibei/config.yaml")} · 索引 ${escapeHtml(cfg.db_path || "")}</p>
+        </div>
+        <div class="platform-actions">
+          <button class="btn-text save-btn" type="button" id="btn-save-shibei">保存</button>
+          <button class="btn-text test-btn" type="button" id="btn-test-shibei">测试检索</button>
+          <button class="btn-text" type="button" id="btn-import-shibei">立即导入</button>
+        </div>
+        <div id="shibei-feedback" class="platform-feedback" hidden></div>
+      </div>
+    `;
+    document.getElementById("btn-save-shibei")?.addEventListener("click", saveShibeiConfig);
+    document.getElementById("btn-test-shibei")?.addEventListener("click", testShibeiConfig);
+    document.getElementById("btn-import-shibei")?.addEventListener("click", importShibeiNow);
+  }
+
+  async function saveShibeiConfig() {
+    const feedback = document.getElementById("shibei-feedback");
+    const sources = (document.getElementById("shibei-sources")?.value || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const extensions = (document.getElementById("shibei-extensions")?.value || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    showFeedback(feedback, "info", "保存中…");
+    try {
+      shibeiConfig = await window.SecretaryAPI.request("PUT", "/api/shibei/config", {
+        enabled: Boolean(document.getElementById("shibei-enabled")?.checked),
+        sources,
+        extensions,
+        search_engine: document.getElementById("shibei-engine")?.value || "bm25",
+        auto_import_on_sync: Boolean(document.getElementById("shibei-auto-import")?.checked),
+        install_path: document.getElementById("shibei-install-path")?.value.trim() || "",
+      });
+      renderNav();
+      renderAgentShibeiPane();
+      showFeedback(document.getElementById("shibei-feedback"), "success", "已保存 Shibei 配置");
+    } catch (error) {
+      showFeedback(feedback, "error", `保存失败：${error.message}`);
+    }
+  }
+
+  async function testShibeiConfig() {
+    const feedback = document.getElementById("shibei-feedback");
+    showFeedback(feedback, "info", "测试检索…");
+    try {
+      const result = await window.SecretaryAPI.request("POST", "/api/shibei/test");
+      showFeedback(feedback, "success", result.message || "检索成功");
+    } catch (error) {
+      showFeedback(feedback, "error", `测试失败：${error.message}`);
+    }
+  }
+
+  async function importShibeiNow() {
+    const feedback = document.getElementById("shibei-feedback");
+    showFeedback(feedback, "info", "正在导入文档…");
+    try {
+      const result = await window.SecretaryAPI.request("POST", "/api/shibei/import");
+      shibeiConfig = await window.SecretaryAPI.request("GET", "/api/shibei/config");
+      renderNav();
+      showFeedback(feedback, "success", result.message || "导入完成");
+    } catch (error) {
+      showFeedback(feedback, "error", `导入失败：${error.message}`);
+    }
   }
 
   async function quickstartFilesystemMcp() {

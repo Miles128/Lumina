@@ -8,7 +8,6 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-
 from typing import Any
 
 from secretary.exceptions import AgentError

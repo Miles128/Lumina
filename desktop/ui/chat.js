@@ -341,7 +341,7 @@
     const tools = Array.isArray(response?.used_tools) ? response.used_tools : [];
     return tools.some(
       (name) =>
-        /^(list_dir|file_read|search_files|search_memory|session_search)$/.test(name) ||
+        /^(list_dir|file_read|search_files|search_memory|session_search|shibei_search|shibei_list_sources)$/.test(name) ||
         /^mcp_.*(read|list|file|directory|search)/i.test(name),
     );
   }

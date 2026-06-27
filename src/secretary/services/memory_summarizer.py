@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from secretary.agent.llm_client import chat_completion
-from secretary.agent.llm_config import LlmConfig, resolve_llm_config
+from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
 from secretary.memory.hermes_memory import HermesMemory

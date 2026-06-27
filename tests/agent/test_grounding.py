@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from secretary.agent.grounding import (
+    ReadEvidence,
     collect_read_evidence,
     has_read_grounding,
     is_filesystem_question,
@@ -14,7 +15,6 @@ from secretary.agent.grounding import (
     should_retry_for_verification,
     verify_reply_against_evidence,
 )
-from secretary.agent.grounding import ReadEvidence
 
 
 @dataclass

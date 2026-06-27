@@ -15,35 +15,36 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from secretary.agent.chat_service import ChatResult, ChatService
+from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
+from secretary.agent.llm_config import resolve_llm_config
 from secretary.agent.mcp_manager import McpManager
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
-from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
-from secretary.agent.llm_config import resolve_llm_config
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
 from secretary.config import settings
-from secretary.connectors.base import BaseConnector
-from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
+from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError, IngestError
 from secretary.memory.db import MemoryStore
 from secretary.memory.graph import GraphBuilder
 from secretary.memory.kb import KnowledgeWorkspace
+from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
+from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
-from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
-from secretary.services.scheduled_think import ScheduledThinkService
-from secretary.services.scheduler import BackgroundScheduler
+from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (
     PLATFORM_DEFINITIONS,
     PlatformConfigStore,
     mask_secrets,
 )
 from secretary.services.profile_service import ProfileService
+from secretary.services.scheduled_think import ScheduledThinkService
+from secretary.services.scheduler import BackgroundScheduler
+from secretary.services.shibei_config import ShibeiConfigStore
+from secretary.services.shibei_service import ShibeiService
 from secretary.services.sync import SyncService
-from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
-from secretary.services.file_auth import FileAuthService
 from secretary.services.user_profile_store import UserProfileStore
 from secretary.utils.messages import format_connector_message
 
@@ -289,6 +290,37 @@ class AgentTestResponse(BaseModel):
     source: str
 
 
+class ShibeiConfigResponse(BaseModel):
+    enabled: bool
+    sources: list[str]
+    extensions: list[str]
+    search_engine: str
+    auto_import_on_sync: bool
+    collection: str
+    install_path: str
+    config_path: str
+    db_path: str
+    status: str
+    status_message: str
+    source_count: int
+    shibei_available: bool
+
+
+class ShibeiConfigUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    sources: list[str] | None = None
+    extensions: list[str] | None = None
+    search_engine: str | None = None
+    auto_import_on_sync: bool | None = None
+    collection: str | None = None
+    install_path: str | None = None
+
+
+class ShibeiActionResponse(BaseModel):
+    status: str
+    message: str
+
+
 DESKTOP_UI_DIR = Path(__file__).resolve().parents[3] / "desktop" / "ui"
 
 
@@ -320,7 +352,13 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
 def _init_services() -> dict[str, object]:
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
     platform_store = PlatformConfigStore(settings.resolved_data_dir() / "platforms.json")
-    sync_service = SyncService(settings, store)
+    shibei_config_store = ShibeiConfigStore(
+        settings.resolved_data_dir() / "shibei.json",
+        data_dir=settings.resolved_data_dir(),
+    )
+    shibei_service = ShibeiService(shibei_config_store)
+    shibei_config_store.sync_yaml()
+    sync_service = SyncService(settings, store, shibei_service=shibei_service)
     local_documents_profiler = LocalDocumentsProfiler(settings)
     user_profile_store = UserProfileStore(settings.resolved_data_dir() / "user_profile.md")
     profile_service = ProfileService(settings, store, local_documents_profiler, user_profile_store)
@@ -349,6 +387,7 @@ def _init_services() -> dict[str, object]:
         sync_service=sync_service,
         file_auth=file_auth,
         mcp_manager=mcp_manager,
+        shibei_service=shibei_service,
     )
     workspace = KnowledgeWorkspace(settings.resolved_data_dir() / "workspace")
     workspace.ensure_layout()
@@ -362,6 +401,8 @@ def _init_services() -> dict[str, object]:
         "chat_service": chat_service,
         "mcp_manager": mcp_manager,
         "mcp_config_store": mcp_config_store,
+        "shibei_config_store": shibei_config_store,
+        "shibei_service": shibei_service,
         "progress_hub": progress_hub,
         "workspace": workspace,
     }
@@ -941,6 +982,49 @@ def test_agent_config(request: Request) -> AgentTestResponse:
         model=config.model,
         source=config.source,
     )
+
+
+@app.get("/api/shibei/config")
+def get_shibei_config(request: Request) -> ShibeiConfigResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    view = service.status_view()
+    return ShibeiConfigResponse(**view)
+
+
+@app.put("/api/shibei/config")
+def update_shibei_config(request: Request, body: ShibeiConfigUpdateRequest) -> ShibeiConfigResponse:
+    store: ShibeiConfigStore = _svc(request).shibei_config_store
+    payload = body.model_dump(exclude_none=True)
+    if "sources" in payload and payload["sources"] is not None:
+        payload["sources"] = [
+            line.strip()
+            for line in payload["sources"]
+            if isinstance(line, str) and line.strip()
+        ]
+    store.update(payload)
+    service: ShibeiService = _svc(request).shibei_service
+    return ShibeiConfigResponse(**service.status_view())
+
+
+@app.post("/api/shibei/import")
+def import_shibei(request: Request, full: bool = False) -> ShibeiActionResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        result = service.import_all(full=full)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return ShibeiActionResponse(status="ready", message=result.message)
+
+
+@app.post("/api/shibei/test")
+def test_shibei(request: Request) -> ShibeiActionResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        preview = service.search("测试", limit=1)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    snippet = preview.replace("\n", " ")[:120]
+    return ShibeiActionResponse(status="ready", message=f"检索成功：{snippet}")
 
 
 @app.get("/api/skills/sources")

@@ -12,9 +12,9 @@ from secretary.config import Settings
 from secretary.core.types import UserProfile
 from secretary.memory.db import MemoryStore
 from secretary.memory.kb import KnowledgeWorkspace
+from secretary.memory.profile import ProfileBuilder
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
-from secretary.memory.profile import ProfileBuilder
 from secretary.services.user_profile_store import UserProfileStore
 
 

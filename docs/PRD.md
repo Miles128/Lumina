@@ -236,7 +236,7 @@ Design principles:
 
 | Metric · 指标 | Target | Current |
 |---------------|--------|---------|
-| Test suite | Green on CI | **228** tests, Python 3.11 + 3.12 |
+| Test suite | Green on CI | **274** tests (259 unit + 15 E2E), Python 3.11 + 3.12 |
 | Agent tasks with confirm | >90% useful output | Manual QA |
 | Cold start (excl. LLM) | <30s | Manual QA |
 | Memory recall (profile Q) | Relevant in top 5 after sync | Manual QA |
@@ -257,13 +257,20 @@ Design principles:
 - Rules-first **PromptGate** (optional LLM via `PROMPT_GATE_ENABLED`)
 - Resilient **web_search** (`engine=auto`, retries, DuckDuckGo Instant fallback)
 
-### Next (v0.1.1 — release hardening) · 近期
+### Shipped (v0.1.1 — 2026-05) · 已交付
 
-1. **Merge** `feat/logo-subagent-grounding` → `main` and tag release
-2. **E2E smoke:** My Projects listing, third-party repo author, WeRead after sync, send button, pause/timeout
-3. **Connector hardening:** sync reliability, empty-state copy (“请先同步”)
-4. **Docs sync:** README test count, harness docs cross-links
-5. Optional: bundled Python / one-click installer for packaged app
+- **E2E smoke:** API (9) + Playwright UI (6) via `scripts/e2e-smoke.sh`; CI installs Chromium
+- **Connector hardening:** empty sync →「请先同步」; briefing/think skip when no data
+- **Shibei KB:** agent tools + settings UI + auto-import on sync
+- **Web agent:** browser routing, GitHub trending fetch, web research helpers
+- Offline/setup replies no longer show false **Unverified** badge
+
+### Next (post v0.1.1) · 近期
+
+1. **Merge** `feat/logo-subagent-grounding` → `main` and tag **v0.1.1**
+2. Manual Electron smoke: pause/timeout, My Projects listing with real data
+3. Optional E2E: pause button, WeRead after sync (needs fixture data)
+4. Optional: bundled Python / one-click installer for packaged app
 
 ### P1 — Capability · 能力
 

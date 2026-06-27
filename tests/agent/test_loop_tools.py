@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from secretary.agent.loop import MemoryTool, SessionSearchTool
+from secretary.agent.tools.memory_tools import MemoryTool, SessionSearchTool
 from secretary.memory.hermes_memory import HermesMemory
 
 

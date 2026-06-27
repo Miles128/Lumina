@@ -6,15 +6,15 @@ from unittest.mock import patch
 import pytest
 
 from secretary.agent.web_search import (
-    WebSearchTool,
     _ENGINES,
+    SearchResult,
+    WebSearchTool,
     _baidu,
     _bing,
     _ddg,
     _decode_bing_url,
     _sogou,
     run_search,
-    SearchResult,
 )
 
 BING_HTML = """

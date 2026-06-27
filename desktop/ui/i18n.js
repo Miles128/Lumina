@@ -91,6 +91,7 @@
     "settings.soul": { en: "SOUL", zh: "人格 SOUL" },
     "settings.memory": { en: "Memory", zh: "持久记忆" },
     "settings.mcp": { en: "MCP Tools", zh: "MCP 工具" },
+    "settings.shibei": { en: "Shibei KB", zh: "Shibei 知识库" },
     "settings.appearance": { en: "Appearance", zh: "界面" },
 
     "appearance.title": { en: "Appearance", zh: "界面" },

@@ -9,10 +9,10 @@ import pytest
 
 from secretary.agent import web_search
 from secretary.agent.web_search import (
+    _ENGINES,
     SearchResult,
     _ddg_instant,
     _fetch_html,
-    _ENGINES,
     fallback_engine_order,
     run_search,
 )

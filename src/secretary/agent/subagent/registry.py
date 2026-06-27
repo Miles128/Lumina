@@ -6,19 +6,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import FileReadTool, FileWriteTool, ListDirTool
-from secretary.agent.tools.memory_tools import SearchMemoryTool, SessionSearchTool
-from secretary.agent.tools.shell import ShellTool
-from secretary.agent.tools.web import WebFetchTool
 from secretary.agent.p0_tools import PatchTool, SearchFilesTool
-from secretary.agent.subagent.custom import CustomArchetypeSpec, load_custom_archetypes
+from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import (
     BUILTIN_ARCHETYPES,
     EXPLORE_MAX_STEPS,
     VERIFY_MAX_STEPS,
     WORKER_MAX_STEPS,
 )
+from secretary.agent.tools.base import Tool
+from secretary.agent.tools.fs import FileReadTool, FileWriteTool, ListDirTool
+from secretary.agent.tools.memory_tools import SearchMemoryTool, SessionSearchTool
+from secretary.agent.tools.shell import ShellTool
+from secretary.agent.tools.web import WebFetchTool
 from secretary.agent.web_search import WebSearchTool
 
 if TYPE_CHECKING:

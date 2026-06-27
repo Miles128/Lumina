@@ -4,25 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from secretary.agent.executable_skill import ExecutableSkillManager
-from secretary.agent.llm_client import chat_completion
-from secretary.agent.llm_config import LlmConfig, resolve_llm_config
-from secretary.agent.loop import LoopResult, PendingConfirmation
-from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
-from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
-from secretary.agent.tools.shell import ShellTool
-from secretary.agent.tools.web import WebFetchTool
-from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.web_routing import WebSearchPlan, resolve_web_search
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
     LUMINA_IDENTITY_SYSTEM_BLOCK,
@@ -31,13 +22,23 @@ from secretary.agent.identity import (
     is_author_request,
     is_identity_request,
 )
+from secretary.agent.llm_client import chat_completion
+from secretary.agent.llm_config import LlmConfig, resolve_llm_config
+from secretary.agent.loop import LoopResult, PendingConfirmation
+from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
 from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps, SubAgentRunner
+from secretary.agent.tools.base import Tool
+from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
+from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
+from secretary.agent.tools.shell import ShellTool
+from secretary.agent.tools.web import WebFetchTool
 from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
+from secretary.agent.web_routing import WebSearchPlan, resolve_web_search
 from secretary.config import Settings
 from secretary.core.types import MemoryChunk
 from secretary.exceptions import AgentError
@@ -51,6 +52,7 @@ from secretary.services.todo_store import TodoStore
 
 if TYPE_CHECKING:
     from secretary.agent.mcp_manager import McpManager
+    from secretary.services.shibei_service import ShibeiService
     from secretary.services.sync import SyncService
 
 MAX_HISTORY_TURNS = 16
@@ -88,6 +90,7 @@ class ChatService:
         sync_service: SyncService | None = None,
         file_auth: FileAuthService | None = None,
         mcp_manager: McpManager | None = None,
+        shibei_service: ShibeiService | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -112,6 +115,7 @@ class ChatService:
         self._prompt_gate = PromptGate(settings, agent_config_store)
         self._turn_orchestrator = TurnOrchestrator(self._file_auth)
         self._mcp_manager = mcp_manager
+        self._shibei_service = shibei_service
 
     @property
     def hermes_memory(self) -> HermesMemory:
@@ -242,6 +246,22 @@ class ChatService:
         hits = self._store.search(cleaned, limit=5)
         profile_excerpt = view.markdown[:800]
 
+        from secretary.agent.sync_routing import resolve_sync_empty_reply
+
+        sync_empty = resolve_sync_empty_reply(
+            cleaned,
+            self._store,
+            self._sync_service,
+            memory_hits=len(hits),
+        )
+        if sync_empty:
+            return self._finish_gate_reply(
+                cleaned,
+                sync_empty,
+                used_llm=False,
+                route="sync_empty",
+            )
+
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
             fallback = self._fallback_reply(cleaned, view.markdown, hits)
@@ -365,15 +385,23 @@ class ChatService:
         memory_hits: int = 0,
         used_tools: list[str] | None = None,
         grounding_verified: bool = True,
+        route: str = "",
     ) -> ChatResult:
         tools = list(used_tools or [])
-        safe_reply, verified, note = self._prepare_user_reply(
-            reply,
-            user_message,
-            None,
-            used_tools=tools,
-            grounding_verified=grounding_verified,
-        )
+        if route == "sync_empty":
+            safe_reply = sanitize_user_facing_reply(
+                rewrite_if_forbidden_label(reply, user_message, None),
+                user_message,
+            )
+            verified, note = True, ""
+        else:
+            safe_reply, verified, note = self._prepare_user_reply(
+                reply,
+                user_message,
+                None,
+                used_tools=tools,
+                grounding_verified=grounding_verified,
+            )
         self._append_history(user_message, safe_reply)
         self._save_to_session("user", user_message)
         self._save_to_session("assistant", safe_reply)
@@ -385,6 +413,7 @@ class ChatService:
             used_tools=tools or None,
             grounding_verified=verified,
             grounding_note=note,
+            route=route,
         )
 
     def _handle_sync_gate(self, user_message: str) -> ChatResult:
@@ -915,6 +944,20 @@ class ChatService:
         ]
         if self._mcp_manager is not None:
             tools.extend(self._mcp_manager.get_tools())
+        if self._shibei_service is not None and self._shibei_service.is_enabled():
+            from secretary.agent.tools.shibei_tools import (
+                ShibeiImportTool,
+                ShibeiListSourcesTool,
+                ShibeiSearchTool,
+            )
+
+            tools.extend(
+                [
+                    ShibeiSearchTool(self._shibei_service),
+                    ShibeiImportTool(self._shibei_service),
+                    ShibeiListSourcesTool(self._shibei_service),
+                ]
+            )
         return tools
 
     def _make_spawn_tool(self, llm_config: LlmConfig, session_id: str) -> SpawnSubagentTool:
@@ -944,6 +987,17 @@ class ChatService:
         hermes_section = ""
         if hermes_snapshot:
             hermes_section = f"\n\n## Persistent Memory\n{hermes_snapshot}"
+        shibei_section = ""
+        if self._shibei_service is not None and self._shibei_service.is_enabled():
+            view = self._shibei_service.status_view()
+            folders = "、".join(view.get("sources") or []) or "（未配置）"
+            shibei_section = (
+                "\n\n## Shibei 外挂知识库\n"
+                "灵犀接入了 Shibei 中文语义知识库，用于个人笔记/文档类问题。\n"
+                f"- 监控文件夹：{folders}\n"
+                "- 优先用 shibei_search 检索；结果为空时 shibei_import 或提示用户同步\n"
+                "- 不要编造未出现在 shibei_search / search_memory 结果中的文档内容\n"
+            )
         style_rule = (
             "- 语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
             if self._response_style() == "brief"
@@ -967,7 +1021,8 @@ class ChatService:
             f"{profile_block[:6000]}\n\n"
             "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
             f"{memory_block}\n"
-            f"{hermes_section}\n\n"
+            f"{hermes_section}"
+            f"{shibei_section}\n\n"
             "## 对话规则\n"
             "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
             "- 用户画像、本地文档、本地记忆说的是用户；灵犀的风格、技术栈、自我介绍只说灵犀自己的，二者不要混用\n"

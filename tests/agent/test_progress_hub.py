@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from secretary.agent.progress_events import ProgressEvent, progress_event_label, progress_event_payload
+from secretary.agent.progress_events import (
+    ProgressEvent,
+    progress_event_label,
+    progress_event_payload,
+)
 from secretary.agent.progress_hub import ProgressHub
 
 

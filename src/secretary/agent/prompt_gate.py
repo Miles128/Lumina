@@ -45,6 +45,9 @@ KNOWN_TOOLS = frozenset({
     "skills_list",
     "skill_view",
     "clarify",
+    "shibei_search",
+    "shibei_import",
+    "shibei_list_sources",
 })
 
 _CLASSIFY_SYSTEM = """你是输入路由器。根据用户消息判断意图，只输出一个 JSON 对象，不要其他文字。

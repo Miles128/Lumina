@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -31,6 +32,27 @@ def test_briefing_rule_based(tmp_path: Path) -> None:
     service = BriefingService(settings, store)
     markdown = service.generate(_profile_service(tmp_path))
     assert "# 今日简报" in markdown
+    assert "同步" in markdown
+
+
+def _run_async(coro: object) -> None:
+    """Run coroutine in a fresh loop (Playwright E2E may leave a loop on the main thread)."""
+    error: list[BaseException] = []
+
+    def _target() -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(coro)  # type: ignore[arg-type]
+        except BaseException as exc:
+            error.append(exc)
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=_target)
+    thread.start()
+    thread.join()
+    if error:
+        raise error[0]
 
 
 def test_scheduler_saves_briefing_state(tmp_path: Path) -> None:
@@ -48,7 +70,7 @@ def test_scheduler_saves_briefing_state(tmp_path: Path) -> None:
     scheduler = BackgroundScheduler(settings, sync, profile_service, briefing)
 
     with patch.object(briefing, "generate", return_value="# 今日简报\n\n测试"):
-        asyncio.run(scheduler._maybe_run_briefing())
+        _run_async(scheduler._maybe_run_briefing())
 
     payload = BackgroundScheduler.load_latest_briefing(settings.resolved_data_dir())
     assert payload is not None
