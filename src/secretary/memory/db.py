@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re as _re
 import sqlite3
 import threading
 from datetime import datetime
@@ -242,8 +243,6 @@ class MemoryStore:
             created_at=datetime.fromisoformat(str(row["created_at"])),
         )
 
-
-import re as _re
 
 _FTS_SPECIAL = _re.compile(r'[`*"()|:]')
 

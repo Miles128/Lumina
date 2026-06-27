@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from secretary.agent.grounding import is_personal_memory_question
-from secretary.core.types import ConnectorStatus, SourceKind
+from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
 from secretary.memory.db import MemoryStore
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ def _generic_sync_reply() -> str:
     )
 
 
-def _health_for(source: SourceKind, sync_service: SyncService | None):
+def _health_for(source: SourceKind, sync_service: SyncService | None) -> ConnectorHealth | None:
     if sync_service is None:
         return None
     for item in sync_service.get_stored_health():

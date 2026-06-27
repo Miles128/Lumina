@@ -8,9 +8,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from secretary.agent.chat_service import ChatResult
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import LoopResult
-from secretary.agent.chat_service import ChatResult
 from secretary.api.app import app
 from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
 

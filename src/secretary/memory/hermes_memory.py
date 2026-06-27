@@ -8,6 +8,7 @@ Layer 3: Episodic memory (task execution records with success/failure)
 from __future__ import annotations
 
 import json
+import re as _re
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -371,8 +372,6 @@ class HermesMemory:
 
 
 MAX_MESSAGE_LEN = 4000
-
-import re as _re
 
 _FTS_SPECIAL = _re.compile(r'[*"()|:]')
 

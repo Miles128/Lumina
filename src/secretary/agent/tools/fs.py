@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,14 @@ class ListDirTool(Tool):
             return f"Error: not a directory: {path}"
 
         recursive = arguments.get("recursive", False)
-        pattern = arguments.get("pattern", "*")
+        pattern = str(arguments.get("pattern", "*") or "*")
+
+        def _matches(name: str, *, is_dir: bool) -> bool:
+            if pattern in ("", "*"):
+                return True
+            if is_dir:
+                return fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(name, pattern.rstrip("/"))
+            return fnmatch.fnmatch(name, pattern)
 
         lines: list[str] = []
         try:
@@ -63,8 +71,12 @@ class ListDirTool(Tool):
                         dirs.clear()
                         continue
                     for d in sorted(dirs):
+                        if not _matches(d, is_dir=True):
+                            continue
                         lines.append(f"  {'  ' * depth}📁 {d}/")
                     for f in sorted(files):
+                        if not _matches(f, is_dir=False):
+                            continue
                         fp = Path(root) / f
                         try:
                             size_str = _human_size(fp.stat().st_size)
@@ -79,6 +91,8 @@ class ListDirTool(Tool):
                 ext_counts: dict[str, int] = {}
                 for entry in entries:
                     if entry.is_dir():
+                        if not _matches(entry.name, is_dir=True):
+                            continue
                         try:
                             count = sum(1 for _ in entry.iterdir())
                             lines.append(f"📁 {entry.name}/  ({count} items)")
@@ -87,6 +101,8 @@ class ListDirTool(Tool):
                         except OSError:
                             lines.append(f"📁 {entry.name}/")
                     else:
+                        if not _matches(entry.name, is_dir=False):
+                            continue
                         try:
                             size = entry.stat().st_size
                             lines.append(f"📄 {entry.name}  ({_human_size(size)})")

@@ -17,6 +17,7 @@ from secretary.services.local_documents_profiler import (
     LocalDocumentsProfiler,
 )
 from secretary.services.profile_service import ProfileService
+from secretary.services.shibei_service import ShibeiService
 from secretary.services.user_profile_store import UserProfileStore
 
 BROWSER_SYNC_SOURCES = frozenset({SourceKind.WEREAD, SourceKind.XIAOHONGSHU})
@@ -35,7 +36,7 @@ class SyncService:
         settings: Settings,
         store: MemoryStore,
         *,
-        shibei_service: object | None = None,
+        shibei_service: ShibeiService | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -197,15 +198,12 @@ class SyncService:
 
     def _maybe_import_shibei(self) -> None:
         service = self._shibei_service
-        if service is None or not getattr(service, "is_enabled", lambda: False)():
+        if service is None or not service.is_enabled():
             return
-        store = getattr(service, "_store", None)
-        if store is None:
-            return
-        document = store.load()
+        document = service._store.load()
         if not document.auto_import_on_sync or not document.sources:
             return
-        if not getattr(service, "is_available", lambda: False)():
+        if not service.is_available():
             return
         try:
             service.import_all(full=False)
