@@ -357,11 +357,17 @@ html, body {
 
 .bubble.markdown h1,
 .bubble.markdown h2,
-.bubble.markdown h3 {
+.bubble.markdown h3,
+.bubble.markdown h4,
+.bubble.markdown h5,
+.bubble.markdown h6 {
   font-size: 15px;
   line-height: 1.4;
   margin: 0 0 8px;
 }
+
+.bubble.markdown h1 { font-size: 17px; }
+.bubble.markdown h2 { font-size: 16px; }
 
 .bubble.markdown ul,
 .bubble.markdown ol {

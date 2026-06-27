@@ -27,6 +27,7 @@ Harness（灵犀专有）
 | **OpenCode** | 子 session 委派 + 并行 Task | `spawn_subagent` + `goals[]` 最多 3 路 explore |
 | **Claude Code** | 类型化 subagent + md 定义 + **子 agent 禁递归** | `explore` / `worker` / `verify` / `plan` + `~/.lumina/subagents/*.md`；子 tool 集不含 `spawn_subagent` |
 | **Hermes** | `delegate_task`、leaf 无 delegate、batch≤3 | `SpawnSubagentTool`；`MAX_SPAWN_DEPTH=1`；`MAX_PARALLEL_EXPLORE=3` |
+| **Codex / Claude CLI** | 外进程 Agent、pause turn approve | **`spawn_cli_agent`（FR-30）**：subprocess + 摘要回传，不嵌 runtime |
 
 ---
 
@@ -59,9 +60,9 @@ Harness（灵犀专有）
 以下逻辑留在 `ChatService` / `grounding` / `sync_routing`，不下沉到 loop：
 
 - Grounding：强制读盘、Verified/Unverified
-- 个人数据：`sync_empty` →「请先同步」
+- 个人数据：**Shibei 就绪 → 不拦读记忆**；连接器 sync 空库仅作备选提示
 - 身份/作者/项目 author fast path
-- 连接器、Shibei KB、Electron 确认 UI
+- Shibei KB、KB workspace UI、Electron 确认 UI
 
 ---
 
@@ -71,8 +72,11 @@ Harness（灵犀专有）
 - [x] UI 子 Agent 树（OpenCode session tree）
 - [x] 子 Agent 确认后父 loop 续跑（Codex turn stack，一层）
 - [x] `SpawnContext.depth + 1` 硬限一层
+- [x] Shibei-first 读记忆路由（sync 备选）
+- [ ] Shibei 空结果 → 自动 import 或 UI 引导（v0.2 B1）
+- [ ] **`spawn_cli_agent`**：外接 Codex / Claude CLI（FR-30 C0）
 - [ ] Explore 便宜模型路由（Cursor 做法）
-- [ ] `~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent（subagent 已支持）
+- [ ] `~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent
 
 ---
 

@@ -123,3 +123,45 @@ def test_build_tools_includes_shibei_when_enabled(tmp_path: Path) -> None:
     names = {tool.name for tool in chat._build_tools()}
     assert "shibei_search" in names
     assert "shibei_import" in names
+
+
+def test_shibei_ready_for_memory_read(tmp_path: Path) -> None:
+    shibei_root = tmp_path / "shibei"
+    _write_shibei_project(shibei_root)
+    store = ShibeiConfigStore(tmp_path / "shibei.json", data_dir=tmp_path / "data")
+    store.save(ShibeiConfigDocument(install_path=str(shibei_root)))
+    service = ShibeiService(store)
+
+    with patch.object(service, "_resolve_src_path", return_value=shibei_root / "src"):
+        from secretary.services.shibei_service import shibei_ready_for_memory_read
+
+        assert shibei_ready_for_memory_read(service)
+
+
+def test_pick_tools_prefers_shibei_search(tmp_path: Path) -> None:
+    from secretary.agent.chat_service import ChatService
+    from secretary.agent.skills import SkillManager
+    from secretary.config import Settings
+    from secretary.memory.db import MemoryStore
+    from secretary.services.local_documents_profiler import LocalDocumentsProfiler
+    from secretary.services.profile_service import ProfileService
+    from secretary.services.user_profile_store import UserProfileStore
+
+    settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=False)
+    memory = MemoryStore(settings.resolved_data_dir() / "memory.db")
+    profile = ProfileService(
+        settings,
+        memory,
+        LocalDocumentsProfiler(settings),
+        UserProfileStore(settings.resolved_data_dir() / "user_profile.md"),
+    )
+    shibei_root = tmp_path / "shibei"
+    _write_shibei_project(shibei_root)
+    shibei_store = ShibeiConfigStore(settings.resolved_data_dir() / "shibei.json", data_dir=settings.resolved_data_dir())
+    shibei_store.save(ShibeiConfigDocument(install_path=str(shibei_root)))
+    shibei = ShibeiService(shibei_store)
+    chat = ChatService(settings, memory, profile, SkillManager(settings.resolved_data_dir()), shibei_service=shibei)
+
+    with patch.object(shibei, "_resolve_src_path", return_value=shibei_root / "src"):
+        tools = chat._pick_tools(("search_memory", "session_search"))
+        assert tools[0].name == "shibei_search"

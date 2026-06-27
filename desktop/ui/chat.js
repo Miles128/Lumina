@@ -1099,102 +1099,11 @@
   }
 
   function renderMarkdown(text) {
+    if (window.LuminaMarkdown) {
+      return window.LuminaMarkdown.render(text);
+    }
     const source = String(text || "");
-    const codeBlocks = [];
-    const placeholderPrefix = "__MD_CODE_BLOCK_";
-    const fenced = source.replace(/```([\w-]+)?\n([\s\S]*?)```/g, (_all, lang, code) => {
-      const langClass = lang ? ` class="lang-${escapeHtml(lang)}"` : "";
-      const html = `<pre><code${langClass}>${escapeHtml(code.trimEnd())}</code></pre>`;
-      const token = `${placeholderPrefix}${codeBlocks.length}__`;
-      codeBlocks.push({ token, html });
-      return token;
-    });
-    const escaped = escapeHtml(fenced);
-    const lines = escaped.split("\n");
-    const chunks = [];
-    let inUl = false;
-    let inOl = false;
-
-    const closeLists = () => {
-      if (inUl) {
-        chunks.push("</ul>");
-        inUl = false;
-      }
-      if (inOl) {
-        chunks.push("</ol>");
-        inOl = false;
-      }
-    };
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        closeLists();
-        continue;
-      }
-      const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
-      if (heading) {
-        closeLists();
-        const level = heading[1].length;
-        chunks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
-        continue;
-      }
-      const ul = trimmed.match(/^[-*]\s+(.+)$/);
-      if (ul) {
-        if (inOl) {
-          chunks.push("</ol>");
-          inOl = false;
-        }
-        if (!inUl) {
-          chunks.push("<ul>");
-          inUl = true;
-        }
-        chunks.push(`<li>${renderInline(ul[1])}</li>`);
-        continue;
-      }
-      const ol = trimmed.match(/^\d+\.\s+(.+)$/);
-      if (ol) {
-        if (inUl) {
-          chunks.push("</ul>");
-          inUl = false;
-        }
-        if (!inOl) {
-          chunks.push("<ol>");
-          inOl = true;
-        }
-        chunks.push(`<li>${renderInline(ol[1])}</li>`);
-        continue;
-      }
-      const quote = trimmed.match(/^&gt;\s?(.+)$/);
-      if (quote) {
-        closeLists();
-        chunks.push(`<blockquote>${renderInline(quote[1])}</blockquote>`);
-        continue;
-      }
-      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-        closeLists();
-        chunks.push("<hr>");
-        continue;
-      }
-      closeLists();
-      chunks.push(`<p>${renderInline(trimmed)}</p>`);
-    }
-    closeLists();
-
-    let html = chunks.join("");
-    for (const block of codeBlocks) {
-      html = html.replaceAll(block.token, block.html);
-    }
-    return html || `<p>${escapeHtml(source)}</p>`;
-  }
-
-  function renderInline(text) {
-    return text
-      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/(?<![\"'=])(https?:\/\/[^\s<]+[^\s<.,;:!?\"'\])])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    return source ? `<p>${escapeHtml(source)}</p>` : "";
   }
 
   function escapeHtml(value) {

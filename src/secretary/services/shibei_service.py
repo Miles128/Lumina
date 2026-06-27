@@ -21,6 +21,13 @@ class ShibeiImportResult:
     message: str
 
 
+def shibei_ready_for_memory_read(service: ShibeiService | None) -> bool:
+    """True when Lumina should read personal docs via Shibei instead of requiring connector sync."""
+    if service is None or not service.is_enabled() or not service.is_available():
+        return False
+    return service._store.resolve_config_path().is_file()
+
+
 class ShibeiService:
     def __init__(self, store: ShibeiConfigStore) -> None:
         self._store = store

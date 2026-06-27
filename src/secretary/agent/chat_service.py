@@ -285,6 +285,7 @@ class ChatService:
             self._store,
             self._sync_service,
             memory_hits=len(hits),
+            shibei_service=self._shibei_service,
         )
         if sync_empty:
             return self._finish_gate_reply(
@@ -1095,13 +1096,27 @@ class ChatService:
         return build_browser_tools(self._get_or_create_session_id())
 
     def _pick_tools(self, suggested: tuple[str, ...]) -> list[Tool]:
+        from secretary.services.shibei_service import shibei_ready_for_memory_read
+
         all_tools = {tool.name: tool for tool in self._build_tools()}
+        shibei_first = shibei_ready_for_memory_read(self._shibei_service)
         if suggested:
-            picked = [all_tools[name] for name in suggested if name in all_tools]
+            names = list(suggested)
+            if shibei_first and "shibei_search" not in names:
+                if any(name in names for name in ("search_memory", "session_search")):
+                    names.insert(0, "shibei_search")
+            picked = [all_tools[name] for name in names if name in all_tools]
             if picked:
                 return picked
-        defaults = ("search_memory", "session_search", "web_search")
+        defaults = self._default_memory_tool_names()
         return [all_tools[name] for name in defaults if name in all_tools]
+
+    def _default_memory_tool_names(self) -> tuple[str, ...]:
+        from secretary.services.shibei_service import shibei_ready_for_memory_read
+
+        if shibei_ready_for_memory_read(self._shibei_service):
+            return ("shibei_search", "session_search", "search_memory", "web_search")
+        return ("search_memory", "session_search", "web_search")
 
     def _build_tools(self) -> list[Tool]:
         from secretary.agent.p0_tools import (
@@ -1191,10 +1206,12 @@ class ChatService:
             view = self._shibei_service.status_view()
             folders = "、".join(view.get("sources") or []) or "（未配置）"
             shibei_section = (
-                "\n\n## Shibei 知识库\n"
-                "直接调用 Shibei 应用已有知识库（config.yaml + ~/.shibei/db）。\n"
+                "\n\n## Shibei 知识库（读取记忆的主路径）\n"
+                "个人笔记、文档、面试资料等 **优先** 用 shibei_search 检索 Shibei 已有索引"
+                "（config.yaml + ~/.shibei/db），**不需要** 先点 Lumina「同步」。\n"
                 f"- 监控文件夹：{folders}\n"
-                "- 优先用 shibei_search 检索；结果为空时 shibei_import 或在 Shibei 中 import\n"
+                "- 检索为空时：shibei_import 增量导入，或在 Shibei 应用中 import\n"
+                "- search_memory 仅查 Lumina 连接器同步库，作为 Shibei 的备选\n"
                 "- 不要编造未出现在 shibei_search / search_memory 结果中的文档内容\n"
             )
         style_rule = (

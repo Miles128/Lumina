@@ -240,11 +240,17 @@ def test_is_personal_memory_question_and_enforce_memory() -> None:
     from secretary.agent.grounding import (
         UNGROUNDED_MEMORY_FALLBACK,
         enforce_grounded_reply,
+        is_memory_write_request,
         is_personal_memory_question,
     )
 
     assert is_personal_memory_question("再找")
     assert is_personal_memory_question("总结一下我最近在读什么")
+    assert is_personal_memory_question("根据我的记忆总结一下")
+    assert is_memory_write_request("写入记忆：我喜欢 Python")
+    assert is_memory_write_request("记住我喜欢深色模式")
+    assert not is_personal_memory_question("写入记忆：我喜欢 Python")
+    assert not is_personal_memory_question("你记住了吗")
     reply = (
         "翻了对话历史，你提到的书就这两本：\n"
         "1. **《启示录》**\n"

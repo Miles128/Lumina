@@ -10,7 +10,8 @@
     "icon": "bash ../scripts/build-app-icon.sh",
     "pack": "npm run icon && electron-builder --mac",
     "pack:dir": "npm run icon && electron-builder --mac dir",
-    "install:cn": "bash ../scripts/install-electron.sh"
+    "install:cn": "bash ../scripts/install-electron.sh",
+    "vendor:sync": "mkdir -p ui/vendor && cp node_modules/markdown-it/dist/markdown-it.min.js ui/vendor/ && cp node_modules/dompurify/dist/purify.min.js ui/vendor/"
   },
   "devDependencies": {
     "electron": "^35.0.0",
@@ -44,5 +45,9 @@
         "NSLocationWhenInUseUsageDescription": "灵犀需要获取您的位置以提供本地天气等服务。"
       }
     }
+  },
+  "dependencies": {
+    "dompurify": "^3.4.11",
+    "markdown-it": "^14.2.0"
   }
 }
