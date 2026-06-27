@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from secretary.agent.llm_client import chat_completion
-from secretary.agent.llm_config import LlmConfig, resolve_llm_config
+from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
 from secretary.memory.hermes_memory import HermesMemory
@@ -63,7 +63,17 @@ class ScheduledThinkService:
             raise AgentError("未配置大模型，无法进行后台思考")
 
         profile = self._profile_service.get_view().markdown[:1200]
-        memory = self._hermes.prompt_snapshot() or "(empty)"
+        memory = self._hermes.prompt_snapshot() or ""
+        if not profile.strip() and not memory.strip():
+            from secretary.memory.db import MemoryStore
+
+            store = MemoryStore(self._settings.resolved_data_dir() / "memory.db")
+            if sum(store.count_by_source().values()) == 0:
+                logger.info("think skipped: no synced profile or memory yet")
+                self._save_state("## 后台思考\n\n- 跳过：尚无同步数据，请先同步。")
+                return "skipped: no synced data"
+
+        memory = memory or "(empty)"
         recent = self._hermes.recent_session_messages(limit=30)
         recent_text = "\n".join(
             f"[{item['role']}] {item['content'][:200]}"

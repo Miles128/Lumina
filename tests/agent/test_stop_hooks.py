@@ -29,6 +29,20 @@ def test_third_person_reply_is_sanitized(tmp_path: Path) -> None:
     assert "你又行了？" in result.reply
 
 
+def test_loop_stops_early_when_model_answers_without_tool(tmp_path: Path) -> None:
+    loop = AgentLoop(_llm_config(), tools=[ListDirTool()], max_steps=8, working_dir=tmp_path)
+    events: list[ProgressEvent] = []
+    loop._progress_callback = events.append  # noqa: SLF001
+    with patch(
+        "secretary.agent.loop.chat_completion",
+        return_value="这是直接回答，不需要工具。",
+    ) as mocked:
+        result = loop.run([{"role": "user", "content": "你好"}], temperature=0.0)
+    assert mocked.call_count == 1
+    assert result.total_steps == 1
+    assert any(event.kind == "iteration_completed" for event in events)
+
+
 def test_max_iterations_hook_stops_loop_early(tmp_path: Path) -> None:
     hook = MaxIterationsStopHook(max_iterations=1)
     loop = AgentLoop(
@@ -61,7 +75,12 @@ def test_progress_callback_receives_iteration_and_final(tmp_path: Path) -> None:
     with patch("secretary.agent.loop.chat_completion", return_value="直接答复"):
         result = loop.run([{"role": "user", "content": "hi"}], temperature=0.0)
     assert result.reply == "直接答复"
-    assert [event.kind for event in events] == ["iteration_started", "reply_end", "final_reply"]
+    assert [event.kind for event in events] == [
+        "iteration_started",
+        "reply_end",
+        "iteration_completed",
+        "final_reply",
+    ]
 
 
 def test_bash_block_with_waiting_text_is_inferred_as_shell_call(tmp_path: Path) -> None:

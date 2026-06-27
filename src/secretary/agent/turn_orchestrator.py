@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from secretary.agent.llm_config import LlmConfig
-from secretary.agent.loop import AgentLoop, LoopResult, Tool
+from secretary.agent.loop import AgentLoop, LoopResult
 from secretary.agent.progress_events import ProgressEvent
+from secretary.agent.tools.base import Tool
 from secretary.services.file_auth import FileAuthService
 
 if TYPE_CHECKING:
-    from secretary.agent.mcp_manager import McpManager
+    pass
 
 
 @dataclass(frozen=True)

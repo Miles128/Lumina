@@ -48,6 +48,12 @@ def test_strip_reasoning_chain_removes_think_blocks() -> None:
     assert strip_reasoning_chain(raw) == "最终答案是：42"
 
 
+def test_sanitize_filters_slang() -> None:
+    fixed = sanitize_user_facing_reply("这个方案有点装逼", "你怎么看")
+    assert "装逼" not in fixed
+    assert "***" in fixed
+
+
 def test_sanitize_strips_reasoning_before_display() -> None:
     open_tag = "<" + "think" + ">"
     close_tag = "</" + "think" + ">"

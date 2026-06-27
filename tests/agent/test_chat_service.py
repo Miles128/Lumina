@@ -37,7 +37,7 @@ def _build_chat_service(tmp_path: Path, *, api_key: str = "") -> ChatService:
 def test_chat_fallback_without_llm(tmp_path: Path) -> None:
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=None):
         service = _build_chat_service(tmp_path)
-        result = service.reply("你好，今天天气怎么样")
+        result = service.reply("你好")
     assert result.used_llm is False
     assert "你好" in result.reply
     assert "还没有查到相关的本地记忆" not in result.reply
@@ -70,7 +70,7 @@ def test_chat_uses_llm_without_memory(tmp_path: Path) -> None:
     )
     with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
         with patch(
-            "secretary.agent.loop.chat_completion",
+            "secretary.agent.chat_service.chat_completion",
             return_value="我可以正常聊天，本地记忆为空也没关系。",
         ):
             service = _build_chat_service(tmp_path, api_key="test-key")
@@ -103,6 +103,54 @@ def test_chat_sync_gate_routes_without_llm(tmp_path: Path) -> None:
     assert result.used_llm is False
 
 
+def test_chat_sync_empty_weread_without_data(tmp_path: Path) -> None:
+    from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
+    from secretary.services.sync import SyncService
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        prompt_gate_enabled=False,
+        llm_api_key="test-key",
+    )
+    store = MemoryStore(settings.resolved_data_dir() / "memory.db")
+    sync = SyncService(settings, store)
+    service = ChatService(
+        settings,
+        store,
+        ProfileService(
+            settings,
+            store,
+            LocalDocumentsProfiler(settings),
+            UserProfileStore(settings.resolved_data_dir() / "user_profile.md"),
+        ),
+        SkillManager(settings.resolved_data_dir()),
+        sync_service=sync,
+    )
+    with patch.object(
+        sync,
+        "get_stored_health",
+        return_value=[
+            ConnectorHealth(
+                source=SourceKind.WEREAD,
+                status=ConnectorStatus.READY,
+                message="ok",
+                item_count=0,
+            )
+        ],
+    ):
+        with patch("secretary.agent.chat_service.resolve_llm_config") as resolve:
+            resolve.return_value = LlmConfig(
+                api_key="k",
+                base_url="https://example.com/v1",
+                model="m",
+                source="env",
+            )
+            result = service.reply("我微信读书最近在读什么")
+    assert result.used_llm is False
+    assert result.route == "sync_empty"
+    assert "同步" in result.reply
+
+
 def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
@@ -124,6 +172,128 @@ def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     assert result.used_llm is False
 
 
+def _web_agent_loop_result(reply: str) -> LoopResult:
+    return LoopResult(
+        reply=reply,
+        steps=[],
+        used_tools=["web_search"],
+        total_steps=2,
+        grounding_verified=True,
+    )
+
+
+def test_chat_weather_without_location_still_web_searches(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("今天多云。"),
+        ):
+            result = service.reply("今天天气怎么样")
+    assert result.route == "web_agent"
+    assert "web_search" in (result.used_tools or [])
+
+
+def test_chat_weather_with_city_uses_web_search(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("杭州今天晴，约 18°C。"),
+        ):
+            result = service.reply("杭州天气怎么样")
+    assert "web_search" in (result.used_tools or [])
+    assert "18" in result.reply
+    assert result.route == "web_agent"
+
+
+def test_chat_web_search_markers_use_unified_pipeline(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("OpenAI 最近发布了新模型。"),
+        ):
+            result = service.reply("搜一下 OpenAI 最新动态")
+    assert "web_search" in (result.used_tools or [])
+    assert result.route == "web_agent"
+
+
+def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None:
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch.object(
+            service._turn_orchestrator,
+            "run_agent_turn",
+            return_value=_web_agent_loop_result("杭州今天晴，约 20°C。"),
+        ):
+            result = service.reply(
+                "今天天气怎么样",
+                location_city="杭州",
+                location_lat=30.27,
+                location_lng=120.15,
+            )
+    assert "web_search" in (result.used_tools or [])
+    assert "20" in result.reply
+    assert result.route == "web_agent"
+
+
+def test_chat_author_gate_is_hardcoded_without_llm(tmp_path: Path) -> None:
+    from secretary.agent.identity import LUMINA_AUTHOR_REPLY
+
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config") as mocked:
+        with patch("secretary.agent.loop.chat_completion") as llm:
+            result = service.reply("你的作者是谁")
+    mocked.assert_not_called()
+    llm.assert_not_called()
+    assert result.reply == LUMINA_AUTHOR_REPLY
+    assert result.used_llm is False
+    assert result.route == "author"
+
+
+def test_chat_identity_gate_is_hardcoded_without_llm(tmp_path: Path) -> None:
+    from secretary.agent.identity import LUMINA_IDENTITY_INTRO
+
+    service = _build_chat_service(tmp_path, api_key="test-key")
+    with patch("secretary.agent.chat_service.resolve_llm_config") as mocked:
+        with patch("secretary.agent.loop.chat_completion") as llm:
+            result = service.reply("做一下自我介绍")
+    mocked.assert_not_called()
+    llm.assert_not_called()
+    assert result.reply == LUMINA_IDENTITY_INTRO
+    assert result.used_llm is False
+    assert result.total_steps == 0
+    assert result.route == "identity"
+
+
 def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
     config = LlmConfig(
         api_key="test-key",
@@ -139,9 +309,10 @@ def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
             "run_agent_turn",
             return_value=fake_result,
         ) as mocked:
-            result = service.reply("帮我整理一下")
+            result = service.reply("列出 src 目录下的文件")
     assert mocked.called
-    assert result.reply == "好的，我来处理。"
+    assert "list_dir" in result.reply or "file_read" in result.reply
+    assert result.grounding_verified is False
 
 
 def test_prepare_user_reply_runs_rewriter_then_sanitizer(tmp_path: Path) -> None:

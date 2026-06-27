@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -208,7 +209,7 @@ class PlatformConfigStore:
         self.save(document)
         return document
 
-    def apply_to_settings(self, settings: object) -> None:
+    def apply_to_settings(self, settings: Any) -> None:
         document = self.load()
         settings.email_imap_host = document.email.imap_host
         settings.email_imap_port = document.email.imap_port

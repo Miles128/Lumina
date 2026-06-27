@@ -8,8 +8,8 @@ from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
 from secretary.core.types import ProfileSection, UserProfile
 from secretary.exceptions import AgentError
-from secretary.memory.profile import ProfileBuilder
 from secretary.memory.db import MemoryStore
+from secretary.memory.profile import ProfileBuilder
 from secretary.services.local_documents_profiler import LocalDocumentsProfile
 
 

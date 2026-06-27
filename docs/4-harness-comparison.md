@@ -1,6 +1,6 @@
-# 4 家哈尼斯横向对比
+# Codex Cursor Hermes Agent, Claude Code - 4 家 Harness 横向对比
 
-> Cursor · Codex · Hermes Agent · Claude Code · 2026-05-30
+> Cursor · Codex · Hermes Agent · Claude Code · 2026-06-01
 
 共性：**外层 Harness + 内层 while loop + 委派工具 + 隔离 context + 只回摘要**。差异在于 loop 所在层、session 模型、并行/深度限制、子 agent 类型配置。
 

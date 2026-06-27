@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      LUMINA_DATA_DIR: ${{ github.workspace }}/.lumina-ci
+      SECRETARY_AUTO_SYNC_ENABLED: "false"
+      SECRETARY_BRIEFING_ENABLED: "false"
+      SECRETARY_THINK_ENABLED: "false"
+      SECRETARY_MEMORY_SUMMARY_ENABLED: "false"
+      PROMPT_GATE_ENABLED: "false"
+      MCP_AUTO_FILESYSTEM: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,e2e]"
+          python -m playwright install --with-deps chromium
+
+      - name: Prepare CI data directory
+        run: mkdir -p "$LUMINA_DATA_DIR"
+
+      - name: Lint (ruff)
+        run: ruff check src tests --ignore E501
+
+      - name: Type check (mypy)
+        run: mypy src
+
+      - name: Run tests
+        run: pytest -q -m "not ui"
+
+      - name: E2E (API + Playwright UI)
+        run: bash scripts/e2e-smoke.sh

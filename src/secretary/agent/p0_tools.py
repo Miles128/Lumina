@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.loop import Tool, _resolve_path
 from secretary.agent.skills import SkillManager
+from secretary.agent.tools.base import Tool, _resolve_path
 from secretary.services.todo_store import TodoStore
 
 CLARIFY_PREFIX = "CLARIFY_REQUEST"

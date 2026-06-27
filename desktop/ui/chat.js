@@ -14,6 +14,7 @@
   const chatInput = document.getElementById("chat-input");
   const sendBtn = document.getElementById("btn-send");
   const mainScrollEl = document.querySelector(".chat-column .main");
+  const BOT_AVATAR_SRC = "/assets/logo.png?v=3";
 
   let busy = false;
   let pendingActionId = null;
@@ -25,6 +26,13 @@
   let currentThreadId = "";
   let streamingBubbleEl = null;
   let streamingText = "";
+  let progressSession = {
+    bufferedItems: [],
+    maxIteration: 0,
+    hasTools: false,
+    hasSubagent: false,
+    panelVisible: false,
+  };
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
@@ -77,7 +85,28 @@
     createThread();
   });
 
+  const LUMINA_IDENTITY_INTRO_FALLBACK =
+    "我是灵犀（Lumina），在你本机运行的个人 AI 秘书。\n\n" +
+    "我的说话风格：轻巧灵动、简明扼要——先给结论，句子短，不铺垫。\n\n" +
+    "我能帮你读本地文件、搜索记忆、联网搜索、同步数据源、调用工具；涉及写入或删除时会先征求你确认。\n\n" +
+    "我的技术栈是：\n" +
+    "- 前端：Electron + HTML / CSS / JavaScript\n" +
+    "- 后端：Python + FastAPI\n" +
+    "- 数据：本地 SQLite，配置与记忆存放在本机用户目录的 .lumina 文件夹";
+
+  const LUMINA_AUTHOR_REPLY_FALLBACK =
+    "灵犀（Lumina）由四海开发维护。\n\n" +
+    "- 开发者：四海\n" +
+    "- 邮箱：myx28@qq.com\n" +
+    "- 版本：0.1.0\n\n" +
+    "我是跑在你本机上的个人 AI 秘书；更多产品信息见右上角「关于」。";
+
+  let cachedIdentityIntro = LUMINA_IDENTITY_INTRO_FALLBACK;
+  let cachedAuthorReply = LUMINA_AUTHOR_REPLY_FALLBACK;
+
   initThreads();
+  void prefetchIdentityIntro();
+  void prefetchAuthorReply();
 
   function openKnowledgeBase() {
     window.secretary?.openKnowledge();
@@ -112,27 +141,106 @@
     }
   }
 
+  async function prefetchIdentityIntro() {
+    try {
+      const data = await window.SecretaryAPI.request("GET", "/api/identity/intro", null, {
+        timeoutMs: 5000,
+      });
+      if (data?.reply) {
+        cachedIdentityIntro = String(data.reply);
+      }
+    } catch (_error) {
+      // Keep bundled fallback intro.
+    }
+  }
+
+  async function prefetchAuthorReply() {
+    try {
+      const data = await window.SecretaryAPI.request("GET", "/api/identity/author", null, {
+        timeoutMs: 5000,
+      });
+      if (data?.reply) {
+        cachedAuthorReply = String(data.reply);
+      }
+    } catch (_error) {
+      // Keep bundled fallback author reply.
+    }
+  }
+
+  function sendAuthorReply(userText) {
+    welcome.classList.add("hidden");
+    appendMessage("user", userText);
+    chatInput.value = "";
+    autoResize();
+    resetProgressLog();
+    showTyping(false);
+    endTypingTicker();
+    appendMessage("bot", cachedAuthorReply);
+    scrollChatToBottom();
+    void window.SecretaryAPI.request(
+      "POST",
+      "/api/chat",
+      { message: userText, trace_id: "" },
+      { timeoutMs: 15_000 },
+    ).catch(() => {});
+  }
+
+  function sendIdentityIntro(userText) {
+    welcome.classList.add("hidden");
+    appendMessage("user", userText);
+    chatInput.value = "";
+    autoResize();
+    resetProgressLog();
+    showTyping(false);
+    endTypingTicker();
+    appendMessage("bot", cachedIdentityIntro);
+    scrollChatToBottom();
+    void window.SecretaryAPI.request(
+      "POST",
+      "/api/chat",
+      { message: userText, trace_id: "" },
+      { timeoutMs: 15_000 },
+    ).catch(() => {
+      // History sync is best-effort; intro is already on screen.
+    });
+  }
+
   async function sendMessage(text) {
-    if (!text || busy) return;
+    if (!text) return;
+
+    // Author / identity routing is handled only by the backend (PromptGate + fast paths).
+    // Client-side shortcuts caused false positives (e.g. "open design 的作者").
+
+    if (busy) return;
 
     welcome.classList.add("hidden");
     appendMessage("user", text);
     chatInput.value = "";
     autoResize();
     setBusy(true);
-    showTyping(true, t("chat.typing.understand"));
-    beginTypingTicker();
     slowNoticeSent = false;
     resetProgressLog();
+    showTyping(true, t("chat.typing.understand"));
+    beginTypingTicker();
 
     try {
       const controller = createActiveController();
       const traceId = createTraceId();
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
+      const chatBody = { message: text, trace_id: traceId };
+      if (window.LuminaLocation?.isWebSearchQuery(text)) {
+        showTyping(true, "正在获取位置…");
+        try {
+          Object.assign(chatBody, await window.LuminaLocation.payloadForWebSearch(text));
+        } catch (error) {
+          console.warn("[Lumina] location for web search failed:", error);
+        }
+        showTyping(true, t("chat.typing.understand"));
+      }
       const response = await window.SecretaryAPI.request(
         "POST",
         "/api/chat",
-        { message: text, trace_id: traceId },
+        chatBody,
         {
           signal: controller.signal,
           timeoutMs: 120_000,
@@ -155,6 +263,7 @@
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.reply"));
     } finally {
+      finalizeProgressSession();
       endTypingTicker();
       clearActiveController();
       showTyping(false);
@@ -215,6 +324,7 @@
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.action"));
     } finally {
+      finalizeProgressSession();
       endTypingTicker();
       clearActiveController();
       showTyping(false);
@@ -227,13 +337,17 @@
     appendMessageInternal(role, text, true);
   }
 
-  function usesFileTools(response) {
+  function usesGroundingTools(response) {
     const tools = Array.isArray(response?.used_tools) ? response.used_tools : [];
     return tools.some(
       (name) =>
-        /^(list_dir|file_read|search_files)$/.test(name) ||
+        /^(list_dir|file_read|search_files|search_memory|session_search|shibei_search|shibei_list_sources)$/.test(name) ||
         /^mcp_.*(read|list|file|directory|search)/i.test(name),
     );
+  }
+
+  function usesFileTools(response) {
+    return usesGroundingTools(response);
   }
 
   const REPLY_PATH_PATTERNS = [
@@ -262,8 +376,19 @@
     return false;
   }
 
+  function isOfflineOrSetupReply(response) {
+    if (!response || response.used_llm !== false) return false;
+    const reply = String(response.reply || "");
+    return (
+      /离线模式/.test(reply) ||
+      /还没配置大模型/.test(reply) ||
+      /无法连接大模型/.test(reply)
+    );
+  }
+
   function groundingUnverifiedReason(response) {
     if (!response) return "";
+    if (isOfflineOrSetupReply(response)) return "";
     if (response.grounding_note) return response.grounding_note;
     const reply = String(response.reply || "");
     if (replySimulatesFileListing(reply) && !usesFileTools(response)) {
@@ -280,6 +405,7 @@
 
   function shouldShowGroundingUnverified(response) {
     if (!response) return false;
+    if (isOfflineOrSetupReply(response)) return false;
     if (response.grounding_verified === false) return true;
     const reply = String(response.reply || "");
     if (replySimulatesFileListing(reply) && !usesFileTools(response)) return true;
@@ -289,7 +415,8 @@
   function appendGroundingMeta(response) {
     if (!response) return;
     const showUnverified = shouldShowGroundingUnverified(response);
-    const showVerified = !showUnverified && usesFileTools(response) && response.grounding_verified !== false;
+    const showVerified =
+      !showUnverified && usesGroundingTools(response) && response.grounding_verified !== false;
     if (!showVerified && !showUnverified) return;
 
     const rows = messagesEl.querySelectorAll(".message.bot");
@@ -327,7 +454,7 @@
     }
     const row = document.createElement("div");
     row.className = `message ${role}`;
-    const avatarSrc = role === "bot" ? "/assets/logo.png?v=1" : "/assets/avatar-user.svg";
+    const avatarSrc = role === "bot" ? BOT_AVATAR_SRC : "/assets/avatar-user.svg";
     const bubbleClass = role === "bot" ? "bubble markdown" : "bubble";
     row.innerHTML =
       `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
@@ -366,6 +493,9 @@
     }
 
     row.innerHTML = `
+      <div class="avatar bot" aria-label="${avatarLabel("bot")}">
+        <img src="${BOT_AVATAR_SRC}" alt="" aria-hidden="true" />
+      </div>
       <div class="bubble confirm-bubble">
         <div class="confirm-text markdown">${renderMarkdown(replyText)}</div>
         <div class="confirm-detail">${escapeHtml(description)}</div>
@@ -424,12 +554,251 @@
     return `trace-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
 
+  const IDENTITY_INTRO_SNIPPET = "我是灵犀（Lumina）";
+
+  function normalizeIdentityText(text) {
+    return String(text || "").trim().replace(/[？?!！。.]+$/g, "");
+  }
+
+  function isThirdPartyProjectAuthorQuestion(text) {
+    const t = normalizeIdentityText(text);
+    if (!t) return false;
+    if (/你|灵犀|本助手|这个助手/.test(t)) return false;
+    if (
+      /^([A-Za-z0-9][\w./\s-]{1,48}?)\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (
+      /(?:找|查|看|请问|帮我).{0,16}?[A-Za-z0-9][\w./\s-]{1,48}?\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (/\bopen\s*[-_]?\s*design\b/i.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+      return true;
+    }
+    if (/(~|\/Users\/|\/)/.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+      return true;
+    }
+    return false;
+  }
+
+  function isAuthorRequest(text) {
+    const t = normalizeIdentityText(text);
+    if (!t) return false;
+    if (isThirdPartyProjectAuthorQuestion(t)) return false;
+    if (
+      /谁写的|谁写|谁开发|谁做的|谁制作|谁创造|你的作者|你的开发者|你的创建者|谁是你的作者|谁是你的开发者|你的作者是谁|你的开发者是谁|谁创造了你|谁创造了灵犀|who made you|who created you|who built you|who developed you/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (/谁.{0,6}写.{0,4}(你|灵犀|lumina)/i.test(t)) return true;
+    if (/(你|灵犀).{0,8}(作者|开发者|创建者|制作人)/i.test(t)) return true;
+    if (
+      /^(作者|开发者|创建者|制作人)(是谁|哪位|谁)[啊呀吗]?[？?]?$/i.test(t) ||
+      /谁(开发|做|写|创造)了?(你|灵犀)/i.test(t)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function coreIdentityMatch(text) {
+    const t = normalizeIdentityText(text);
+    if (!t) return false;
+    if (isAuthorRequest(t)) return false;
+    if (/帮我写|帮我做|帮我撰|帮我起草|帮我编辑|帮我润色|写一份|写个|撰写|起草/.test(t)) {
+      return false;
+    }
+    if (/我的/.test(t) && /自我介绍/.test(t) && !/你/.test(t)) return false;
+    if (/自我介绍/.test(t)) return true;
+    if (/^(介绍一下|介绍下|介绍)$/.test(t)) return true;
+    if (t === "你是谁" || t === "你是什么" || /^你是谁[啊呀吗]?[？?]?$/.test(t)) return true;
+    if (
+      /你是什么|介绍一下你|介绍一下灵犀|说说你自己|你叫什么|你叫啥|你是做什么|你是干啥|你能做什么|你会什么|你都能干什么|你会干什么|说说你的能力|你有什么功能|什么是灵犀|灵犀是什么|who are you|what are you|what is lumina/i.test(
+        t,
+      )
+    ) {
+      return true;
+    }
+    if (/(做|来|请|给).{0,4}自我介绍/.test(t)) return true;
+    if (/介绍(一下)?(你|你自己|灵犀|lumina)/i.test(t)) return true;
+    if (/(你|灵犀).{0,6}介绍/i.test(t)) return true;
+    if (/再.{0,8}介绍.{0,8}(你|自己|灵犀)?/.test(t)) return true;
+    return false;
+  }
+
+  function isIdentityRepeatRequest(text, messages) {
+    const t = normalizeIdentityText(text);
+    if (!/再说一遍|再说一次|再来一遍|再来一次|再讲一遍|重复一遍|再介绍/.test(t)) {
+      return false;
+    }
+    if (/(你|自己|灵犀|介绍|是谁|做什么|能力|功能)/.test(t)) return true;
+    if (!Array.isArray(messages) || !messages.length) return false;
+    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 6; i -= 1) {
+      const item = messages[i];
+      if (!item) continue;
+      if (item.role === "bot" && String(item.text || "").includes(IDENTITY_INTRO_SNIPPET)) {
+        return true;
+      }
+      if (item.role === "user" && coreIdentityMatch(item.text || "")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isIdentityRequest(text) {
+    if (coreIdentityMatch(text)) return true;
+    return isIdentityRepeatRequest(text, getCurrentThread()?.messages || []);
+  }
+
+  function resetTransientUI() {
+    resetProgressLog();
+    clearStreamingBubble();
+    showTyping(false);
+    endTypingTicker();
+    pendingActionId = null;
+  }
+
   function resetProgressLog() {
+    progressSession = {
+      bufferedItems: [],
+      maxIteration: 0,
+      hasTools: false,
+      hasSubagent: false,
+      hasNetwork: false,
+      panelVisible: false,
+    };
     if (!progressListEl) return;
     progressListEl.innerHTML = "";
     if (progressEl) {
       progressEl.hidden = true;
     }
+  }
+
+  function shouldShowProgressPanel() {
+    return (
+      progressSession.maxIteration > 0 ||
+      progressSession.hasTools ||
+      progressSession.hasNetwork
+    );
+  }
+
+  function isSubagentProgressEvent(event) {
+    const kind = String(event?.kind || "");
+    return (
+      kind === "subagent_started" ||
+      kind === "subagent_finished" ||
+      Boolean(event?.sub_run_id)
+    );
+  }
+
+  function createProgressListItem(event, label) {
+    const item = document.createElement("li");
+    const labelEl = document.createElement("div");
+    labelEl.className = "progress-label";
+    labelEl.textContent = label;
+    item.appendChild(labelEl);
+    const detail = String(event?.detail || "").trim();
+    if (detail) {
+      const detailEl = document.createElement("pre");
+      detailEl.className = "progress-detail";
+      detailEl.textContent = detail;
+      item.appendChild(detailEl);
+    }
+    const kind = String(event?.kind || "");
+    if (isSubagentProgressEvent(event)) {
+      item.classList.add("is-subagent");
+    }
+    const toolName = String(event?.tool_name || "");
+    if (
+      (kind === "tool_started" || kind === "tool_finished") &&
+      (toolName === "web_search" ||
+        toolName === "web_fetch" ||
+        toolName.startsWith("browser_"))
+    ) {
+      item.classList.add("is-network");
+    }
+    if (kind === "iteration_started" && /网络连接/.test(label)) {
+      item.classList.add("is-network");
+    }
+    if (kind === "tool_finished" && event.success === false) {
+      item.classList.add("is-error");
+    } else if (kind === "iteration_completed" || kind === "done") {
+      item.classList.add("is-done");
+    }
+    return item;
+  }
+
+  function flushProgressPanel() {
+    if (!progressEl || !progressListEl || progressSession.panelVisible) return;
+    if (!shouldShowProgressPanel()) return;
+    progressSession.panelVisible = true;
+    progressEl.hidden = false;
+    progressListEl.innerHTML = "";
+    for (const item of progressSession.bufferedItems) {
+      progressListEl.appendChild(item);
+    }
+    progressListEl.scrollTop = progressListEl.scrollHeight;
+  }
+
+  function appendProgressItem(event, label) {
+    const kind = String(event?.kind || "");
+    if (kind === "iteration_started") {
+      progressSession.maxIteration = Math.max(
+        progressSession.maxIteration,
+        Number(event.iteration) || 0,
+      );
+    }
+    if (
+      kind === "tool_started" ||
+      kind === "tool_finished" ||
+      kind === "subagent_started" ||
+      kind === "subagent_finished"
+    ) {
+      progressSession.hasTools = true;
+    }
+    const toolName = String(event?.tool_name || "");
+    if (
+      (kind === "tool_started" || kind === "tool_finished") &&
+      (toolName === "web_search" ||
+        toolName === "web_fetch" ||
+        toolName.startsWith("browser_"))
+    ) {
+      progressSession.hasNetwork = true;
+    }
+    if (kind === "iteration_started" && /网络连接/.test(String(event?.message || label))) {
+      progressSession.hasNetwork = true;
+    }
+    if (kind === "subagent_started" || kind === "subagent_finished" || event?.sub_run_id) {
+      progressSession.hasSubagent = true;
+    }
+    const item = createProgressListItem(event, label);
+    progressSession.bufferedItems.push(item);
+    if (shouldShowProgressPanel()) {
+      if (!progressSession.panelVisible) {
+        flushProgressPanel();
+      } else {
+        progressEl.hidden = false;
+        progressListEl.appendChild(item);
+        progressListEl.scrollTop = progressListEl.scrollHeight;
+      }
+    }
+  }
+
+  function finalizeProgressSession() {
+    if (!shouldShowProgressPanel()) {
+      resetProgressLog();
+      return;
+    }
+    flushProgressPanel();
   }
 
   function handleProgressEvent(event) {
@@ -445,33 +814,26 @@
     const label = String(event?.label || "").trim();
     if (!label && !kind.startsWith("reply_")) return;
     if (progressEl && progressListEl && label && !kind.startsWith("reply_")) {
-      progressEl.hidden = false;
-      const item = document.createElement("li");
-      const labelEl = document.createElement("div");
-      labelEl.className = "progress-label";
-      labelEl.textContent = label;
-      item.appendChild(labelEl);
-      const detail = String(event?.detail || "").trim();
-      if (detail) {
-        const detailEl = document.createElement("pre");
-        detailEl.className = "progress-detail";
-        detailEl.textContent = detail;
-        item.appendChild(detailEl);
-      }
-      if (event?.kind === "tool_finished" && event.success === false) {
-        item.className = "is-error";
-      } else if (event?.kind === "done") {
-        item.className = "is-done";
-      }
-      progressListEl.appendChild(item);
-      progressListEl.scrollTop = progressListEl.scrollHeight;
+      appendProgressItem(event, label);
       scrollChatToBottom();
     }
-    if (event?.kind === "tool_started" || event?.kind === "iteration_started") {
+    if (
+      kind === "subagent_started" ||
+      (kind === "tool_started" && event?.tool_name === "spawn_subagent")
+    ) {
+      clearStreamingBubble();
+      showTyping(true, label || t("chat.typing.subagent"));
+    } else if (kind === "subagent_finished") {
+      showTyping(true, t("chat.typing.organize"));
+    } else if (
+      kind === "tool_started" ||
+      kind === "iteration_started" ||
+      kind === "iteration_completed"
+    ) {
       clearStreamingBubble();
       showTyping(true, label);
     }
-    if (event?.kind === "done") {
+    if (event?.kind === "done" && shouldShowProgressPanel()) {
       showTyping(true, t("chat.typing.organize"));
     }
   }
@@ -484,7 +846,7 @@
     row.className = "message bot streaming";
     row.innerHTML =
       `<div class="avatar bot" aria-label="${avatarLabel("bot")}">` +
-      `<img src="/assets/logo.png?v=1" alt="" aria-hidden="true" /></div>` +
+      `<img src="${BOT_AVATAR_SRC}" alt="" aria-hidden="true" /></div>` +
       `<div class="bubble markdown"></div>`;
     messagesEl.appendChild(row);
     streamingBubbleEl = row.querySelector(".bubble");
@@ -540,6 +902,12 @@
   function pauseCurrentRequest() {
     if (!activeRequestController) return;
     activeRequestController.abort();
+    activeRequestController = null;
+    setBusy(false);
+    showTyping(false);
+    endTypingTicker();
+    clearStreamingBubble();
+    finalizeProgressSession();
   }
 
   function beginTypingTicker() {
@@ -561,6 +929,28 @@
   function updateTypingStatus() {
     if (!busy) return;
     const elapsedSec = Math.floor((Date.now() - typingStartAt) / 1000);
+    const hasAgentActivity =
+      progressSession.maxIteration > 0 ||
+      progressSession.hasTools ||
+      progressSession.hasSubagent;
+
+    if (!hasAgentActivity) {
+      if (elapsedSec < 15) {
+        showTyping(true, t("chat.typing.understand"));
+        return;
+      }
+      if (elapsedSec < 45) {
+        showTyping(true, t("chat.typing.almost"));
+        return;
+      }
+      showTyping(true, t("chat.typing.slow"));
+      if (!slowNoticeSent) {
+        appendMessage("bot", t("chat.slowNotice"));
+        slowNoticeSent = true;
+      }
+      return;
+    }
+
     if (elapsedSec < 8) {
       showTyping(true, t("chat.typing.understand"));
       return;
@@ -707,6 +1097,13 @@
     threads = sortThreadsByUpdatedAt(loadThreads());
     currentThreadId = "";
     threadListEl.addEventListener("click", (event) => {
+      const deleteBtn = event.target.closest("[data-delete-thread-id]");
+      if (deleteBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteThread(deleteBtn.dataset.deleteThreadId || "");
+        return;
+      }
       const button = event.target.closest("[data-thread-id]");
       if (!button) return;
       switchThread(button.dataset.threadId || "");
@@ -725,6 +1122,13 @@
   }
 
   function createThread(clearBackend = true) {
+    if (clearBackend && activeRequestController) {
+      activeRequestController.abort();
+    }
+    if (clearBackend) {
+      setBusy(false);
+      resetTransientUI();
+    }
     const thread = {
       id: `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
       title: t("thread.new"),
@@ -742,6 +1146,26 @@
     }
   }
 
+  function deleteThread(threadId) {
+    if (!threadId) return;
+    const index = threads.findIndex((item) => item.id === threadId);
+    if (index < 0) return;
+    threads.splice(index, 1);
+    if (currentThreadId === threadId) {
+      if (threads.length) {
+        currentThreadId = threads[0].id;
+        resetBackendHistory();
+      } else {
+        createThread(false);
+        return;
+      }
+    }
+    saveThreads();
+    renderThreadList();
+    renderCurrentThreadMessages();
+    scrollActiveThreadIntoView();
+  }
+
   function switchThread(threadId) {
     if (!threadId || threadId === currentThreadId) return;
     currentThreadId = threadId;
@@ -753,7 +1177,7 @@
   }
 
   function scrollActiveThreadIntoView() {
-    const active = threadListEl.querySelector(".thread-item.active");
+    const active = threadListEl.querySelector(".thread-item-wrap.active");
     active?.scrollIntoView({ block: "nearest" });
   }
 
@@ -763,17 +1187,21 @@
         const active = item.id === currentThreadId ? " active" : "";
         const preview = buildThreadPreview(item);
         return (
-          `<button class="thread-item${active}" data-thread-id="${item.id}">` +
+          `<div class="thread-item-wrap${active}">` +
+          `<button class="thread-item${active}" type="button" data-thread-id="${item.id}">` +
           `<div class="thread-item-title">${escapeHtml(item.title || t("thread.new"))}</div>` +
           `<div class="thread-item-preview">${escapeHtml(preview)}</div>` +
           `<div class="thread-item-time">${formatThreadTime(item.updatedAt)}</div>` +
-          `</button>`
+          `</button>` +
+          `<button class="thread-item-delete" type="button" data-delete-thread-id="${item.id}" aria-label="${escapeHtml(t("thread.delete"))}">×</button>` +
+          `</div>`
         );
       })
       .join("");
   }
 
   function renderCurrentThreadMessages() {
+    resetTransientUI();
     messagesEl.innerHTML = "";
     const thread = getCurrentThread();
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {

@@ -11,7 +11,10 @@ def test_skill_sources_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload, list)
-    assert any(item["key"] == "hermes" for item in payload)
+    assert payload
+    assert payload[0]["key"] == "all"
+    for item in payload:
+        assert {"key", "label", "path", "available", "count"} <= set(item)
 
 
 def test_skill_catalog_endpoint() -> None:

@@ -29,6 +29,7 @@
     "chat.placeholder": { en: "Message", zh: "输入消息" },
     "chat.processing": { en: "Working…", zh: "正在处理…" },
     "chat.typing.understand": { en: "Understanding your question…", zh: "正在理解你的问题…" },
+    "chat.typing.instant": { en: "Replying…", zh: "正在回复…" },
     "chat.typing.gather": { en: "Gathering relevant info…", zh: "正在整理相关信息…" },
     "chat.typing.tools": { en: "Running tools…", zh: "正在调用工具处理…" },
     "chat.typing.almost": { en: "Almost done…", zh: "还在继续处理，马上给你结果…" },
@@ -36,6 +37,7 @@
     "chat.typing.organize": { en: "Preparing reply…", zh: "正在整理回复…" },
     "chat.typing.sync": { en: "Syncing data…", zh: "正在同步数据…" },
     "chat.typing.execute": { en: "Executing…", zh: "正在执行操作…" },
+    "chat.typing.subagent": { en: "Spawning sub-agent…", zh: "正在派生子 Agent…" },
     "chat.slowNotice": {
       en: "This is slower than usual — still working. Tap Pause to stop.",
       zh: "这次处理有点慢，我还在继续。你可以点「暂停」先停下。",
@@ -89,6 +91,7 @@
     "settings.soul": { en: "SOUL", zh: "人格 SOUL" },
     "settings.memory": { en: "Memory", zh: "持久记忆" },
     "settings.mcp": { en: "MCP Tools", zh: "MCP 工具" },
+    "settings.shibei": { en: "Shibei KB", zh: "Shibei 知识库" },
     "settings.appearance": { en: "Appearance", zh: "界面" },
 
     "appearance.title": { en: "Appearance", zh: "界面" },
@@ -113,6 +116,7 @@
 
     "thread.empty": { en: "No messages", zh: "暂无消息" },
     "thread.new": { en: "New chat", zh: "新对话" },
+    "thread.delete": { en: "Delete chat", zh: "删除对话" },
 
     "confirm.allow": { en: "Allowed", zh: "已允许" },
     "confirm.deny": { en: "Denied", zh: "已拒绝" },

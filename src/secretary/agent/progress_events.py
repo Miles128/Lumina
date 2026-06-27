@@ -7,6 +7,7 @@ from typing import Literal
 
 ProgressKind = Literal[
     "iteration_started",
+    "iteration_completed",
     "tool_started",
     "tool_finished",
     "subagent_started",
@@ -42,6 +43,14 @@ _TOOL_LABELS: dict[str, str] = {
     "session_search": "搜索会话",
     "web_search": "联网搜索",
     "web_fetch": "抓取网页",
+    "browser_open": "打开网页",
+    "browser_snapshot": "浏览器快照",
+    "browser_click": "浏览器点击",
+    "browser_fill": "浏览器填写",
+    "browser_close": "关闭浏览器",
+    "shibei_search": "Shibei 检索",
+    "shibei_import": "Shibei 导入",
+    "shibei_list_sources": "Shibei 索引",
     "memory": "更新记忆",
     "patch": "修改文件",
     "todo": "待办",
@@ -53,27 +62,55 @@ _TOOL_LABELS: dict[str, str] = {
 
 
 def progress_event_label(event: ProgressEvent) -> str:
+    prefix = _subagent_prefix(event)
     if event.message.strip():
-        return event.message.strip()
+        return prefix + event.message.strip()
     if event.kind == "iteration_started":
-        return f"第 {event.iteration} 轮思考"
+        return prefix + f"第 {event.iteration} 轮思考"
+    if event.kind == "iteration_completed":
+        return prefix + (event.message.strip() or "核实通过，准备输出")
     if event.kind == "tool_started":
-        return f"调用 {_tool_display_name(event.tool_name)}"
+        if event.tool_name == "spawn_subagent":
+            return prefix + "正在委派子 Agent"
+        if event.tool_name.startswith("browser_") or event.tool_name in {
+            "web_search",
+            "web_fetch",
+        }:
+            name = _tool_display_name(event.tool_name)
+            return prefix + f"网络连接 · {name}"
+        name = _tool_display_name(event.tool_name)
+        return prefix + f"调用 {name}"
     if event.kind == "tool_finished":
         status = "完成" if event.success else "失败"
-        return f"{_tool_display_name(event.tool_name)} {status}"
+        if event.tool_name == "spawn_subagent":
+            return prefix + f"子 Agent 委派{status}"
+        if event.tool_name.startswith("browser_") or event.tool_name in {
+            "web_search",
+            "web_fetch",
+        }:
+            name = _tool_display_name(event.tool_name)
+            return prefix + f"网络连接 · {name} {status}"
+        name = _tool_display_name(event.tool_name)
+        return prefix + f"{name} {status}"
     if event.kind == "subagent_started":
-        prefix = f"[{event.archetype}] " if event.archetype else ""
-        return prefix + (event.message or "子任务开始")
+        archetype = event.archetype or "explore"
+        return f"正在派生子 Agent ({archetype})"
     if event.kind == "subagent_finished":
         prefix = f"[{event.archetype}] " if event.archetype else ""
         status = "完成" if event.success else "失败"
-        return prefix + (event.message[:80] if event.message else f"子任务{status}")
+        detail = event.message[:80] if event.message else f"子任务{status}"
+        return prefix + detail
     if event.kind == "final_reply":
-        return "整理回复"
+        return prefix + "整理回复"
     if event.kind == "stopped":
-        return event.message or "已停止"
-    return event.kind
+        return prefix + (event.message or "已停止")
+    return prefix + event.kind
+
+
+def _subagent_prefix(event: ProgressEvent) -> str:
+    if event.archetype and event.sub_run_id:
+        return f"[子Agent·{event.archetype}] "
+    return ""
 
 
 def _tool_display_name(name: str) -> str:

@@ -18,6 +18,12 @@ _PROFANITY_PATTERNS = (
     re.compile(r"妈的"),
     re.compile(r"去死"),
     re.compile(r"垃圾"),
+    re.compile(r"装逼"),
+    re.compile(r"装\s*[Bb]"),
+    re.compile(r"扯淡"),
+    re.compile(r"牛逼"),
+    re.compile(r"牛\s*[Bb]"),
+    re.compile(r"靠[你他]?"),
     re.compile(r"f\*?u\*?c\*?k", re.IGNORECASE),
     re.compile(r"shit", re.IGNORECASE),
 )
@@ -28,6 +34,7 @@ _UNPROFESSIONAL_PATTERNS = (
     re.compile(r"嘴硬"),
     re.compile(r"跟你犟"),
     re.compile(r"没别的原因"),
+    re.compile(r"装\s*什么"),
 )
 
 def is_third_person_meta_reply(text: str) -> bool:

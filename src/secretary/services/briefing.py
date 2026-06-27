@@ -36,7 +36,9 @@ class BriefingService:
         email = self._store.list_by_source(SourceKind.EMAIL, limit=5)
         weread = self._store.list_by_source(SourceKind.WEREAD, limit=5)
 
-        def titles(chunks: list[object]) -> str:
+        from collections.abc import Sequence
+
+        def titles(chunks: Sequence[object]) -> str:
             lines: list[str] = []
             for chunk in chunks:
                 title = getattr(chunk, "title", "")
@@ -44,18 +46,30 @@ class BriefingService:
                     lines.append(f"- {title.strip()}")
             return "\n".join(lines) if lines else "暂无"
 
+        feishu_text = titles(feishu)
+        email_text = titles(email)
+        weread_text = titles(weread)
+        sync_hint = ""
+        if feishu_text == email_text == weread_text == "暂无":
+            sync_hint = (
+                "> 提示：本地尚无飞书/邮箱/读书等同步数据。"
+                "请先在灵犀右上角点击「同步」。\n\n"
+            )
+
         return {
             "date": datetime.now(UTC).strftime("%Y-%m-%d"),
             "profile_excerpt": view.markdown[:1200],
-            "feishu": titles(feishu),
-            "email": titles(email),
-            "weread": titles(weread),
+            "feishu": feishu_text,
+            "email": email_text,
+            "weread": weread_text,
+            "sync_hint": sync_hint,
         }
 
     def _generate_with_llm(self, context: dict[str, str], llm_config: LlmConfig) -> str:
         prompt = (
             f"今天是 {context['date']}。根据以下本地同步数据，写一份简洁的中文早报（markdown），"
             "包含：今日关注、日程与待办、阅读与信息摘要。只使用给定事实，不要编造。\n\n"
+            f"{context['sync_hint']}"
             f"## 画像摘录\n{context['profile_excerpt']}\n\n"
             f"## 飞书\n{context['feishu']}\n\n"
             f"## 邮箱\n{context['email']}\n\n"
@@ -75,6 +89,7 @@ class BriefingService:
         return (
             f"# 今日简报\n\n"
             f"> 生成时间：{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            f"{context['sync_hint']}"
             f"## 飞书\n{context['feishu']}\n\n"
             f"## 邮箱\n{context['email']}\n\n"
             f"## 阅读\n{context['weread']}\n\n"

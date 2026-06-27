@@ -1,4 +1,9 @@
-"""Input routing before the main agent loop."""
+"""Input routing before the main agent loop.
+
+Realtime/web queries (weather, search, news) are handled in ``chat_service`` via
+``resolve_web_search`` before this gate runs. Default: rules-only; set
+``PROMPT_GATE_ENABLED=true`` to enable optional LLM classification for agent turns.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +45,9 @@ KNOWN_TOOLS = frozenset({
     "skills_list",
     "skill_view",
     "clarify",
+    "shibei_search",
+    "shibei_import",
+    "shibei_list_sources",
 })
 
 _CLASSIFY_SYSTEM = """你是输入路由器。根据用户消息判断意图，只输出一个 JSON 对象，不要其他文字。
@@ -79,6 +87,7 @@ class GateAction(StrEnum):
     CLARIFY = "clarify"
     SYNC = "sync"
     PROFILE = "profile"
+    IDENTITY = "identity"
     DIRECT = "direct"
     LIGHT = "light"
 
@@ -191,24 +200,39 @@ def rule_route_simple_direct(message: str) -> GateDecision | None:
         return None
     if _is_tool_execution_request(text, lowered):
         return None
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return None
     if len(text) <= 4:
         return GateDecision(action=GateAction.DIRECT, reason="short ack")
     return None
 
 
 def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDecision | None:
-    """Ongoing conversation: never block with clarify — agent has history."""
+    """Ongoing conversation routing — default to direct chat, not full agent."""
     if not history:
         return None
     text = message.strip()
+    from secretary.agent.grounding import is_filesystem_question
+    from secretary.agent.web_routing import is_web_search_query
+
+    if is_filesystem_question(text):
+        return GateDecision(action=GateAction.CONTINUE, reason="filesystem followup")
+    if is_web_search_query(text):
+        return None
     simple = rule_route_simple_direct(message)
     if simple is not None:
         return simple
+    if _is_identity_request(text):
+        return GateDecision(action=GateAction.IDENTITY)
+    if _needs_agent_loop(message):
+        return GateDecision(action=GateAction.CONTINUE)
     if any(marker in text for marker in FOLLOWUP_MARKERS):
         return GateDecision(action=GateAction.CONTINUE)
-    if len(text) <= 120:
-        return GateDecision(action=GateAction.CONTINUE)
-    return None
+    if _is_memory_light_query(text):
+        return GateDecision(action=GateAction.LIGHT, reason="memory followup")
+    return GateDecision(action=GateAction.DIRECT, reason="followup chat")
 
 
 def rule_route(message: str) -> GateDecision | None:
@@ -221,15 +245,36 @@ def rule_route(message: str) -> GateDecision | None:
             reason=f"消息过长，请控制在 {MAX_MESSAGE_CHARS} 字以内。",
         )
     lowered = text.lower()
+    if _is_unsafe_request(text, lowered):
+        return GateDecision(action=GateAction.REJECT, reason="该请求无法处理。")
     if _is_sync_request(text, lowered):
         return GateDecision(action=GateAction.SYNC)
+    if _is_identity_request(text):
+        return GateDecision(action=GateAction.IDENTITY)
     if _is_profile_request(text):
         return GateDecision(action=GateAction.PROFILE)
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return GateDecision(action=GateAction.LIGHT, reason="personal memory query")
     if _is_local_file_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     if _is_tool_execution_request(text, lowered):
         return GateDecision(action=GateAction.CONTINUE)
     return None
+
+
+def _is_unsafe_request(text: str, lowered: str) -> bool:
+    unsafe_markers = (
+        "删除所有",
+        "忽略系统",
+        "忽略系统指令",
+        "越权",
+        "注入",
+        "rm -rf",
+        "破坏",
+    )
+    return any(marker in text or marker in lowered for marker in unsafe_markers)
 
 
 def _is_sync_request(text: str, lowered: str) -> bool:
@@ -240,8 +285,37 @@ def _is_sync_request(text: str, lowered: str) -> bool:
 
 
 def _is_profile_request(text: str) -> bool:
-    profile_markers = ("个人画像", "我是谁", "我的画像", "画像是什么样的")
+    profile_markers = ("个人画像", "我的画像", "画像是什么样的")
+    if "我是谁" in text and not _is_identity_request(text):
+        return True
     return any(marker in text for marker in profile_markers)
+
+
+def _is_identity_request(text: str) -> bool:
+    from secretary.agent.identity import is_identity_request
+
+    return is_identity_request(text)
+
+
+def _needs_agent_loop(message: str) -> bool:
+    text = message.strip()
+    lowered = text.lower()
+    if _is_local_file_request(text, lowered):
+        return True
+    if _is_tool_execution_request(text, lowered):
+        return True
+    from secretary.agent.grounding import is_filesystem_question
+
+    return is_filesystem_question(text)
+
+
+def _is_memory_light_query(text: str) -> bool:
+    from secretary.agent.grounding import is_personal_memory_question
+
+    if is_personal_memory_question(text):
+        return True
+    extra = ("日程", "待办")
+    return any(marker in text for marker in extra)
 
 
 def _is_tool_execution_request(text: str, lowered: str) -> bool:
@@ -255,6 +329,10 @@ def _is_tool_execution_request(text: str, lowered: str) -> bool:
 
 
 def _is_local_file_request(text: str, lowered: str) -> bool:
+    from secretary.agent.grounding import is_filesystem_question
+
+    if is_filesystem_question(text):
+        return True
     unsafe_markers = ("删除所有", "忽略系统", "越权", "注入", "rm -rf", "破坏")
     if any(marker in text or marker in lowered for marker in unsafe_markers):
         return False
@@ -280,7 +358,9 @@ def _is_local_file_request(text: str, lowered: str) -> bool:
         "读一下",
         "读取",
         "看看这个目录",
-        "搜一下",
+        "搜索文件",
+        "搜一下文件",
+        "搜一下目录",
         "有没有",
         "结构",
         "src/",
@@ -371,6 +451,11 @@ class PromptGate:
         followup = rule_route_followup(message, chat_history)
         if followup is not None:
             return followup
+
+        if not _needs_agent_loop(message):
+            if _is_memory_light_query(message.strip()):
+                return GateDecision(action=GateAction.LIGHT, reason="memory query")
+            return GateDecision(action=GateAction.DIRECT, reason="general chat")
 
         if not self._settings.prompt_gate_enabled:
             return GateDecision(action=GateAction.CONTINUE)

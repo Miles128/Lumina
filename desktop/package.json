@@ -3,12 +3,46 @@
   "version": "0.1.0",
   "description": "CN-local personal AI secretary desktop mascot",
   "main": "main.js",
+  "author": "四海",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
+    "icon": "bash ../scripts/build-app-icon.sh",
+    "pack": "npm run icon && electron-builder --mac",
+    "pack:dir": "npm run icon && electron-builder --mac dir",
     "install:cn": "bash ../scripts/install-electron.sh"
   },
   "devDependencies": {
-    "electron": "^35.0.0"
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.lumina.desktop",
+    "productName": "灵犀",
+    "directories": {
+      "output": "dist",
+      "buildResources": "icons"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "ui/**/*",
+      "icons/icon.png"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "icons/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extendInfo": {
+        "CFBundleDisplayName": "灵犀",
+        "CFBundleName": "灵犀",
+        "NSLocationWhenInUseUsageDescription": "灵犀需要获取您的位置以提供本地天气等服务。"
+      }
+    }
   }
 }

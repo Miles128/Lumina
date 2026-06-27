@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,34 +16,36 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from secretary.agent.chat_service import ChatResult, ChatService
-from secretary.agent.mcp_manager import McpManager
-from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
 from secretary.agent.llm_config import resolve_llm_config
+from secretary.agent.mcp_manager import McpManager
+from secretary.agent.progress_events import ProgressEvent
+from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
 from secretary.config import settings
-from secretary.connectors.base import BaseConnector
-from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
+from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError, IngestError
 from secretary.memory.db import MemoryStore
 from secretary.memory.graph import GraphBuilder
 from secretary.memory.kb import KnowledgeWorkspace
+from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
+from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
-from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
-from secretary.services.scheduled_think import ScheduledThinkService
-from secretary.services.scheduler import BackgroundScheduler
+from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (
     PLATFORM_DEFINITIONS,
     PlatformConfigStore,
     mask_secrets,
 )
 from secretary.services.profile_service import ProfileService
+from secretary.services.scheduled_think import ScheduledThinkService
+from secretary.services.scheduler import BackgroundScheduler
+from secretary.services.shibei_config import ShibeiConfigStore
+from secretary.services.shibei_service import ShibeiService
 from secretary.services.sync import SyncService
-from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
-from secretary.services.file_auth import FileAuthService
 from secretary.services.user_profile_store import UserProfileStore
 from secretary.utils.messages import format_connector_message
 
@@ -83,6 +86,18 @@ class MemorySearchResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     trace_id: str = Field(default="", max_length=64)
+    location_city: str = Field(default="", max_length=64)
+    location_lat: float | None = Field(default=None, ge=-90, le=90)
+    location_lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class LocationReverseRequest(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class LocationReverseResponse(BaseModel):
+    city: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -90,6 +105,7 @@ class ChatResponse(BaseModel):
     profile_excerpt: str
     used_tools: list[str] = []
     total_steps: int = 1
+    route: str = ""
     needs_confirmation: bool = False
     confirmation_description: str = ""
     confirmation_action_id: str = ""
@@ -275,6 +291,37 @@ class AgentTestResponse(BaseModel):
     source: str
 
 
+class ShibeiConfigResponse(BaseModel):
+    enabled: bool
+    sources: list[str]
+    extensions: list[str]
+    search_engine: str
+    auto_import_on_sync: bool
+    collection: str
+    install_path: str
+    config_path: str
+    db_path: str
+    status: str
+    status_message: str
+    source_count: int
+    shibei_available: bool
+
+
+class ShibeiConfigUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    sources: list[str] | None = None
+    extensions: list[str] | None = None
+    search_engine: str | None = None
+    auto_import_on_sync: bool | None = None
+    collection: str | None = None
+    install_path: str | None = None
+
+
+class ShibeiActionResponse(BaseModel):
+    status: str
+    message: str
+
+
 DESKTOP_UI_DIR = Path(__file__).resolve().parents[3] / "desktop" / "ui"
 
 
@@ -286,6 +333,7 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
         profile_excerpt=result.profile_excerpt,
         used_tools=result.used_tools or [],
         total_steps=result.total_steps,
+        route=result.route,
         needs_confirmation=pending is not None,
         confirmation_description=pending.description if pending else "",
         confirmation_action_id=pending.action_id if pending else "",
@@ -305,7 +353,13 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
 def _init_services() -> dict[str, object]:
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
     platform_store = PlatformConfigStore(settings.resolved_data_dir() / "platforms.json")
-    sync_service = SyncService(settings, store)
+    shibei_config_store = ShibeiConfigStore(
+        settings.resolved_data_dir() / "shibei.json",
+        data_dir=settings.resolved_data_dir(),
+    )
+    shibei_service = ShibeiService(shibei_config_store)
+    shibei_config_store.sync_yaml()
+    sync_service = SyncService(settings, store, shibei_service=shibei_service)
     local_documents_profiler = LocalDocumentsProfiler(settings)
     user_profile_store = UserProfileStore(settings.resolved_data_dir() / "user_profile.md")
     profile_service = ProfileService(settings, store, local_documents_profiler, user_profile_store)
@@ -334,6 +388,7 @@ def _init_services() -> dict[str, object]:
         sync_service=sync_service,
         file_auth=file_auth,
         mcp_manager=mcp_manager,
+        shibei_service=shibei_service,
     )
     workspace = KnowledgeWorkspace(settings.resolved_data_dir() / "workspace")
     workspace.ensure_layout()
@@ -347,6 +402,8 @@ def _init_services() -> dict[str, object]:
         "chat_service": chat_service,
         "mcp_manager": mcp_manager,
         "mcp_config_store": mcp_config_store,
+        "shibei_config_store": shibei_config_store,
+        "shibei_service": shibei_service,
         "progress_hub": progress_hub,
         "workspace": workspace,
     }
@@ -406,8 +463,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Lumina", version="0.1.0", lifespan=lifespan)
 
-for key, value in _init_services().items():
-    setattr(app.state, key, value)
+# Ensure app.state is populated at import time (TestClient without context manager
+# may not trigger lifespan). The lifespan guard (hasattr check) prevents double init.
+if not hasattr(app.state, "store"):
+    for key, value in _init_services().items():
+        setattr(app.state, key, value)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -420,17 +481,17 @@ app.add_middleware(
 )
 
 
-def _svc(request: Request) -> object:
+def _svc(request: Request) -> Any:
     return request.app.state
 
 
-def _build_progress_callback(request: Request, trace_id: str):
+def _build_progress_callback(request: Request, trace_id: str) -> Callable[[ProgressEvent], None] | None:
     if not trace_id:
         return None
     hub: ProgressHub = request.app.state.progress_hub
     hub.open(trace_id)
 
-    def callback(event) -> None:
+    def callback(event: ProgressEvent) -> None:
         hub.publish(trace_id, event)
 
     return callback
@@ -625,8 +686,23 @@ def reset_profile_user(request: Request) -> ProfileResponse:
     )
 
 
+@app.post("/api/profile/clear-chat-derived")
+def clear_profile_chat_derived(request: Request) -> dict[str, object]:
+    """Remove chat-inferred profile bullets and polluted scheduler snapshots."""
+    from secretary.services.profile_service import clear_polluted_derived_state
+
+    profile_service: ProfileService = _svc(request).profile_service
+    view = profile_service.clear_chat_derived_facts()
+    removed = clear_polluted_derived_state(settings.resolved_data_dir())
+    return {
+        "status": "ok",
+        "removed_files": removed,
+        "profile_markdown": view.markdown,
+    }
+
+
 @app.get("/api/memory/search")
-def search_memory(q: str, limit: int = 10, request: Request = None) -> MemorySearchResponse:
+def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResponse:
     store: MemoryStore = _svc(request).store
     chunks = store.search(q, limit=limit)
     return MemorySearchResponse(
@@ -653,14 +729,46 @@ async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
     )
 
 
+@app.get("/api/identity/author")
+def identity_author() -> dict[str, str]:
+    from secretary.agent.identity import get_author_reply
+
+    return {"reply": get_author_reply()}
+
+
+@app.get("/api/identity/intro")
+def identity_intro() -> dict[str, str]:
+    from secretary.agent.identity import get_identity_reply
+
+    return {"reply": get_identity_reply()}
+
+
+@app.post("/api/location/reverse")
+def reverse_location(body: LocationReverseRequest) -> LocationReverseResponse:
+    from secretary.services.geolocation import reverse_geocode_city
+
+    city = reverse_geocode_city(body.lat, body.lng) or ""
+    return LocationReverseResponse(city=city)
+
+
 @app.post("/api/chat")
 def chat(request: Request, body: ChatRequest) -> ChatResponse:
     chat_service: ChatService = _svc(request).chat_service
-    trace_id = body.trace_id.strip()
+    message = body.message.strip()
+    author_turn = chat_service.is_author_turn(message)
+    identity_turn = chat_service.is_identity_turn(message)
+    trace_id = "" if (author_turn or identity_turn) else body.trace_id.strip()
     progress = _build_progress_callback(request, trace_id)
+    location_city = body.location_city.strip()
     try:
         with llm_usage_scope() as usage:
-            result = chat_service.reply(body.message.strip(), progress_callback=progress)
+            result = chat_service.reply(
+                message,
+                progress_callback=progress,
+                location_city=location_city or None,
+                location_lat=body.location_lat,
+                location_lng=body.location_lng,
+            )
         return _to_chat_response(result, usage)
     finally:
         _finish_progress(request, trace_id)
@@ -718,14 +826,14 @@ def update_durable_memory(
 
 
 @app.get("/api/memory/sessions/search")
-def search_sessions(q: str, limit: int = 10, request: Request = None) -> dict[str, object]:
+def search_sessions(request: Request, q: str, limit: int = 10) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     results = chat_service.hermes_memory.search_sessions(q, limit=limit)
     return {"query": q, "results": results}
 
 
 @app.get("/api/memory/episodes/search")
-def search_episodes(q: str, limit: int = 5, request: Request = None) -> dict[str, object]:
+def search_episodes(request: Request, q: str, limit: int = 5) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     results = chat_service.hermes_memory.search_episodes(q, limit=limit)
     return {"query": q, "results": results}
@@ -738,7 +846,7 @@ class WebSearchResponse(BaseModel):
 
 
 @app.get("/api/web/search")
-async def web_search(q: str, engine: str = "bing", limit: int = 5) -> WebSearchResponse:
+async def web_search(q: str, engine: str = "auto", limit: int = 5) -> WebSearchResponse:
     from secretary.agent.web_search import run_search
 
     query = q.strip()
@@ -874,10 +982,53 @@ def test_agent_config(request: Request) -> AgentTestResponse:
     )
 
 
+@app.get("/api/shibei/config")
+def get_shibei_config(request: Request) -> ShibeiConfigResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    view = service.status_view()
+    return ShibeiConfigResponse(**view)
+
+
+@app.put("/api/shibei/config")
+def update_shibei_config(request: Request, body: ShibeiConfigUpdateRequest) -> ShibeiConfigResponse:
+    store: ShibeiConfigStore = _svc(request).shibei_config_store
+    payload = body.model_dump(exclude_none=True)
+    if "sources" in payload and payload["sources"] is not None:
+        payload["sources"] = [
+            line.strip()
+            for line in payload["sources"]
+            if isinstance(line, str) and line.strip()
+        ]
+    store.update(payload)
+    service: ShibeiService = _svc(request).shibei_service
+    return ShibeiConfigResponse(**service.status_view())
+
+
+@app.post("/api/shibei/import")
+def import_shibei(request: Request, full: bool = False) -> ShibeiActionResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        result = service.import_all(full=full)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return ShibeiActionResponse(status="ready", message=result.message)
+
+
+@app.post("/api/shibei/test")
+def test_shibei(request: Request) -> ShibeiActionResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        preview = service.search("测试", limit=1)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    snippet = preview.replace("\n", " ")[:120]
+    return ShibeiActionResponse(status="ready", message=f"检索成功：{snippet}")
+
+
 @app.get("/api/skills/sources")
 def list_skill_sources(request: Request) -> list[SkillSourceResponse]:
     skill_manager: SkillManager = _svc(request).skill_manager
-    return [SkillSourceResponse(**item) for item in skill_manager.list_sources()]
+    return [SkillSourceResponse(**item) for item in skill_manager.list_sources()]  # type: ignore[arg-type]
 
 
 @app.get("/api/skills/categories")
@@ -887,7 +1038,7 @@ def list_skill_categories(request: Request) -> dict[str, list[str]]:
 
 
 @app.get("/api/skills/catalog")
-def list_skill_catalog(source: str | None = None, request: Request = None) -> list[SkillRecordResponse]:
+def list_skill_catalog(request: Request, source: str | None = None) -> list[SkillRecordResponse]:
     skill_manager: SkillManager = _svc(request).skill_manager
     records = skill_manager.catalog(source_key=source)
     return [
@@ -936,9 +1087,9 @@ def list_installed_skills(request: Request) -> list[SkillRecordResponse]:
 
 @app.post("/api/skills/install-all")
 def install_all_skills(
+    request: Request,
     source: str | None = None,
     install_mode: str = "link",
-    request: Request = None,
 ) -> SkillInstallAllResponse:
     skill_manager: SkillManager = _svc(request).skill_manager
     key = source.strip() if source else None
@@ -1077,7 +1228,7 @@ def briefing_latest() -> BriefingResponse:
 
 
 @app.get("/api/graph")
-def graph_data(filter: str = "all", request: Request = None) -> GraphResponse:
+def graph_data(request: Request, filter: str = "all") -> GraphResponse:
     workspace: KnowledgeWorkspace = _svc(request).workspace
     store: MemoryStore = _svc(request).store
     graph = GraphBuilder(workspace, store).build(filter_mode=filter)
@@ -1108,7 +1259,7 @@ async def kb_rebuild(request: Request) -> dict[str, int]:
 
 def _platform_field_values(source: SourceKind, request: Request) -> dict[str, object]:
     platform_store: PlatformConfigStore = _svc(request).platform_store
-    section = platform_store.get_section(source)
+    section: dict[str, object] = platform_store.get_section(source)  # type: ignore[assignment]
     if source is SourceKind.EMAIL:
         return mask_secrets(section)
     return section
@@ -1128,7 +1279,7 @@ def _build_platform_cards(request: Request) -> list[PlatformCardResponse]:
         for field in definition.fields:
             raw_value = values.get(field.key, "")
             if field.field_type == "number":
-                display_value: str | int | bool = int(raw_value or 1000)
+                display_value: str | int | bool = int(str(raw_value or "1000"))
             elif field.field_type == "checkbox":
                 display_value = bool(raw_value)
             else:
@@ -1174,7 +1325,7 @@ def update_platform_settings(
 ) -> PlatformCardResponse:
     platform_store: PlatformConfigStore = _svc(request).platform_store
     sync_service: SyncService = _svc(request).sync_service
-    platform_store.update_section(source, body.values)
+    platform_store.update_section(source, body.values)  # type: ignore[arg-type]
     settings.load_platform_config(platform_store)
     sync_service.reload_connectors()
     for card in _build_platform_cards(request):
@@ -1201,14 +1352,16 @@ async def test_platform_settings(source: SourceKind, request: Request) -> dict[s
 if DESKTOP_UI_DIR.exists():
     app.mount("/assets", StaticFiles(directory=DESKTOP_UI_DIR), name="assets")
 
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
     @app.get("/")
     def desktop_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "index.html")
+        return FileResponse(DESKTOP_UI_DIR / "index.html", headers=_NO_CACHE)
 
     @app.get("/workspace")
     def workspace_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "workspace.html")
+        return FileResponse(DESKTOP_UI_DIR / "workspace.html", headers=_NO_CACHE)
 
     @app.get("/mascot")
     def mascot_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "mascot.html")
+        return FileResponse(DESKTOP_UI_DIR / "mascot.html", headers=_NO_CACHE)

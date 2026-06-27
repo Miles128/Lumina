@@ -6,15 +6,15 @@ from unittest.mock import patch
 import pytest
 
 from secretary.agent.web_search import (
-    WebSearchTool,
     _ENGINES,
+    SearchResult,
+    WebSearchTool,
     _baidu,
     _bing,
     _ddg,
     _decode_bing_url,
     _sogou,
     run_search,
-    SearchResult,
 )
 
 BING_HTML = """
@@ -51,6 +51,21 @@ SOGOU_ANTISPIDER_HTML = """
 def test_decode_bing_url() -> None:
     href = "https://www.bing.com/ck/a?!&&u=a1aHR0cHM6Ly93d3cucnVub29iLmNvbS9weXRob24v"
     assert _decode_bing_url(href) == "https://www.runoob.com/python/"
+
+
+BING_CK_HTML = """
+<div class="b_algo" data-id iid=SERP.1>
+  <a aria-label="github.com" href="https://www.bing.com/ck/a?!&amp;&amp;u=a1aHR0cHM6Ly9naXRodWIuY29tL3RyZW5kaW5n">GitHub Trending</a>
+  <p class="b_lineclamp2">Trending repositories this week</p>
+</div>
+"""
+
+
+def test_bing_parser_ck_layout_without_li() -> None:
+    with patch("secretary.agent.web_search._fetch_html", return_value=BING_CK_HTML):
+        results = _bing("github trending", 3)
+    assert len(results) >= 1
+    assert results[0].url == "https://github.com/trending"
 
 
 def test_bing_parser_extracts_results() -> None:

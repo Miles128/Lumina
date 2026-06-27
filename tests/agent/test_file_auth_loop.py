@@ -64,6 +64,17 @@ def test_read_only_shell_command_does_not_require_confirmation(tmp_path: Path) -
     assert kind == ""
 
 
+def test_mdfind_shell_command_does_not_require_confirmation(tmp_path: Path) -> None:
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    loop = AgentLoop(_llm_config(), tools=[ShellTool()], file_auth=auth)
+    needs_confirm, kind = loop._requires_confirmation(
+        loop._tools["shell"],
+        {"command": 'mdfind "kMDItemFSName == *.md" | head -5'},
+    )
+    assert needs_confirm is False
+    assert kind == ""
+
+
 def test_write_like_shell_command_still_requires_confirmation(tmp_path: Path) -> None:
     auth = FileAuthService(tmp_path / "file_auth.json")
     loop = AgentLoop(_llm_config(), tools=[ShellTool()], file_auth=auth)

@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.loop import Tool
+from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.runner import SubAgentRunner
+from secretary.agent.tools.base import Tool
 
 
 class SpawnSubagentTool(Tool):
     name = "spawn_subagent"
     description = (
-        "Delegate a focused sub-task to an isolated read-only sub-agent. "
+        "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
-        "Use archetype 'explore' for codebase/memory/web research."
+        "Archetypes: explore (read-only), worker (read/write), verify (read-only review). "
+        "Optional goals[] runs up to 2 explore tasks in parallel."
     )
     needs_confirmation = False
     risk_level = "low"
@@ -27,9 +30,9 @@ class SpawnSubagentTool(Tool):
     ) -> None:
         self._runner = runner
         self._spawn_context = spawn_context
-        self._progress_callback = None
+        self._progress_callback: Callable[[ProgressEvent], None] | None = None
 
-    def bind_progress(self, callback) -> None:
+    def bind_progress(self, callback: Callable[[ProgressEvent], None] | None) -> None:
         self._progress_callback = callback
 
     def _parameters(self) -> dict[str, Any]:
@@ -46,11 +49,16 @@ class SpawnSubagentTool(Tool):
                 },
                 "archetype": {
                     "type": "string",
-                    "enum": ["explore"],
-                    "description": "Sub-agent type. Phase 1 supports read-only 'explore' only.",
+                    "description": "explore | worker | verify, or a custom name from ~/.lumina/subagents/*.md",
+                },
+                "goals": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 2,
+                    "description": "Optional: up to 2 explore goals run in parallel (omit goal when set).",
                 },
             },
-            "required": ["goal"],
+            "required": [],
         }
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from secretary.agent.grounding import (
+    ReadEvidence,
     collect_read_evidence,
     has_read_grounding,
     is_filesystem_question,
@@ -14,7 +16,6 @@ from secretary.agent.grounding import (
     should_retry_for_verification,
     verify_reply_against_evidence,
 )
-from secretary.agent.grounding import ReadEvidence
 
 
 @dataclass
@@ -32,13 +33,121 @@ class _FakeStep:
 def test_is_filesystem_question_detects_file_queries() -> None:
     assert is_filesystem_question("帮我看看 README.md 写了什么")
     assert is_filesystem_question("Lumina 项目里有哪些 Python 文件")
+    assert is_filesystem_question("open-design 作者是谁")
     assert not is_filesystem_question("今天天气怎么样")
+    assert not is_filesystem_question("GitHub 最近一周最火的项目都有哪些？")
+    assert is_filesystem_question("我手上都有哪些项目，在 my project 文件夹里")
+
+
+def test_enforce_does_not_block_web_questions() -> None:
+    from secretary.agent.grounding import UNGROUNDED_LISTING_FALLBACK, enforce_grounded_reply
+
+    reply = "根据检索，本周 GitHub 上较热的 repo 包括 …"
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "GitHub 最近一周最火的项目都有哪些？",
+        [],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert kept == reply
+    assert verified is True
+    assert UNGROUNDED_LISTING_FALLBACK not in kept
+
+    kept2, verified2, _ = enforce_grounded_reply(
+        reply,
+        "GitHub 最近一周最火的项目都有哪些？",
+        ["web_search"],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert kept2 == reply
+    assert verified2 is True
 
 
 def test_mentions_local_files_detects_paths() -> None:
     assert mentions_local_files("在 src/secretary/agent/loop.py 里")
     assert mentions_local_files("config.json 里配置了 API key")
+    assert mentions_local_files("好，那我再查一下 ~/Documents/My Projects/ 目录下的内容。")
     assert not mentions_local_files("你可以先列一下需求")
+
+
+def test_resolve_turn_user_message_skips_grounding_retry() -> None:
+    from secretary.agent.grounding import GROUNDING_RETRY_USER, resolve_turn_user_message
+
+    messages = [
+        {"role": "system", "content": "你是灵犀"},
+        {"role": "user", "content": "GitHub 最近一周最火的项目都有哪些？"},
+        {"role": "assistant", "content": "稍等"},
+        {"role": "user", "content": GROUNDING_RETRY_USER},
+    ]
+    assert resolve_turn_user_message(messages) == "GitHub 最近一周最火的项目都有哪些？"
+
+
+def test_should_not_retry_grounding_after_web_search() -> None:
+    from secretary.agent.grounding import should_retry_for_grounding
+
+    reply = "1. harry0703/MoneyPrinterTurbo\n2. microsoft/markitdown\n3. Lum1104/Understand-Anything"
+    assert not should_retry_for_grounding(
+        "GitHub 最近一周最火的项目都有哪些？",
+        reply,
+        ["web_search", "web_fetch"],
+    )
+
+
+def test_enforce_after_web_search_with_grounding_retry_in_history() -> None:
+    from secretary.agent.grounding import enforce_grounded_reply
+
+    reply = "本周 GitHub Trending：MoneyPrinterTurbo、markitdown、Understand-Anything …"
+    kept, verified, note = enforce_grounded_reply(
+        reply,
+        "你会上网查这个信息吗？GitHub 最近一周最火的项目都有哪些？",
+        ["web_search", "web_fetch"],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert verified
+    assert "无法确认" not in kept
+    assert "web_search" in note or "联网" in note
+
+
+def test_deferral_reply_triggers_retry() -> None:
+    from secretary.agent.grounding import reply_defers_filesystem_work
+
+    promise = "好，那我再查一下 ~/Documents/My Projects/ 目录。稍等，查完告诉你。"
+    assert reply_defers_filesystem_work(promise)
+    assert should_retry_for_grounding(
+        "查一下 ~/Documents/My Projects/ 里有哪些项目",
+        promise,
+        [],
+    )
+
+
+def test_infer_list_dir_target_handles_spaces() -> None:
+    from secretary.agent.grounding import infer_list_dir_target
+
+    target = infer_list_dir_target(
+        "查一下 ~/Documents/My Projects/ 目录下的内容",
+        "我再查 ~/Documents/My Projects/",
+    )
+    assert target is not None
+    assert "My Projects" in target
+    assert "有哪些" not in target
+
+
+def test_infer_list_dir_target_strips_chinese_suffix(tmp_path: Path) -> None:
+    from secretary.agent.grounding import infer_list_dir_target
+
+    projects = tmp_path / "My Projects"
+    projects.mkdir()
+    target = infer_list_dir_target(
+        f"查一下 {projects} 里有哪些项目",
+        "好，我查 /Users/sihai/Documents/My Projects/ 目录下的内容。稍等，查完告诉你。",
+    )
+    assert target is not None
+    assert str(projects.resolve()) == target or "My Projects" in target
+    assert "稍等" not in target
+    assert "有哪些" not in target
 
 
 def test_has_read_grounding() -> None:
@@ -125,6 +234,74 @@ def test_reply_simulates_file_listing_detects_fake_ls() -> None:
     assert not verified
     assert "无法确认" in replaced
     assert note
+
+
+def test_is_personal_memory_question_and_enforce_memory() -> None:
+    from secretary.agent.grounding import (
+        UNGROUNDED_MEMORY_FALLBACK,
+        enforce_grounded_reply,
+        is_personal_memory_question,
+    )
+
+    assert is_personal_memory_question("再找")
+    assert is_personal_memory_question("总结一下我最近在读什么")
+    reply = (
+        "翻了对话历史，你提到的书就这两本：\n"
+        "1. **《启示录》**\n"
+        "2. **《俞军产品方法论》**"
+    )
+    blocked, verified, _note = enforce_grounded_reply(
+        reply,
+        "再找",
+        [],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert not verified
+    assert blocked == UNGROUNDED_MEMORY_FALLBACK
+
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "再找",
+        ["search_memory"],
+        grounding_verified=True,
+        grounding_note="",
+    )
+    assert verified
+    assert kept == reply
+
+
+def test_mcp_list_directory_populates_evidence() -> None:
+    from secretary.agent.grounding import collect_read_evidence, enforce_grounded_reply
+
+    output = (
+        "[FILE] .DS_Store\n"
+        "[DIR] Lumina\n"
+        "[DIR] open-design\n"
+    )
+    steps = [
+        _FakeStep(
+            tool_call=_FakeToolCall(
+                name="mcp_filesystem_list_directory",
+                arguments={"path": "/Users/me/Documents/My Projects"},
+            ),
+            tool_output=output,
+        )
+    ]
+    evidence = collect_read_evidence(steps)
+    assert "Lumina" in evidence.listed_names
+    assert "open-design" in evidence.listed_names
+
+    reply = "你的 My Projects 里有：Lumina、open-design 等。"
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "我手上都有哪些项目，在 my project 文件夹",
+        ["mcp_filesystem_list_directory"],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert verified
+    assert kept == reply
 
 
 def test_enforce_grounded_reply_allows_search_files_listing_when_verified() -> None:

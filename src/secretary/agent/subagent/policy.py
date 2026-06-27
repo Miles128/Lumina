@@ -4,7 +4,10 @@ from __future__ import annotations
 
 MAX_SPAWN_DEPTH = 1
 MAX_SPAWNS_PER_TURN = 3
+MAX_PARALLEL_EXPLORE = 2
 EXPLORE_MAX_STEPS = 8
+WORKER_MAX_STEPS = 12
+VERIFY_MAX_STEPS = 6
 SUBAGENT_TIMEOUT_SEC = 120
 
-PHASE1_ARCHETYPES = frozenset({"explore"})
+BUILTIN_ARCHETYPES = frozenset({"explore", "worker", "verify"})

@@ -7,12 +7,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from secretary.services.platform_config import PlatformConfigStore
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ENV = _PROJECT_ROOT / ".env"
+_ENV_FILE = _PROJECT_ENV if _PROJECT_ENV.exists() else Path(".env")
+
 
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -41,11 +45,20 @@ class Settings(BaseSettings):
     local_documents_path: str = Field(default="", alias="LOCAL_DOCUMENTS_PATH")
     local_documents_max_files: int = Field(default=25, alias="LOCAL_DOCUMENTS_MAX_FILES")
 
+    projects_dir: str = Field(
+        default=str(Path.home() / "Documents" / "My Projects"),
+        alias="LUMINA_PROJECTS_DIR",
+    )
+
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="", alias="LLM_MODEL")
 
-    prompt_gate_enabled: bool = Field(default=True, alias="PROMPT_GATE_ENABLED")
+    prompt_gate_enabled: bool = Field(
+        default=False,
+        alias="PROMPT_GATE_ENABLED",
+        description="LLM input classifier before agent loop; default off (rules-only routing).",
+    )
     prompt_gate_min_confidence: float = Field(default=0.6, alias="PROMPT_GATE_MIN_CONFIDENCE")
     mcp_auto_filesystem: bool = Field(default=True, alias="MCP_AUTO_FILESYSTEM")
 
