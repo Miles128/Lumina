@@ -51,6 +51,7 @@ class AgentConfigDocument(BaseModel):
     max_history_turns: int = Field(default=16, ge=2, le=64)
     use_hermes_fallback: bool = False
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
+    agent_profile: str = Field(default="build", pattern="^(build|plan|orchestrator)$")
     shell_working_dir: str = ""
 
 
@@ -65,6 +66,7 @@ class AgentConfigView:
     max_history_turns: int
     use_hermes_fallback: bool
     response_style: str
+    agent_profile: str
     shell_working_dir: str
     status: str
     status_message: str
@@ -174,6 +176,7 @@ class AgentConfigStore:
             max_history_turns=document.max_history_turns,
             use_hermes_fallback=document.use_hermes_fallback,
             response_style=document.response_style,
+            agent_profile=document.agent_profile,
             shell_working_dir=document.shell_working_dir,
             status=status,
             status_message=message,

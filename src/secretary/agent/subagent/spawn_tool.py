@@ -8,7 +8,8 @@ from typing import Any
 
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
-from secretary.agent.subagent.runner import SubAgentRunner
+from secretary.agent.subagent.resume import SubAgentResumeState
+from secretary.agent.subagent.runner import SubAgentDeps, SubAgentRunner
 from secretary.agent.tools.base import Tool
 
 
@@ -17,20 +18,29 @@ class SpawnSubagentTool(Tool):
     description = (
         "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
-        "Archetypes: explore (read-only), worker (read/write), verify (read-only review). "
-        "Optional goals[] runs up to 2 explore tasks in parallel."
+        "Archetypes: explore (read-only), worker (read/write), verify (review), plan (read-only planning). "
+        "Optional goals[] runs up to 3 explore tasks in parallel (Hermes batch)."
     )
     needs_confirmation = False
     risk_level = "low"
 
     def __init__(
         self,
-        runner: SubAgentRunner,
+        deps: SubAgentDeps,
         spawn_context: SpawnContext,
     ) -> None:
-        self._runner = runner
         self._spawn_context = spawn_context
         self._progress_callback: Callable[[ProgressEvent], None] | None = None
+        self._paused: SubAgentResumeState | None = None
+        self._runner = SubAgentRunner(deps, on_paused=self._store_paused)
+
+    def _store_paused(self, state: SubAgentResumeState) -> None:
+        self._paused = state
+
+    def consume_paused(self) -> SubAgentResumeState | None:
+        state = self._paused
+        self._paused = None
+        return state
 
     def bind_progress(self, callback: Callable[[ProgressEvent], None] | None) -> None:
         self._progress_callback = callback
@@ -49,13 +59,13 @@ class SpawnSubagentTool(Tool):
                 },
                 "archetype": {
                     "type": "string",
-                    "description": "explore | worker | verify, or a custom name from ~/.lumina/subagents/*.md",
+                    "description": "explore | worker | verify | plan, or a custom name from ~/.lumina/subagents/*.md",
                 },
                 "goals": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "maxItems": 2,
-                    "description": "Optional: up to 2 explore goals run in parallel (omit goal when set).",
+                    "maxItems": 3,
+                    "description": "Optional: 2–3 explore goals run in parallel (omit goal when set).",
                 },
             },
             "required": [],

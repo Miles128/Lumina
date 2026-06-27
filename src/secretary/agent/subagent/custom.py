@@ -30,6 +30,7 @@ class CustomArchetypeSpec:
     max_steps: int
     system_prompt: str
     tool_names: frozenset[str]
+    mode: str = "subagent"
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -56,7 +57,10 @@ def load_custom_archetypes(subagents_dir: Path) -> dict[str, CustomArchetypeSpec
         name = (meta.get("name") or path.stem).strip().lower()
         if not name or not body:
             continue
-        if name in {"explore", "worker", "verify"}:
+        mode = (meta.get("mode") or "subagent").strip().lower()
+        if mode == "primary":
+            continue
+        if name in {"explore", "worker", "verify", "plan"}:
             continue
         tool_names = _parse_tool_names(meta.get("tools", ""))
         if not tool_names:
@@ -67,6 +71,7 @@ def load_custom_archetypes(subagents_dir: Path) -> dict[str, CustomArchetypeSpec
             max_steps=max_steps,
             system_prompt=body,
             tool_names=tool_names,
+            mode=mode,
         )
     return specs
 

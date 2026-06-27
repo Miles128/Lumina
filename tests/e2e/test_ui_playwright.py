@@ -78,7 +78,7 @@ def test_ui_settings_shibei_pane(page: Page) -> None:
     page.goto("/")
     _open_settings(page)
     page.locator("#settings-nav").get_by_text("Shibei", exact=False).click()
-    expect(page.locator("#shibei-sources")).to_be_visible(timeout=10_000)
+    expect(page.locator("#shibei-install-path")).to_be_visible(timeout=10_000)
     expect(page.locator("#shibei-enabled")).to_be_visible()
 
 

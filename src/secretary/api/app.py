@@ -70,6 +70,7 @@ class ProfileResponse(BaseModel):
     markdown: str
     auto_markdown: str
     user_markdown: str
+    chat_facts_markdown: str = ""
     is_user_edited: bool
     sections: list[dict[str, str | int]]
 
@@ -119,6 +120,7 @@ class ChatResponse(BaseModel):
     usage_prompt_tokens: int = 0
     usage_completion_tokens: int = 0
     usage_total_tokens: int = 0
+    confirmation_scope: str = ""
 
 
 class ConfirmActionRequest(BaseModel):
@@ -261,6 +263,7 @@ class AgentConfigResponse(BaseModel):
     max_history_turns: int
     use_hermes_fallback: bool
     response_style: str
+    agent_profile: str = "build"
     shell_working_dir: str = ""
     status: str
     status_message: str
@@ -277,6 +280,7 @@ class AgentConfigUpdateRequest(BaseModel):
     max_history_turns: int | None = None
     use_hermes_fallback: bool | None = None
     response_style: str = ""
+    agent_profile: str = ""
     shell_working_dir: str | None = None
 
 
@@ -309,17 +313,26 @@ class ShibeiConfigResponse(BaseModel):
 
 class ShibeiConfigUpdateRequest(BaseModel):
     enabled: bool | None = None
-    sources: list[str] | None = None
-    extensions: list[str] | None = None
-    search_engine: str | None = None
-    auto_import_on_sync: bool | None = None
-    collection: str | None = None
     install_path: str | None = None
+    config_path: str | None = None
+    auto_import_on_sync: bool | None = None
 
 
 class ShibeiActionResponse(BaseModel):
     status: str
     message: str
+
+
+class ShibeiSearchRequest(BaseModel):
+    query: str
+    limit: int = Field(default=10, ge=1, le=50)
+    tag: str | None = None
+
+
+class ShibeiSourceReadResponse(BaseModel):
+    path: str
+    name: str
+    content: str
 
 
 DESKTOP_UI_DIR = Path(__file__).resolve().parents[3] / "desktop" / "ui"
@@ -347,6 +360,7 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
         usage_prompt_tokens=usage_stats.prompt_tokens,
         usage_completion_tokens=usage_stats.completion_tokens,
         usage_total_tokens=usage_stats.total_tokens,
+        confirmation_scope=result.confirmation_scope,
     )
 
 
@@ -358,7 +372,6 @@ def _init_services() -> dict[str, object]:
         data_dir=settings.resolved_data_dir(),
     )
     shibei_service = ShibeiService(shibei_config_store)
-    shibei_config_store.sync_yaml()
     sync_service = SyncService(settings, store, shibei_service=shibei_service)
     local_documents_profiler = LocalDocumentsProfiler(settings)
     user_profile_store = UserProfileStore(settings.resolved_data_dir() / "user_profile.md")
@@ -653,6 +666,7 @@ def get_profile(request: Request) -> ProfileResponse:
         markdown=view.markdown,
         auto_markdown=view.auto_markdown,
         user_markdown=view.user_markdown,
+        chat_facts_markdown=view.chat_facts_markdown,
         is_user_edited=view.is_user_edited,
         sections=view.sections,
     )
@@ -667,6 +681,7 @@ def update_profile(request: Request, body: ProfileUpdateRequest) -> ProfileRespo
         markdown=view.markdown,
         auto_markdown=view.auto_markdown,
         user_markdown=view.user_markdown,
+        chat_facts_markdown=view.chat_facts_markdown,
         is_user_edited=view.is_user_edited,
         sections=view.sections,
     )
@@ -681,6 +696,7 @@ def reset_profile_user(request: Request) -> ProfileResponse:
         markdown=view.markdown,
         auto_markdown=view.auto_markdown,
         user_markdown=view.user_markdown,
+        chat_facts_markdown=view.chat_facts_markdown,
         is_user_edited=view.is_user_edited,
         sections=view.sections,
     )
@@ -907,6 +923,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         max_history_turns=view.max_history_turns,
         use_hermes_fallback=view.use_hermes_fallback,
         response_style=view.response_style,
+        agent_profile=view.agent_profile,
         shell_working_dir=view.shell_working_dir,
         status=view.status,
         status_message=view.status_message,
@@ -935,6 +952,8 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["use_hermes_fallback"] = body.use_hermes_fallback
     if body.response_style in {"standard", "brief"}:
         payload["response_style"] = body.response_style.strip()
+    if body.agent_profile in {"build", "plan", "orchestrator"}:
+        payload["agent_profile"] = body.agent_profile.strip()
     if body.shell_working_dir is not None:
         payload["shell_working_dir"] = body.shell_working_dir.strip()
     agent_config_store.update(payload)
@@ -992,14 +1011,7 @@ def get_shibei_config(request: Request) -> ShibeiConfigResponse:
 @app.put("/api/shibei/config")
 def update_shibei_config(request: Request, body: ShibeiConfigUpdateRequest) -> ShibeiConfigResponse:
     store: ShibeiConfigStore = _svc(request).shibei_config_store
-    payload = body.model_dump(exclude_none=True)
-    if "sources" in payload and payload["sources"] is not None:
-        payload["sources"] = [
-            line.strip()
-            for line in payload["sources"]
-            if isinstance(line, str) and line.strip()
-        ]
-    store.update(payload)
+    store.update(body.model_dump(exclude_none=True))
     service: ShibeiService = _svc(request).shibei_service
     return ShibeiConfigResponse(**service.status_view())
 
@@ -1023,6 +1035,37 @@ def test_shibei(request: Request) -> ShibeiActionResponse:
         raise HTTPException(status_code=400, detail=str(error)) from error
     snippet = preview.replace("\n", " ")[:120]
     return ShibeiActionResponse(status="ready", message=f"检索成功：{snippet}")
+
+
+@app.get("/api/shibei/sources")
+def shibei_sources(request: Request, limit: int = 50, offset: int = 0) -> dict[str, object]:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        payload = service.list_sources(limit=max(1, min(limit, 200)), offset=max(0, offset))
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return payload
+
+
+@app.post("/api/shibei/search")
+def shibei_search(request: Request, body: ShibeiSearchRequest) -> dict[str, object]:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        return service.search_raw(body.query, limit=body.limit, tag=body.tag)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/shibei/source")
+def shibei_read_source(request: Request, path: str) -> ShibeiSourceReadResponse:
+    service: ShibeiService = _svc(request).shibei_service
+    try:
+        payload = service.read_source(path)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return ShibeiSourceReadResponse(**payload)
 
 
 @app.get("/api/skills/sources")
@@ -1361,7 +1404,3 @@ if DESKTOP_UI_DIR.exists():
     @app.get("/workspace")
     def workspace_ui() -> FileResponse:
         return FileResponse(DESKTOP_UI_DIR / "workspace.html", headers=_NO_CACHE)
-
-    @app.get("/mascot")
-    def mascot_ui() -> FileResponse:
-        return FileResponse(DESKTOP_UI_DIR / "mascot.html", headers=_NO_CACHE)

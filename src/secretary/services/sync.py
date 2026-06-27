@@ -201,7 +201,10 @@ class SyncService:
         if service is None or not service.is_enabled():
             return
         document = service._store.load()
-        if not document.auto_import_on_sync or not document.sources:
+        if not document.auto_import_on_sync:
+            return
+        native = service._try_native_config()
+        if native is None or not native.sources:
             return
         if not service.is_available():
             return

@@ -24,11 +24,27 @@ def test_user_can_override_auto_profile(tmp_path: Path) -> None:
     auto_before = service.get_view()
     saved = service.save_user_markdown("# 我是用户自己写的画像\n")
     assert saved.is_user_edited is True
-    assert saved.markdown.startswith("# 我是用户")
+    assert saved.user_markdown.startswith("# 我是用户")
 
     reset = service.reset_user_markdown()
     assert reset.is_user_edited is False
     assert reset.markdown == auto_before.auto_markdown
+
+
+def test_save_user_profile_strips_chat_facts_section(tmp_path: Path) -> None:
+    settings = Settings(LUMINA_DATA_DIR=tmp_path)
+    store = MemoryStore(tmp_path / "memory.db")
+    user_store = UserProfileStore(tmp_path / "user_profile.md")
+    profiler = LocalDocumentsProfiler(settings)
+    service = ProfileService(settings, store, profiler, user_store)
+
+    service.append_chat_fact("在杭州工作")
+    saved = service.save_user_markdown(
+        "# 我的画像\n\n## 对话中了解到的信息\n\n- 在杭州工作\n"
+    )
+    assert saved.user_markdown == "# 我的画像"
+    assert "在杭州工作" in saved.chat_facts_markdown
+    assert saved.markdown.count("在杭州工作") == 1
 
 
 def test_local_excerpt_in_auto_profile(tmp_path: Path) -> None:
@@ -38,13 +54,6 @@ def test_local_excerpt_in_auto_profile(tmp_path: Path) -> None:
     profiler = LocalDocumentsProfiler(settings)
     profile_path = profiler.profile_path()
     profile_path.parent.mkdir(parents=True, exist_ok=True)
-    LocalDocumentsProfile(
-        generated_at=datetime.now(UTC),
-        analyzed_files=1,
-        excerpts=[DocumentExcerpt(file="resume.md", preview="负责产品运营")],
-        source_files=["resume.md"],
-    ).model_dump_json()
-
     profile_path.write_text(
         LocalDocumentsProfile(
             generated_at=datetime.now(UTC),

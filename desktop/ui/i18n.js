@@ -38,6 +38,12 @@
     "chat.typing.sync": { en: "Syncing data…", zh: "正在同步数据…" },
     "chat.typing.execute": { en: "Executing…", zh: "正在执行操作…" },
     "chat.typing.subagent": { en: "Spawning sub-agent…", zh: "正在派生子 Agent…" },
+    "chat.confirm.subagent": { en: "Sub-agent action", zh: "子 Agent 操作" },
+    "chat.subagent.tree": { en: "Sub-agents", zh: "子 Agent 会话树" },
+    "chat.subagent.running": { en: "Running", zh: "运行中" },
+    "chat.subagent.paused": { en: "Awaiting confirmation", zh: "等待确认" },
+    "chat.subagent.done": { en: "Done", zh: "已完成" },
+    "chat.subagent.failed": { en: "Failed", zh: "失败" },
     "chat.slowNotice": {
       en: "This is slower than usual — still working. Tap Pause to stop.",
       zh: "这次处理有点慢，我还在继续。你可以点「暂停」先停下。",

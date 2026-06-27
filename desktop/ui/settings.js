@@ -9,6 +9,7 @@
   let platforms = [];
   let profileMarkdown = "";
   let profileAutoMarkdown = "";
+  let profileChatFacts = "";
   let profileIsUserEdited = false;
   let activeKey = "agent_llm";
   let agentConfig = null;
@@ -79,8 +80,9 @@
     shibeiConfig = shibei;
     backgroundTasks = background;
     uiPreferences = loadUiPreferences();
-    profileMarkdown = profile.markdown || "";
-    profileAutoMarkdown = profile.auto_markdown || profile.markdown || "";
+    profileMarkdown = profile.user_markdown || profile.auto_markdown || "";
+    profileAutoMarkdown = profile.auto_markdown || "";
+    profileChatFacts = profile.chat_facts_markdown || "";
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
@@ -177,13 +179,20 @@
       return;
     }
     if (key === "profile") {
+      const chatFactsBlock = profileChatFacts
+        ? `<section class="profile-chat-facts">
+            <h4>对话推断（只读，保存画像时不会覆盖）</h4>
+            <pre class="profile-chat-facts-body">${escapeHtml(profileChatFacts)}</pre>
+          </section>`
+        : "";
       contentEl.innerHTML = `
         <div class="settings-pane profile-edit-pane">
           <header class="settings-pane-head">
             <h3>个人画像</h3>
-            <p>可直接编辑。保存后以你的版本为准；自动摘要仅作参考，不会猜测或编造。</p>
+            <p>编辑你的画像正文。下方「对话推断」来自聊天记录，单独保存，不会随此处覆盖。</p>
           </header>
           <textarea id="profile-editor" class="profile-editor" rows="18">${escapeHtml(profileMarkdown)}</textarea>
+          ${chatFactsBlock}
           <div class="platform-actions">
             <button class="btn-text save-btn" type="button" id="btn-save-profile">保存</button>
             <button class="btn-text" type="button" id="btn-reset-profile">恢复自动摘要</button>
@@ -357,6 +366,7 @@
   function renderAgentLlmPane() {
     const cfg = agentConfig || {};
     const responseStyle = cfg.response_style || "standard";
+    const agentProfile = cfg.agent_profile || "build";
     const providerOptions = (cfg.providers || [])
       .map(
         (item) =>
@@ -402,6 +412,14 @@
           <label class="settings-field settings-field-check">
             <input id="agent-hermes-fallback" type="checkbox"${cfg.use_hermes_fallback ? " checked" : ""} />
             <span>本地未配置时，回退读取 ~/.hermes/config.yaml</span>
+          </label>
+          <label class="settings-field">
+            <span>Agent 模式 · Profile</span>
+            <select id="agent-profile">
+              <option value="build"${agentProfile === "build" ? " selected" : ""}>Build · 执行（默认）</option>
+              <option value="plan"${agentProfile === "plan" ? " selected" : ""}>Plan · 只读规划</option>
+              <option value="orchestrator"${agentProfile === "orchestrator" ? " selected" : ""}>Orchestrator · 只委派</option>
+            </select>
           </label>
           <label class="settings-field">
             <span>默认语气档位</span>
@@ -454,6 +472,7 @@
       max_history_turns: Number(document.getElementById("agent-history")?.value || 16),
       use_hermes_fallback: Boolean(document.getElementById("agent-hermes-fallback")?.checked),
       response_style: document.getElementById("agent-response-style")?.value || "standard",
+      agent_profile: document.getElementById("agent-profile")?.value || "build",
       shell_working_dir: document.getElementById("agent-shell-cwd")?.value || "",
     };
   }
@@ -629,6 +648,7 @@
       const suffix = removed ? `（已删除：${removed}）` : "";
       showFeedback(feedback, "success", `已清除对话推断的画像条目与后台摘要${suffix}`);
       profileMarkdown = String(result?.profile_markdown || profileMarkdown);
+      profileChatFacts = "";
     } catch (error) {
       showFeedback(feedback, "error", `清除失败：${error.message}`);
     }
@@ -836,10 +856,10 @@
       <div class="settings-pane">
         <header class="settings-pane-head">
           <div class="settings-pane-title">
-            <h3>Shibei 外挂知识库</h3>
+            <h3>Shibei 知识库</h3>
             <span class="platform-status ${escapeAttr(cfg.status || "not_configured")}">${statusLabel(cfg.status || "not_configured")}</span>
           </div>
-          <p>接入 Shibei 中文语义知识库（默认查找 ~/Documents/Projects/shibei）。Agent 可通过 <code>shibei_search</code> 检索监控文件夹里的 Markdown / 文档。</p>
+          <p>直接连接 Shibei 应用的知识库。监控文件夹、搜索引擎等请在 Shibei 项目的 <code>config.yaml</code> 中配置；Lumina 只负责调用。</p>
         </header>
         <p class="platform-meta">${escapeHtml(cfg.status_message || "")}</p>
         <div class="settings-fields">
@@ -848,30 +868,26 @@
             <span>启用 Shibei 知识库工具</span>
           </label>
           <label class="settings-field">
-            <span>监控文件夹 · 每行一个路径</span>
-            <textarea id="shibei-sources" class="profile-editor" rows="6" placeholder="~/Documents/My Projects&#10;~/Documents/personal-notes">${escapeHtml(sourcesText)}</textarea>
+            <span>Shibei 安装路径</span>
+            <input id="shibei-install-path" type="text" value="${escapeAttr(cfg.install_path || "")}" placeholder="~/Documents/Projects/shibei" />
           </label>
           <label class="settings-field">
-            <span>文件扩展名 · 每行一个</span>
-            <textarea id="shibei-extensions" class="profile-editor" rows="4" placeholder=".md&#10;.txt">${escapeHtml(extensionsText)}</textarea>
-          </label>
-          <label class="settings-field">
-            <span>搜索引擎</span>
-            <select id="shibei-engine">
-              <option value="bm25"${cfg.search_engine === "bm25" ? " selected" : ""}>BM25（快，默认）</option>
-              <option value="vector"${cfg.search_engine === "vector" ? " selected" : ""}>Vector 向量</option>
-              <option value="hybrid"${cfg.search_engine === "hybrid" ? " selected" : ""}>Hybrid 混合</option>
-            </select>
+            <span>config.yaml 路径（可选，留空则用安装目录下的 config.yaml）</span>
+            <input id="shibei-config-path" type="text" value="${escapeAttr(cfg.config_path || "")}" placeholder="~/Documents/Projects/shibei/config.yaml" />
           </label>
           <label class="settings-field settings-field-check">
-            <input id="shibei-auto-import" type="checkbox"${cfg.auto_import_on_sync !== false ? " checked" : ""} />
+            <input id="shibei-auto-import" type="checkbox"${cfg.auto_import_on_sync ? " checked" : ""} />
             <span>点「同步」时自动增量导入 Shibei</span>
           </label>
           <label class="settings-field">
-            <span>Shibei 安装路径（可选）</span>
-            <input id="shibei-install-path" type="text" value="${escapeAttr(cfg.install_path || "")}" placeholder="~/Documents/Projects/shibei" />
+            <span>监控文件夹（来自 Shibei config.yaml，只读）</span>
+            <textarea class="profile-editor" rows="5" readonly>${escapeHtml(sourcesText || "未配置")}</textarea>
           </label>
-          <p class="platform-meta muted">配置写入 ${escapeHtml(cfg.config_path || "~/.lumina/shibei/config.yaml")} · 索引 ${escapeHtml(cfg.db_path || "")}</p>
+          <label class="settings-field">
+            <span>扩展名 / 搜索引擎 / 集合（只读）</span>
+            <textarea class="profile-editor" rows="4" readonly>${escapeHtml(extensionsText)}&#10;engine: ${escapeHtml(cfg.search_engine || "bm25")}&#10;collection: ${escapeHtml(cfg.collection || "")}</textarea>
+          </label>
+          <p class="platform-meta muted">配置 ${escapeHtml(cfg.config_path || "")} · 索引 ${escapeHtml(cfg.db_path || "")}</p>
         </div>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-shibei">保存</button>
@@ -888,23 +904,13 @@
 
   async function saveShibeiConfig() {
     const feedback = document.getElementById("shibei-feedback");
-    const sources = (document.getElementById("shibei-sources")?.value || "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const extensions = (document.getElementById("shibei-extensions")?.value || "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
     showFeedback(feedback, "info", "保存中…");
     try {
       shibeiConfig = await window.SecretaryAPI.request("PUT", "/api/shibei/config", {
         enabled: Boolean(document.getElementById("shibei-enabled")?.checked),
-        sources,
-        extensions,
-        search_engine: document.getElementById("shibei-engine")?.value || "bm25",
         auto_import_on_sync: Boolean(document.getElementById("shibei-auto-import")?.checked),
         install_path: document.getElementById("shibei-install-path")?.value.trim() || "",
+        config_path: document.getElementById("shibei-config-path")?.value.trim() || "",
       });
       renderNav();
       renderAgentShibeiPane();
@@ -1042,9 +1048,10 @@
       const updated = await window.SecretaryAPI.request("PUT", "/api/profile", {
         markdown: editor.value,
       });
-      profileMarkdown = updated.markdown;
-      profileAutoMarkdown = updated.auto_markdown;
-      profileIsUserEdited = updated.is_user_edited;
+      profileMarkdown = updated.user_markdown || editor.value;
+      profileAutoMarkdown = updated.auto_markdown || profileAutoMarkdown;
+      profileChatFacts = updated.chat_facts_markdown || profileChatFacts;
+      profileIsUserEdited = Boolean(updated.is_user_edited);
       showFeedback(feedback, "success", "已保存");
     } catch (error) {
       showFeedback(feedback, "error", `保存失败：${error.message}`);
@@ -1052,19 +1059,16 @@
   }
 
   async function resetProfile() {
-    const feedback = document.getElementById("profile-feedback");
     try {
       const updated = await window.SecretaryAPI.request("DELETE", "/api/profile/user");
-      profileMarkdown = updated.markdown;
-      profileAutoMarkdown = updated.auto_markdown;
-      profileIsUserEdited = updated.is_user_edited;
-      const editor = document.getElementById("profile-editor");
-      if (editor) {
-        editor.value = profileMarkdown;
-      }
-      showFeedback(feedback, "success", "已恢复自动摘要");
+      profileMarkdown = updated.user_markdown || updated.auto_markdown || "";
+      profileAutoMarkdown = updated.auto_markdown || profileMarkdown;
+      profileChatFacts = updated.chat_facts_markdown || "";
+      profileIsUserEdited = Boolean(updated.is_user_edited);
+      renderContent("profile");
+      showFeedback(document.getElementById("profile-feedback"), "success", "已恢复自动摘要");
     } catch (error) {
-      showFeedback(feedback, "error", `恢复失败：${error.message}`);
+      showFeedback(document.getElementById("profile-feedback"), "error", `恢复失败：${error.message}`);
     }
   }
 

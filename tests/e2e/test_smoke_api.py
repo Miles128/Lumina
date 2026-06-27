@@ -49,6 +49,12 @@ def test_smoke_shibei_config(client: TestClient) -> None:
     assert isinstance(payload["sources"], list)
 
 
+def test_smoke_workspace_ui(client: TestClient) -> None:
+    response = client.get("/workspace")
+    assert response.status_code == 200
+    assert "Shibei" in response.text
+
+
 def test_smoke_identity_without_llm(client: TestClient) -> None:
     response = client.post("/api/chat", json={"message": "你是谁"})
     assert response.status_code == 200

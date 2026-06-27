@@ -16,7 +16,4 @@ contextBridge.exposeInMainWorld("secretary", {
   openWorkspace() {
     return ipcRenderer.invoke("window:openWorkspace");
   },
-  openMascot() {
-    return ipcRenderer.invoke("window:openMascot");
-  },
 });

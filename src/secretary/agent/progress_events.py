@@ -11,6 +11,7 @@ ProgressKind = Literal[
     "tool_started",
     "tool_finished",
     "subagent_started",
+    "subagent_paused",
     "subagent_finished",
     "final_reply",
     "stopped",
@@ -30,6 +31,9 @@ class ProgressEvent:
     detail: str = ""
     sub_run_id: str = ""
     archetype: str = ""
+    goal: str = ""
+    subagent_status: str = ""
+    parent_sub_run_id: str = ""
 
 
 _TOOL_LABELS: dict[str, str] = {
@@ -95,6 +99,9 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "subagent_started":
         archetype = event.archetype or "explore"
         return f"正在派生子 Agent ({archetype})"
+    if event.kind == "subagent_paused":
+        archetype = event.archetype or "explore"
+        return f"子 Agent ({archetype}) 等待确认"
     if event.kind == "subagent_finished":
         prefix = f"[{event.archetype}] " if event.archetype else ""
         status = "完成" if event.success else "失败"
@@ -142,5 +149,11 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["sub_run_id"] = event.sub_run_id.strip()
     if event.archetype.strip():
         payload["archetype"] = event.archetype.strip()
+    if event.goal.strip():
+        payload["goal"] = event.goal.strip()
+    if event.subagent_status.strip():
+        payload["subagent_status"] = event.subagent_status.strip()
+    if event.parent_sub_run_id.strip():
+        payload["parent_sub_run_id"] = event.parent_sub_run_id.strip()
     return payload
 

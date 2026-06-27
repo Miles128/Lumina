@@ -7,6 +7,7 @@
   const typingTextEl = document.getElementById("typing-text");
   const progressEl = document.getElementById("agent-progress");
   const progressListEl = document.getElementById("agent-progress-list");
+  const subagentTreeEl = document.getElementById("subagent-tree");
   const pauseBtn = document.getElementById("btn-pause");
   const newThreadBtn = document.getElementById("btn-new-thread");
   const threadListEl = document.getElementById("thread-list");
@@ -31,8 +32,11 @@
     maxIteration: 0,
     hasTools: false,
     hasSubagent: false,
+    hasNetwork: false,
     panelVisible: false,
   };
+  /** @type {Map<string, {archetype: string, goal: string, status: string, tools: string[]}>} */
+  const subagentNodes = new Map();
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
@@ -455,7 +459,7 @@
     const row = document.createElement("div");
     row.className = `message ${role}`;
     const avatarSrc = role === "bot" ? BOT_AVATAR_SRC : "/assets/avatar-user.svg";
-    const bubbleClass = role === "bot" ? "bubble markdown" : "bubble";
+    const bubbleClass = "bubble markdown";
     row.innerHTML =
       `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
       `<img src="${avatarSrc}" alt="" aria-hidden="true" /></div>` +
@@ -478,6 +482,9 @@
 
     const riskBadge = riskLevel === "high" ? '<span class="risk-badge risk-high">高风险</span>' :
                       riskLevel === "medium" ? '<span class="risk-badge risk-medium">中风险</span>' : '';
+    const scopeBadge = response.confirmation_scope === "subagent"
+      ? `<span class="scope-badge scope-subagent">${escapeHtml(t("chat.confirm.subagent"))}</span>`
+      : "";
 
     let actions = `
       <button class="btn-confirm-primary" type="button" data-confirm="allow">执行</button>
@@ -499,6 +506,7 @@
       <div class="bubble confirm-bubble">
         <div class="confirm-text markdown">${renderMarkdown(replyText)}</div>
         <div class="confirm-detail">${escapeHtml(description)}</div>
+        ${scopeBadge}
         ${riskBadge}
         <div class="confirm-actions">${actions}</div>
       </div>
@@ -676,6 +684,11 @@
       hasNetwork: false,
       panelVisible: false,
     };
+    subagentNodes.clear();
+    if (subagentTreeEl) {
+      subagentTreeEl.hidden = true;
+      subagentTreeEl.innerHTML = "";
+    }
     if (!progressListEl) return;
     progressListEl.innerHTML = "";
     if (progressEl) {
@@ -687,8 +700,92 @@
     return (
       progressSession.maxIteration > 0 ||
       progressSession.hasTools ||
-      progressSession.hasNetwork
+      progressSession.hasNetwork ||
+      progressSession.hasSubagent
     );
+  }
+
+  function subagentStatusLabel(status) {
+    if (status === "paused") return t("chat.subagent.paused");
+    if (status === "done") return t("chat.subagent.done");
+    if (status === "failed") return t("chat.subagent.failed");
+    return t("chat.subagent.running");
+  }
+
+  function upsertSubagentNode(event) {
+    const runId = String(event?.sub_run_id || "").trim();
+    if (!runId) return;
+    const kind = String(event?.kind || "");
+    const existing = subagentNodes.get(runId) || {
+      archetype: String(event?.archetype || "explore"),
+      goal: String(event?.goal || ""),
+      status: "running",
+      tools: [],
+    };
+    if (event?.archetype) existing.archetype = String(event.archetype);
+    if (event?.goal) existing.goal = String(event.goal);
+    if (event?.subagent_status) existing.status = String(event.subagent_status);
+    if (kind === "subagent_started") existing.status = "running";
+    if (kind === "subagent_paused") existing.status = "paused";
+    if (kind === "subagent_finished") {
+      existing.status = event?.success === false ? "failed" : "done";
+    }
+    const toolName = String(event?.tool_name || "").trim();
+    if (
+      toolName &&
+      (kind === "tool_started" || kind === "tool_finished") &&
+      !existing.tools.includes(toolName)
+    ) {
+      existing.tools.push(toolName);
+    }
+    subagentNodes.set(runId, existing);
+    renderSubagentTree();
+  }
+
+  function renderSubagentTree() {
+    if (!subagentTreeEl) return;
+    if (subagentNodes.size === 0) {
+      subagentTreeEl.hidden = true;
+      subagentTreeEl.innerHTML = "";
+      return;
+    }
+    subagentTreeEl.hidden = false;
+    subagentTreeEl.innerHTML = "";
+    const heading = document.createElement("div");
+    heading.className = "subagent-tree-heading";
+    heading.textContent = t("chat.subagent.tree");
+    subagentTreeEl.appendChild(heading);
+
+    for (const [runId, node] of subagentNodes) {
+      const item = document.createElement("div");
+      item.className = `subagent-tree-node is-${node.status}`;
+      item.dataset.runId = runId;
+
+      const head = document.createElement("div");
+      head.className = "subagent-tree-head";
+      head.innerHTML =
+        `<span class="subagent-tree-archetype">${escapeHtml(node.archetype)}</span>` +
+        `<span class="subagent-tree-status">${escapeHtml(subagentStatusLabel(node.status))}</span>`;
+
+      const goal = document.createElement("div");
+      goal.className = "subagent-tree-goal";
+      goal.textContent = node.goal || runId;
+
+      item.appendChild(head);
+      item.appendChild(goal);
+
+      if (node.tools.length > 0) {
+        const toolsEl = document.createElement("ul");
+        toolsEl.className = "subagent-tree-tools";
+        for (const tool of node.tools) {
+          const li = document.createElement("li");
+          li.textContent = tool;
+          toolsEl.appendChild(li);
+        }
+        item.appendChild(toolsEl);
+      }
+      subagentTreeEl.appendChild(item);
+    }
   }
 
   function isSubagentProgressEvent(event) {
@@ -803,6 +900,14 @@
 
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
+    if (
+      kind === "subagent_started" ||
+      kind === "subagent_paused" ||
+      kind === "subagent_finished" ||
+      event?.sub_run_id
+    ) {
+      upsertSubagentNode(event);
+    }
     if (kind === "reply_start") {
       beginStreamingBubble();
     } else if (kind === "reply_delta" && event?.delta) {
@@ -823,6 +928,8 @@
     ) {
       clearStreamingBubble();
       showTyping(true, label || t("chat.typing.subagent"));
+    } else if (kind === "subagent_paused") {
+      showTyping(true, label || t("chat.subagent.paused"));
     } else if (kind === "subagent_finished") {
       showTyping(true, t("chat.typing.organize"));
     } else if (
@@ -988,9 +1095,6 @@
   }
 
   function renderMessageHtml(role, text) {
-    if (role !== "bot") {
-      return escapeHtml(text).replaceAll("\n", "<br>");
-    }
     return renderMarkdown(text);
   }
 
@@ -1067,6 +1171,11 @@
         chunks.push(`<blockquote>${renderInline(quote[1])}</blockquote>`);
         continue;
       }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+        closeLists();
+        chunks.push("<hr>");
+        continue;
+      }
       closeLists();
       chunks.push(`<p>${renderInline(trimmed)}</p>`);
     }
@@ -1082,6 +1191,8 @@
   function renderInline(text) {
     return text
       .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/(?<![\"'=])(https?:\/\/[^\s<]+[^\s<.,;:!?\"'\])])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\*([^*]+)\*/g, "<em>$1</em>");
   }

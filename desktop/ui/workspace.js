@@ -1,160 +1,257 @@
 (function () {
   "use strict";
 
-  const topicTree = document.getElementById("topic-tree");
-  const noteEditor = document.getElementById("note-editor");
-  const notePreview = document.getElementById("note-preview");
-  const editorTitle = document.getElementById("editor-title");
-  const profilePanel = document.getElementById("profile-panel");
-  const aiMessages = document.getElementById("ai-messages");
-  const aiForm = document.getElementById("ai-form");
-  const aiInput = document.getElementById("ai-input");
+  const statusBadge = document.getElementById("kb-status-badge");
+  const emptyPanel = document.getElementById("kb-empty");
+  const emptyMessage = document.getElementById("kb-empty-message");
+  const layout = document.getElementById("kb-layout");
+  const statsEl = document.getElementById("kb-stats");
+  const tagsEl = document.getElementById("kb-tags");
+  const sourcesEl = document.getElementById("kb-sources");
+  const loadMoreBtn = document.getElementById("btn-load-more");
+  const searchForm = document.getElementById("kb-search-form");
+  const searchInput = document.getElementById("kb-search-input");
+  const searchResults = document.getElementById("kb-search-results");
+  const previewTitle = document.getElementById("kb-preview-title");
+  const previewPath = document.getElementById("kb-preview-path");
+  const previewBody = document.getElementById("kb-preview-body");
 
-  let currentPath = "";
+  let config = null;
+  let sourceOffset = 0;
+  const SOURCE_PAGE = 50;
+  let hasMoreSources = false;
 
-  document.querySelectorAll(".sidebar-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".sidebar-tab").forEach((item) => item.classList.remove("active"));
-      document.querySelectorAll(".sidebar-pane").forEach((pane) => pane.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById(`pane-${tab.dataset.pane}`).classList.add("active");
-      if (tab.dataset.pane === "graph") {
-        window.GraphModule.reload(document.querySelector("[data-graph-filter].active")?.dataset.graphFilter);
-      }
-    });
+  document.getElementById("btn-import").addEventListener("click", importNow);
+  loadMoreBtn.addEventListener("click", () => loadSources(false));
+  searchForm.addEventListener("submit", onSearch);
+  sourcesEl.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-source-path]");
+    if (!button) return;
+    openSource(button.dataset.sourcePath);
   });
-
-  document.getElementById("btn-sync-all").addEventListener("click", syncAll);
-  document.getElementById("btn-save-note").addEventListener("click", saveNote);
-  document.getElementById("btn-rebuild-kb").addEventListener("click", rebuildKb);
-  document.getElementById("btn-open-mascot").addEventListener("click", () => {
-    window.secretary?.openMascot();
-  });
-
-  noteEditor.addEventListener("input", renderPreview);
-  aiForm.addEventListener("submit", onChatSubmit);
-  aiInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      aiForm.requestSubmit();
-    }
+  searchResults.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-source-path]");
+    if (!button) return;
+    openSource(button.dataset.sourcePath);
   });
 
   boot();
 
   async function boot() {
-    appendAi("bot", "你好，我是灵犀。左侧可看主题树和个人图谱，右侧可以像 NoteAI 一样对话检索本地知识库。");
-    await Promise.all([loadTree(), loadProfile()]);
-    window.GraphModule.init();
-  }
-
-  async function loadTree() {
-    const data = await window.SecretaryAPI.request("GET", "/api/kb/tree");
-    topicTree.innerHTML = "";
-    for (const l1 of data.topics || []) {
-      const l1El = document.createElement("div");
-      l1El.className = "tree-l1";
-      l1El.textContent = `${l1.name} (${l1.file_count || 0})`;
-      topicTree.appendChild(l1El);
-      for (const l2 of l1.children || []) {
-        const l2El = document.createElement("div");
-        l2El.className = "tree-l2";
-        l2El.textContent = l2.name;
-        topicTree.appendChild(l2El);
-        for (const file of l2.files || []) {
-          const fileBtn = document.createElement("button");
-          fileBtn.className = "tree-file";
-          fileBtn.textContent = file.name;
-          fileBtn.addEventListener("click", () => openNote(file.path, file.name));
-          topicTree.appendChild(fileBtn);
-        }
-      }
-    }
-  }
-
-  async function openNote(path, title) {
-    const data = await window.SecretaryAPI.request("GET", `/api/kb/note?path=${encodeURIComponent(path)}`);
-    currentPath = path;
-    editorTitle.textContent = title;
-    noteEditor.value = data.content;
-    document.getElementById("btn-save-note").disabled = false;
-    renderPreview();
-  }
-
-  async function saveNote() {
-    if (!currentPath) return;
-    const button = document.getElementById("btn-save-note");
-    button.disabled = true;
     try {
-      const updated = await window.SecretaryAPI.request("PUT", "/api/kb/note", {
-        path: currentPath,
-        content: noteEditor.value,
-      });
-      noteEditor.value = updated.content;
-      appendAi("bot", `已保存笔记：${currentPath}`);
-      renderPreview();
+      config = await window.SecretaryAPI.request("GET", "/api/shibei/config");
     } catch (error) {
-      appendAi("bot", `保存失败：${error.message}`);
+      showEmpty(`无法加载 Shibei 配置：${error.message}`);
+      return;
+    }
+    renderStatus(config);
+    if (!config.enabled) {
+      showEmpty("Shibei 知识库已关闭。请在主窗口「设置 → Shibei 知识库」中启用。");
+      return;
+    }
+    if (!config.shibei_available) {
+      showEmpty(config.status_message || "未检测到 Shibei 安装，请填写 install_path。");
+      return;
+    }
+    if (!config.sources?.length) {
+      showEmpty("请添加需要监控的文件夹。");
+      return;
+    }
+    layout.hidden = false;
+    emptyPanel.hidden = true;
+    sourceOffset = 0;
+    sourcesEl.innerHTML = "";
+    await loadSources(true);
+  }
+
+  function showEmpty(message) {
+    emptyMessage.textContent = message;
+    emptyPanel.hidden = false;
+    layout.hidden = true;
+  }
+
+  function renderStatus(cfg) {
+    const label = cfg.status_message || cfg.status || "未知";
+    statusBadge.textContent = label;
+    statusBadge.dataset.status = cfg.status || "unknown";
+  }
+
+  async function loadSources(reset) {
+    if (reset) {
+      sourceOffset = 0;
+      sourcesEl.innerHTML = "";
+    }
+    loadMoreBtn.disabled = true;
+    try {
+      const payload = await window.SecretaryAPI.request(
+        "GET",
+        `/api/shibei/sources?limit=${SOURCE_PAGE}&offset=${sourceOffset}`,
+      );
+      renderStats(payload);
+      renderSourceList(payload.sources || [], reset);
+      hasMoreSources = Boolean(payload.has_more);
+      sourceOffset += (payload.sources || []).length;
+      loadMoreBtn.hidden = !hasMoreSources;
+    } catch (error) {
+      if (reset) {
+        showEmpty(`读取 Shibei 索引失败：${error.message}`);
+      } else {
+        previewBody.textContent = `加载更多失败：${error.message}`;
+      }
     } finally {
-      button.disabled = false;
+      loadMoreBtn.disabled = false;
     }
   }
 
-  function renderPreview() {
-    const body = noteEditor.value.replace(/^---[\s\S]*?---\n?/, "");
-    notePreview.innerHTML = body
-      .split("\n")
-      .map((line) => {
-        if (line.startsWith("# ")) return `<h1>${escapeHtml(line.slice(2))}</h1>`;
-        if (line.startsWith("## ")) return `<h2>${escapeHtml(line.slice(3))}</h2>`;
-        if (line.startsWith("- ")) return `<li>${escapeHtml(line.slice(2))}</li>`;
-        return `<p>${escapeHtml(line)}</p>`;
+  function renderStats(payload) {
+    const summary = payload.summary || {};
+    const totalFiles = summary.total_files ?? payload.count ?? 0;
+    const totalChunks = summary.total_chunks ?? 0;
+    const engines = (summary.engines || [config?.search_engine || "bm25"]).join(", ");
+    statsEl.innerHTML = `
+      <div><dt>文档</dt><dd>${totalFiles}</dd></div>
+      <div><dt>片段</dt><dd>${totalChunks}</dd></div>
+      <div><dt>引擎</dt><dd>${escapeHtml(engines)}</dd></div>
+      <div><dt>集合</dt><dd>${escapeHtml(config?.collection || "lumina_kb")}</dd></div>
+    `;
+    const byTag = summary.by_tag || {};
+    const tagEntries = Object.entries(byTag).slice(0, 12);
+    if (!tagEntries.length) {
+      tagsEl.innerHTML = "";
+      return;
+    }
+    tagsEl.innerHTML = tagEntries
+      .map(
+        ([tag, count]) =>
+          `<button type="button" class="kb-tag" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)} (${count})</button>`,
+      )
+      .join("");
+    tagsEl.querySelectorAll(".kb-tag").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        searchInput.value = chip.dataset.tag || "";
+        searchForm.requestSubmit();
+      });
+    });
+  }
+
+  function renderSourceList(items, reset) {
+    if (reset && !items.length) {
+      sourcesEl.innerHTML = `<p class="kb-muted">索引为空。点击「导入」扫描监控文件夹。</p>`;
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const item of items) {
+      const path = typeof item === "string" ? item : item.source || item.path || item.file || "";
+      if (!path) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "kb-source-item";
+      button.dataset.sourcePath = path;
+      button.innerHTML = `<span class="kb-source-name">${escapeHtml(basename(path))}</span><span class="kb-source-dir">${escapeHtml(dirname(path))}</span>`;
+      fragment.appendChild(button);
+    }
+    sourcesEl.appendChild(fragment);
+  }
+
+  async function openSource(path) {
+    previewTitle.textContent = basename(path);
+    previewPath.textContent = path;
+    previewBody.textContent = "加载中…";
+    searchResults.hidden = true;
+    try {
+      const data = await window.SecretaryAPI.request(
+        "GET",
+        `/api/shibei/source?path=${encodeURIComponent(path)}`,
+      );
+      previewBody.textContent = data.content || "";
+    } catch (error) {
+      previewBody.textContent = `无法读取文件：${error.message}`;
+    }
+  }
+
+  async function onSearch(event) {
+    event.preventDefault();
+    const query = searchInput.value.trim();
+    if (!query) return;
+    searchResults.hidden = false;
+    searchResults.innerHTML = `<p class="kb-muted">搜索「${escapeHtml(query)}」…</p>`;
+    try {
+      const payload = await window.SecretaryAPI.request("POST", "/api/shibei/search", {
+        query,
+        limit: 12,
+      });
+      renderSearchResults(payload);
+    } catch (error) {
+      searchResults.innerHTML = `<p class="kb-muted">搜索失败：${escapeHtml(error.message)}</p>`;
+    }
+  }
+
+  function renderSearchResults(payload) {
+    const results = payload.results || [];
+    if (!results.length) {
+      searchResults.innerHTML = `<p class="kb-muted">未找到与「${escapeHtml(payload.query || "")}」相关的内容。</p>`;
+      return;
+    }
+    searchResults.innerHTML = results
+      .map((item) => {
+        const source = item.source || "";
+        const score = item.score ?? "";
+        const tags = item.tags ? ` · ${escapeHtml(String(item.tags))}` : "";
+        const text = escapeHtml(String(item.text || "").trim());
+        return `
+          <button type="button" class="kb-hit" data-source-path="${escapeAttr(source)}">
+            <div class="kb-hit-head">
+              <strong>${escapeHtml(basename(source))}</strong>
+              <span class="kb-hit-meta">score ${score}${tags}</span>
+            </div>
+            <p class="kb-hit-text">${text}</p>
+          </button>`;
       })
       .join("");
   }
 
-  async function loadProfile() {
-    const profile = await window.SecretaryAPI.request("GET", "/api/profile");
-    profilePanel.textContent = profile.markdown;
+  async function importNow() {
+    const button = document.getElementById("btn-import");
+    button.disabled = true;
+    button.textContent = "导入中…";
+    try {
+      const result = await window.SecretaryAPI.request("POST", "/api/shibei/import");
+      statusBadge.textContent = result.message;
+      config = await window.SecretaryAPI.request("GET", "/api/shibei/config");
+      renderStatus(config);
+      await loadSources(true);
+    } catch (error) {
+      statusBadge.textContent = `导入失败：${error.message}`;
+    } finally {
+      button.disabled = false;
+      button.textContent = "导入";
+    }
   }
 
-  async function syncAll() {
-    appendAi("bot", "开始全量同步，请稍候...");
-    const results = await window.SecretaryAPI.request("POST", "/api/sync");
-    const inserted = results.reduce((sum, item) => sum + item.inserted, 0);
-    appendAi("bot", `同步完成，写入 ${inserted} 条记忆，并已更新知识库与画像。`);
-    await Promise.all([loadTree(), loadProfile()]);
-    window.GraphModule.reload("personal");
+  function basename(path) {
+    const parts = String(path).split(/[/\\]/);
+    return parts[parts.length - 1] || path;
   }
 
-  async function rebuildKb() {
-    const result = await window.SecretaryAPI.request("POST", "/api/kb/rebuild");
-    appendAi("bot", `知识库已重建，导出 ${result.exported} 篇笔记。`);
-    await loadTree();
-  }
-
-  async function onChatSubmit(event) {
-    event.preventDefault();
-    const message = aiInput.value.trim();
-    if (!message) return;
-    aiInput.value = "";
-    appendAi("user", message);
-    const response = await window.SecretaryAPI.request("POST", "/api/chat", { message });
-    appendAi("bot", response.reply);
-  }
-
-  function appendAi(role, text) {
-    const bubble = document.createElement("div");
-    bubble.className = `ai-bubble ${role}`;
-    bubble.textContent = text;
-    aiMessages.appendChild(bubble);
-    aiMessages.scrollTop = aiMessages.scrollHeight;
+  function dirname(path) {
+    const parts = String(path).split(/[/\\]/);
+    parts.pop();
+    const parent = parts.join("/");
+    if (parent.length > 72) {
+      return "…" + parent.slice(-69);
+    }
+    return parent || "/";
   }
 
   function escapeHtml(value) {
-    return value
+    return String(value)
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replaceAll("'", "&#39;");
   }
 })();

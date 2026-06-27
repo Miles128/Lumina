@@ -47,6 +47,14 @@ def test_explore_archetype_resolves_read_only_tools(tmp_path: Path) -> None:
     assert "file_write" not in names
 
 
+def test_plan_sub_archetype_is_read_only(tmp_path: Path) -> None:
+    tools = resolve_tools("plan", _deps(tmp_path))
+    names = {tool.name for tool in tools}
+    assert "list_dir" in names
+    assert "spawn_subagent" not in names
+    assert "file_write" not in names
+
+
 def test_worker_and_verify_archetypes_exist() -> None:
     worker = get_archetype("worker")
     verify = get_archetype("verify")
@@ -147,9 +155,8 @@ def test_runner_explore_completes_with_mocked_child(tmp_path: Path) -> None:
 
 
 def test_parent_loop_invokes_spawn_and_receives_summary(tmp_path: Path) -> None:
-    runner = SubAgentRunner(_deps(tmp_path))
     spawn_context = SpawnContext(parent_session_id="chat-1", depth=0)
-    spawn_tool = SpawnTool(runner, spawn_context)
+    spawn_tool = SpawnTool(_deps(tmp_path), spawn_context)
 
     parent_spawn = ChatCompletionResult(
         content="",
@@ -224,7 +231,6 @@ def test_parent_loop_invokes_spawn_and_receives_summary(tmp_path: Path) -> None:
 
 
 def test_spawn_tool_requires_goal(tmp_path: Path) -> None:
-    runner = SubAgentRunner(_deps(tmp_path))
-    tool = SpawnTool(runner, SpawnContext(parent_session_id="s", depth=0))
+    tool = SpawnTool(_deps(tmp_path), SpawnContext(parent_session_id="s", depth=0))
     output = tool.execute({"archetype": "explore"}, tmp_path)
     assert "non-empty goal" in output
