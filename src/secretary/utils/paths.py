@@ -22,7 +22,7 @@ def default_documents_dir() -> Path:
                 timeout=5,
             )
             candidate = Path(result.stdout.strip())
-            if candidate.is_dir():
+            if candidate.is_dir() and candidate != home:
                 return candidate
         except (subprocess.SubprocessError, FileNotFoundError):
             pass
