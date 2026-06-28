@@ -113,6 +113,13 @@ def test_rule_route_forces_agent_for_local_file_question() -> None:
     assert decision.action == GateAction.CONTINUE
 
 
+def test_rule_route_memory_write_goes_full_agent() -> None:
+    decision = rule_route("写入记忆：我偏好简洁回复")
+    assert decision is not None
+    assert decision.action == GateAction.CONTINUE
+    assert decision.reason == "memory write"
+
+
 def test_rule_route_followup_bypasses_clarify_with_history() -> None:
     history = [
         {"role": "user", "content": "用户的原话是尽量不改的，让我看提示词"},

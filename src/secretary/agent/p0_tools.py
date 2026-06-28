@@ -113,7 +113,7 @@ class PatchTool(Tool):
         "Replace exact text in a file (old_text -> new_text). "
         "Use for precise edits. Requires confirmation when modifying existing files."
     )
-    needs_confirmation = True
+    needs_confirmation = False
     risk_level = "medium"
 
     def _parameters(self) -> dict[str, Any]:

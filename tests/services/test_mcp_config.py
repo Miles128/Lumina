@@ -58,6 +58,38 @@ def test_add_filesystem_server(tmp_path) -> None:
     assert store.add_filesystem_server(root) is False
 
 
+def test_remove_server_tombstones_hermes_only(tmp_path, monkeypatch) -> None:
+    store = McpConfigStore(tmp_path / "mcp.json")
+    monkeypatch.setattr(
+        "secretary.services.mcp_config._load_hermes_servers",
+        lambda: {
+            "hermes_only": McpServerConfig(command="echo", args=["hi"], enabled=True),
+        },
+    )
+    assert store.remove_server("hermes_only") is True
+    persisted = store.load_persisted()
+    assert persisted.servers["hermes_only"].enabled is False
+    loaded = store.load()
+    assert loaded.servers["hermes_only"].enabled is False
+
+    assert store.remove_server("hermes_only") is True
+    loaded_again = store.load()
+    assert loaded_again.servers["hermes_only"].enabled is False
+
+
+def test_remove_server_deletes_lumina_only(tmp_path) -> None:
+    store = McpConfigStore(tmp_path / "mcp.json")
+    store.save(
+        McpConfigDocument(
+            import_hermes=False,
+            servers={"local": McpServerConfig(command="echo", args=[], enabled=True)},
+        )
+    )
+    assert store.remove_server("local") is True
+    assert "local" not in store.load_persisted().servers
+    assert "local" not in store.load().servers
+
+
 def test_ensure_filesystem_server_adds_once(tmp_path) -> None:
     root = tmp_path / "docs"
     root.mkdir()

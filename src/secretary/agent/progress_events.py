@@ -11,7 +11,10 @@ ProgressKind = Literal[
     "tool_started",
     "tool_finished",
     "subagent_started",
+    "subagent_paused",
     "subagent_finished",
+    "cli_agent_started",
+    "cli_agent_finished",
     "final_reply",
     "stopped",
     "reply_start",
@@ -30,6 +33,9 @@ class ProgressEvent:
     detail: str = ""
     sub_run_id: str = ""
     archetype: str = ""
+    goal: str = ""
+    subagent_status: str = ""
+    parent_sub_run_id: str = ""
 
 
 _TOOL_LABELS: dict[str, str] = {
@@ -58,6 +64,7 @@ _TOOL_LABELS: dict[str, str] = {
     "skill_view": "查看技能",
     "clarify": "澄清问题",
     "spawn_subagent": "委派子任务",
+    "spawn_cli_agent": "委派 CLI Agent",
 }
 
 
@@ -72,6 +79,9 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"
+        if event.tool_name == "spawn_cli_agent":
+            provider = event.archetype or "CLI"
+            return prefix + f"正在运行 {provider} CLI Agent"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -84,6 +94,9 @@ def progress_event_label(event: ProgressEvent) -> str:
         status = "完成" if event.success else "失败"
         if event.tool_name == "spawn_subagent":
             return prefix + f"子 Agent 委派{status}"
+        if event.tool_name == "spawn_cli_agent":
+            provider = event.archetype or "CLI"
+            return prefix + f"{provider} CLI Agent {status}"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -95,11 +108,22 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "subagent_started":
         archetype = event.archetype or "explore"
         return f"正在派生子 Agent ({archetype})"
+    if event.kind == "subagent_paused":
+        archetype = event.archetype or "explore"
+        return f"子 Agent ({archetype}) 等待确认"
     if event.kind == "subagent_finished":
         prefix = f"[{event.archetype}] " if event.archetype else ""
         status = "完成" if event.success else "失败"
         detail = event.message[:80] if event.message else f"子任务{status}"
         return prefix + detail
+    if event.kind == "cli_agent_started":
+        provider = event.archetype or "CLI"
+        return f"正在运行 {provider} CLI Agent"
+    if event.kind == "cli_agent_finished":
+        provider = event.archetype or "CLI"
+        status = "完成" if event.success else "失败"
+        detail = event.message[:80] if event.message else status
+        return f"{provider} CLI Agent {status}: {detail}"
     if event.kind == "final_reply":
         return prefix + "整理回复"
     if event.kind == "stopped":
@@ -142,5 +166,11 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["sub_run_id"] = event.sub_run_id.strip()
     if event.archetype.strip():
         payload["archetype"] = event.archetype.strip()
+    if event.goal.strip():
+        payload["goal"] = event.goal.strip()
+    if event.subagent_status.strip():
+        payload["subagent_status"] = event.subagent_status.strip()
+    if event.parent_sub_run_id.strip():
+        payload["parent_sub_run_id"] = event.parent_sub_run_id.strip()
     return payload
 

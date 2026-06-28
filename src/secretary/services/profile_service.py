@@ -23,6 +23,7 @@ class ProfileView(BaseModel):
     markdown: str
     auto_markdown: str
     user_markdown: str
+    chat_facts_markdown: str = ""
     is_user_edited: bool
     sections: list[dict[str, str | int]] = Field(default_factory=list)
 
@@ -66,13 +67,14 @@ class ProfileService:
         user_markdown = user.markdown.strip()
         display = user_markdown if user_markdown else auto_markdown
         chat_facts = self._load_chat_facts_markdown()
-        if chat_facts:
+        if chat_facts and _CHAT_FACTS_HEADER not in display:
             display = f"{display.rstrip()}\n\n{chat_facts}".strip()
         return ProfileView(
             generated_at=rule_auto.generated_at,
             markdown=display,
             auto_markdown=auto_markdown,
             user_markdown=user_markdown,
+            chat_facts_markdown=chat_facts,
             is_user_edited=bool(user_markdown),
             sections=[
                 {
@@ -92,7 +94,7 @@ class ProfileService:
         return path.read_text(encoding="utf-8").strip()
 
     def save_user_markdown(self, markdown: str) -> ProfileView:
-        self._user_store.save(markdown)
+        self._user_store.save(self._strip_chat_facts(markdown))
         view = self.get_view()
         self._persist_display(view.markdown)
         return view
@@ -141,6 +143,13 @@ class ProfileService:
         if not path.exists():
             return ""
         return path.read_text(encoding="utf-8").strip()
+
+    def _strip_chat_facts(self, markdown: str) -> str:
+        header = _CHAT_FACTS_HEADER
+        idx = markdown.find(header)
+        if idx >= 0:
+            return markdown[:idx].rstrip()
+        return markdown.strip()
 
     def clear_chat_derived_facts(self) -> ProfileView:
         """Remove profile bullets inferred from chat (may include assistant hallucinations)."""

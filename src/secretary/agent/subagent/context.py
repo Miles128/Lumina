@@ -20,3 +20,12 @@ class SpawnContext:
 
     def record_spawn(self) -> None:
         self.spawns_this_turn += 1
+
+    def child_context(self) -> SpawnContext:
+        """Spawn context for a child run (depth + 1, same parent session)."""
+        return SpawnContext(
+            parent_session_id=self.parent_session_id,
+            depth=self.depth + 1,
+            spawns_this_turn=self.spawns_this_turn,
+            trace_id=self.trace_id,
+        )

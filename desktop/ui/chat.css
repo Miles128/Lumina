@@ -308,12 +308,35 @@ html, body {
   border-radius: 0;
   font-size: 15px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.bubble.markdown {
+  white-space: normal;
+}
+
+.message.user .bubble.markdown {
+  white-space: normal;
 }
 
 .message.user .bubble {
   color: var(--text);
+}
+
+.bubble.markdown a {
+  color: var(--accent, #2563eb);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bubble.markdown a:hover {
+  opacity: 0.85;
+}
+
+.bubble.markdown hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 10px 0;
 }
 
 .bubble.markdown p,
@@ -334,11 +357,17 @@ html, body {
 
 .bubble.markdown h1,
 .bubble.markdown h2,
-.bubble.markdown h3 {
+.bubble.markdown h3,
+.bubble.markdown h4,
+.bubble.markdown h5,
+.bubble.markdown h6 {
   font-size: 15px;
   line-height: 1.4;
   margin: 0 0 8px;
 }
+
+.bubble.markdown h1 { font-size: 17px; }
+.bubble.markdown h2 { font-size: 16px; }
 
 .bubble.markdown ul,
 .bubble.markdown ol {
@@ -462,16 +491,64 @@ html, body {
 .agent-progress .progress-detail {
   margin: 4px 0 0;
   padding: 6px 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
   word-break: break-word;
   color: var(--text-tertiary);
   background: var(--surface-muted, #f8f8f8);
   border-radius: 4px;
-  max-height: 72px;
+  max-height: 120px;
   overflow: auto;
+}
+
+.agent-progress .progress-detail.markdown {
+  font-family: inherit;
+  white-space: normal;
+}
+
+.agent-progress .progress-detail.markdown p,
+.agent-progress .progress-detail.markdown ul,
+.agent-progress .progress-detail.markdown ol,
+.agent-progress .progress-detail.markdown pre,
+.agent-progress .progress-detail.markdown blockquote {
+  margin: 0 0 6px;
+}
+
+.agent-progress .progress-detail.markdown p:last-child,
+.agent-progress .progress-detail.markdown ul:last-child,
+.agent-progress .progress-detail.markdown ol:last-child,
+.agent-progress .progress-detail.markdown pre:last-child,
+.agent-progress .progress-detail.markdown blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.agent-progress .progress-detail.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.agent-progress .progress-detail.markdown pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.agent-progress .progress-detail.markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.agent-progress .progress-detail.markdown a {
+  color: var(--accent, #2563eb);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .agent-progress li.is-subagent {
@@ -488,8 +565,100 @@ html, body {
 .agent-progress li.is-subagent .progress-label {
   color: #4338ca;
 }
+
+.agent-progress li.is-error {
   color: #b42318;
   border-left-color: #b42318;
+}
+
+.subagent-tree {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.subagent-tree-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.subagent-tree-node {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.subagent-tree-node.is-running {
+  border-left: 3px solid #6366f1;
+}
+
+.subagent-tree-node.is-paused {
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.subagent-tree-node.is-done {
+  border-left: 3px solid #16a34a;
+  opacity: 0.85;
+}
+
+.subagent-tree-node.is-failed {
+  border-left: 3px solid #b42318;
+  background: rgba(180, 35, 24, 0.04);
+}
+
+.subagent-tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.subagent-tree-archetype {
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.subagent-tree-status {
+  color: var(--text-tertiary);
+}
+
+.subagent-tree-goal {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.subagent-tree-tools {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.subagent-tree-tools li {
+  padding: 2px 0;
+  border-left: none;
+}
+
+.scope-badge.scope-subagent {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #4338ca;
 }
 
 .agent-progress li.is-done {
@@ -780,6 +949,32 @@ html, body {
 
 .profile-editor { min-height: 320px; width: 100%; }
 
+.profile-chat-facts {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-chat-facts h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.profile-chat-facts-body {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  max-height: 180px;
+  overflow: auto;
+}
+
 .settings-field-check {
   flex-direction: row;
   align-items: center;
@@ -869,6 +1064,58 @@ html, body {
 
 .mcp-server-list li {
   margin-bottom: 4px;
+}
+
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+  margin-left: -18px;
+  padding-left: 0;
+}
+
+.mcp-server-delete {
+  flex-shrink: 0;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+}
+
+.mcp-server-delete:hover {
+  color: var(--danger, #c0392b);
+}
+
+.cli-provider-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.cli-provider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.cli-provider-main {
+  margin: 0;
+}
+
+.cli-provider-cmd {
+  grid-column: 1 / -1;
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.cli-provider-test {
+  justify-self: end;
 }
 
 .mcp-tool-table-wrap {

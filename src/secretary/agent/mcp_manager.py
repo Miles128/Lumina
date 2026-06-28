@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import threading
+from concurrent.futures import CancelledError
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,7 +92,9 @@ class McpManager:
         self._bridge_tools: list[McpBridgeTool] = []
         self._runtimes: dict[str, _ServerRuntime] = {}
         self._loaded = False
+        self._loading = False
         self._last_error = ""
+        self._connection_fingerprint_cached: str | None = None
 
     @property
     def available(self) -> bool:
@@ -128,17 +132,50 @@ class McpManager:
         }
 
     def get_tools(self) -> list[Tool]:
-        self.ensure_loaded()
+        try:
+            self.ensure_loaded()
+        except Exception as exc:
+            logger.warning("MCP get_tools degraded: %s", exc)
+            self._record_error(f"get_tools: {exc}")
         return list(self._bridge_tools)
 
-    def reload(self) -> None:
-        self._run(self._async_reload())
+    def reload(self, *, force: bool = True) -> None:
+        with self._lock:
+            if self._loading:
+                return
+            if not force and self._loaded and not self._config_changed():
+                return
+            self._loading = True
+        try:
+            self._run(self._async_reload())
+        except Exception as exc:
+            logger.warning("MCP reload failed: %s", exc)
+            self._record_error(f"reload: {exc}")
+        finally:
+            with self._lock:
+                self._loading = False
+                self._loaded = True
+                if self._connection_fingerprint_cached is None:
+                    self._mark_connected()
 
     def ensure_loaded(self) -> None:
         with self._lock:
-            if self._loaded:
+            if self._loaded and not self._config_changed():
                 return
-        self.reload()
+            if self._loading:
+                return
+            self._loading = True
+        try:
+            self._run(self._async_reload())
+        except Exception as exc:
+            logger.warning("MCP ensure_loaded failed: %s", exc)
+            self._record_error(f"load: {exc}")
+        finally:
+            with self._lock:
+                self._loading = False
+                self._loaded = True
+                if self._connection_fingerprint_cached is None:
+                    self._mark_connected()
 
     def call_tool(
         self,
@@ -159,17 +196,61 @@ class McpManager:
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
+    def _record_error(self, message: str) -> None:
+        if self._last_error:
+            self._last_error += f"; {message}"
+        else:
+            self._last_error = message
+
     def _run(self, coro: Any, *, timeout: float = 180) -> Any:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except CancelledError as exc:
+            logger.warning("MCP task cancelled: %s", exc)
+            raise RuntimeError("MCP 连接任务被取消") from exc
+        except FuturesTimeoutError as exc:
+            logger.warning("MCP task timed out after %.0fs", timeout)
+            raise RuntimeError(f"MCP 连接超时（{int(timeout)}s）") from exc
+
+    def _connection_fingerprint(self) -> str:
+        document = self._config_store.load()
+        parts: list[str] = []
+        for name in sorted(document.servers):
+            cfg = document.servers[name]
+            if not cfg.enabled or not cfg.command:
+                continue
+            parts.append(
+                "|".join(
+                    [
+                        name,
+                        cfg.command,
+                        " ".join(cfg.args),
+                        str(cfg.timeout),
+                        json.dumps(cfg.env, sort_keys=True, ensure_ascii=True),
+                    ]
+                )
+            )
+        return "\n".join(parts)
+
+    def _config_changed(self) -> bool:
+        return self._connection_fingerprint() != self._connection_fingerprint_cached
+
+    def _mark_connected(self) -> None:
+        self._connection_fingerprint_cached = self._connection_fingerprint()
 
     async def _async_reload(self) -> None:
-        await self._async_shutdown()
+        try:
+            await self._async_shutdown()
+        except Exception as exc:
+            logger.warning("MCP shutdown during reload: %s", exc)
+            self._record_error(f"shutdown: {exc}")
         self._bridge_tools = []
+        self._runtimes.clear()
         self._last_error = ""
         if not _MCP_AVAILABLE:
             self._last_error = "未安装 mcp 包"
-            self._loaded = True
+            self._mark_connected()
             return
         document = self._config_store.load()
         for name, config in document.servers.items():
@@ -189,8 +270,7 @@ class McpManager:
                 self._last_error += f"; {name}: 暂不支持 URL 传输"
             else:
                 self._last_error = f"{name}: 暂不支持 URL 传输"
-        with self._lock:
-            self._loaded = True
+        self._mark_connected()
 
     async def _connect_stdio(self, name: str, config: McpServerConfig) -> None:
         assert StdioServerParameters is not None
@@ -204,32 +284,36 @@ class McpManager:
             env=env,
         )
         stack = AsyncExitStack()
-        read, write = await stack.enter_async_context(stdio_client(params))
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        listed = await session.list_tools()
-        specs: list[_RegisteredMcpTool] = []
-        for item in listed.tools:
-            safe_tool = _safe_name(item.name)
-            specs.append(
-                _RegisteredMcpTool(
-                    server_name=_safe_name(name),
-                    remote_name=str(item.name),
-                    tool_name=safe_tool,
-                    description=str(item.description or item.name),
-                    input_schema=dict(item.inputSchema or {}),
-                    timeout=config.timeout,
+        try:
+            read, write = await stack.enter_async_context(stdio_client(params))
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+            listed = await session.list_tools()
+            specs: list[_RegisteredMcpTool] = []
+            for item in listed.tools:
+                safe_tool = _safe_name(item.name)
+                specs.append(
+                    _RegisteredMcpTool(
+                        server_name=_safe_name(name),
+                        remote_name=str(item.name),
+                        tool_name=safe_tool,
+                        description=str(item.description or item.name),
+                        input_schema=dict(item.inputSchema or {}),
+                        timeout=config.timeout,
+                    )
                 )
+            runtime = _ServerRuntime(
+                name=name,
+                session=session,
+                tools=specs,
+                stack=stack,
             )
-        runtime = _ServerRuntime(
-            name=name,
-            session=session,
-            tools=specs,
-            stack=stack,
-        )
-        self._runtimes[name] = runtime
-        for spec in specs:
-            self._bridge_tools.append(McpBridgeTool(self, spec))
+            self._runtimes[name] = runtime
+            for spec in specs:
+                self._bridge_tools.append(McpBridgeTool(self, spec))
+        except Exception:
+            await self._close_stack(stack)
+            raise
 
     async def _async_call_tool(
         self,
@@ -252,10 +336,21 @@ class McpManager:
             return "Error: MCP tool returned an error"
         return "(empty MCP result)"
 
+    async def _close_stack(self, stack: AsyncExitStack | None) -> None:
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except Exception as exc:
+            logger.warning("MCP stack close failed: %s", exc)
+
     async def _async_shutdown(self) -> None:
-        for runtime in list(self._runtimes.values()):
-            if runtime.stack is not None:
-                await runtime.stack.aclose()
+        for name, runtime in list(self._runtimes.items()):
+            try:
+                await self._close_stack(runtime.stack)
+            except Exception as exc:
+                logger.warning("MCP server %s shutdown failed: %s", name, exc)
+                self._record_error(f"{name} shutdown: {exc}")
         self._runtimes.clear()
 
 
@@ -269,3 +364,10 @@ def _needs_confirmation(tool_name: str) -> bool:
     if any(token in lowered for token in ("read", "list", "get", "search", "fetch")):
         return False
     return True
+
+
+def mcp_tool_needs_confirmation(tool_name: str) -> bool:
+    """Whether an MCP tool exposed to the agent loop requires user confirmation."""
+    if not tool_name.startswith("mcp_"):
+        return True
+    return _needs_confirmation(tool_name)

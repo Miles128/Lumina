@@ -27,6 +27,45 @@ def test_read_never_requires_confirmation(tmp_path: Path) -> None:
     assert kind == ""
 
 
+def test_file_read_never_requires_confirmation(tmp_path: Path) -> None:
+    from secretary.agent.tools.fs import FileReadTool
+
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    sample = tmp_path / "note.txt"
+    sample.write_text("hello", encoding="utf-8")
+    loop = AgentLoop(_llm_config(), tools=[FileReadTool()], file_auth=auth)
+    needs_confirm, kind = loop._requires_confirmation(
+        loop._tools["file_read"],
+        {"path": str(sample)},
+    )
+    assert needs_confirm is False
+    assert kind == ""
+
+
+def test_search_files_never_requires_confirmation(tmp_path: Path) -> None:
+    from secretary.agent.p0_tools import SearchFilesTool
+
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    loop = AgentLoop(_llm_config(), tools=[SearchFilesTool()], file_auth=auth)
+    needs_confirm, kind = loop._requires_confirmation(
+        loop._tools["search_files"],
+        {"pattern": "*.py", "path": str(tmp_path)},
+    )
+    assert needs_confirm is False
+    assert kind == ""
+
+
+def test_mkdir_shell_requires_confirmation(tmp_path: Path) -> None:
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    loop = AgentLoop(_llm_config(), tools=[ShellTool()], file_auth=auth)
+    needs_confirm, kind = loop._requires_confirmation(
+        loop._tools["shell"],
+        {"command": f"mkdir -p {tmp_path / 'newdir'}"},
+    )
+    assert needs_confirm is True
+    assert kind == "shell"
+
+
 def test_write_new_requires_confirmation_without_session_grant(tmp_path: Path) -> None:
     auth = FileAuthService(tmp_path / "file_auth.json")
     loop = AgentLoop(_llm_config(), tools=[FileWriteTool()], file_auth=auth)

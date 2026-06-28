@@ -13,6 +13,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from secretary.agent.agent_profile import (
+    AgentProfile,
+    default_max_steps_for_profile,
+    parse_agent_profile,
+    profile_system_appendix,
+    resolve_parent_tools,
+)
+from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
@@ -31,7 +39,8 @@ from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
-from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps, SubAgentRunner
+from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
+from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
 from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
@@ -46,6 +55,7 @@ from secretary.memory.db import MemoryStore
 from secretary.memory.hermes_memory import HermesMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import BackgroundReviewService
+from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.profile_service import ProfileService
 from secretary.services.todo_store import TodoStore
@@ -77,6 +87,7 @@ class ChatResult:
     grounding_verified: bool = True
     grounding_note: str = ""
     files_read: list[str] | None = None
+    confirmation_scope: str = ""
 
 
 class ChatService:
@@ -91,6 +102,7 @@ class ChatService:
         file_auth: FileAuthService | None = None,
         mcp_manager: McpManager | None = None,
         shibei_service: ShibeiService | None = None,
+        cli_agent_config_store: CliAgentConfigStore | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -112,10 +124,16 @@ class ChatService:
         self._pending_messages: list[dict[str, str]] | None = None
         self._pending_llm_config: LlmConfig | None = None
         self._pending_lock = threading.Lock()
+        self._subagent_pending: SubAgentResumeState | None = None
+        self._parent_turn_resume: ParentTurnResumeState | None = None
+        self._active_spawn_tool: SpawnSubagentTool | None = None
         self._prompt_gate = PromptGate(settings, agent_config_store)
         self._turn_orchestrator = TurnOrchestrator(self._file_auth)
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
+        self._cli_agent_config_store = cli_agent_config_store or CliAgentConfigStore(
+            settings.resolved_data_dir() / "cli-agents.json",
+        )
 
     @property
     def hermes_memory(self) -> HermesMemory:
@@ -152,6 +170,26 @@ class ChatService:
             self._pending = pending
             self._pending_messages = messages
             self._pending_llm_config = llm_config
+
+    def _handle_subagent_paused(self, state: SubAgentResumeState) -> None:
+        with self._pending_lock:
+            self._subagent_pending = state
+
+    def _take_subagent_pending(self) -> SubAgentResumeState | None:
+        with self._pending_lock:
+            state = self._subagent_pending
+            self._subagent_pending = None
+            return state
+
+    def _set_parent_turn_resume(self, state: ParentTurnResumeState) -> None:
+        with self._pending_lock:
+            self._parent_turn_resume = state
+
+    def _take_parent_turn_resume(self) -> ParentTurnResumeState | None:
+        with self._pending_lock:
+            state = self._parent_turn_resume
+            self._parent_turn_resume = None
+            return state
 
     def is_author_turn(self, message: str) -> bool:
         cleaned = message.strip()
@@ -253,6 +291,7 @@ class ChatService:
             self._store,
             self._sync_service,
             memory_hits=len(hits),
+            shibei_service=self._shibei_service,
         )
         if sync_empty:
             return self._finish_gate_reply(
@@ -311,7 +350,9 @@ class ChatService:
         grant_session_write: bool = False,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
+        sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
+        spawn_tool = self._active_spawn_tool
 
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
@@ -327,6 +368,15 @@ class ChatService:
             self._file_auth.grant_permanent_read()
         if grant_session_write:
             self._file_auth.grant_session_write_new()
+
+        if sub_state is not None and spawn_tool is not None:
+            return self._confirm_subagent_action(
+                sub_state,
+                spawn_tool,
+                messages,
+                llm_config,
+                progress_callback=progress_callback,
+            )
 
         tools = self._build_tools()
         result = self._turn_orchestrator.run_confirmed_action(
@@ -369,6 +419,104 @@ class ChatService:
             confirmation_kind=cui.confirmation_kind,
             allow_permanent_read=cui.allow_permanent_read,
             allow_session_write=cui.allow_session_write,
+        )
+
+    def _confirm_subagent_action(
+        self,
+        state: SubAgentResumeState,
+        spawn_tool: SpawnSubagentTool,
+        messages: list[dict[str, str]],
+        llm_config: LlmConfig,
+        *,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
+    ) -> ChatResult:
+        summary = spawn_tool._runner.resume_paused(
+            state,
+            self._shell_working_dir(),
+            progress_callback=progress_callback,
+        )
+        re_paused = spawn_tool.consume_paused()
+        if re_paused is not None:
+            self._handle_subagent_paused(re_paused)
+            raw_reply = (
+                f"子 Agent ({re_paused.archetype}) 需要你的确认：\n\n"
+                f"{re_paused.pending.description}\n\n是否允许？"
+            )
+            self._set_pending(
+                re_paused.pending,
+                messages + [{"role": "assistant", "content": raw_reply}],
+                llm_config,
+            )
+            safe_reply, _, _ = self._prepare_user_reply(raw_reply, "system:confirmed", llm_config)
+            self._append_history("system:confirmed", safe_reply)
+            self._save_to_session("assistant", safe_reply)
+            cui = _confirmation_ui(re_paused.pending)
+            return ChatResult(
+                reply=safe_reply,
+                profile_excerpt="",
+                used_llm=True,
+                memory_hits=0,
+                pending_confirmation=re_paused.pending,
+                confirmation_kind=cui.confirmation_kind,
+                allow_permanent_read=cui.allow_permanent_read,
+                allow_session_write=cui.allow_session_write,
+                confirmation_scope="subagent",
+            )
+
+        parent_resume = self._take_parent_turn_resume()
+        if parent_resume is not None:
+            result = self._turn_orchestrator.resume_after_subagent(
+                llm_config,
+                parent_resume,
+                summary,
+                temperature=self._temperature(),
+                working_dir=self._shell_working_dir(),
+                progress_callback=progress_callback,
+                on_subagent_paused=self._handle_subagent_paused,
+            )
+            if (
+                result.pending_confirmation
+                and self._subagent_pending
+                and result.messages_snapshot
+                and result.pending_step
+            ):
+                self._set_parent_turn_resume(
+                    ParentTurnResumeState(
+                        messages_snapshot=list(result.messages_snapshot),
+                        tools=parent_resume.tools,
+                        max_steps=parent_resume.max_steps,
+                        pending_step=result.pending_step,
+                        assistant_message=result.pause_assistant_message,
+                        native_used=result.pause_native_used,
+                        step_idx=result.total_steps - 1,
+                        llm_config=llm_config,
+                        session_id=parent_resume.session_id,
+                        user_message=parent_resume.user_message,
+                        profile_excerpt=parent_resume.profile_excerpt,
+                        memory_hits=parent_resume.memory_hits,
+                    )
+                )
+            return self._finalize_agent_result(
+                parent_resume.user_message,
+                parent_resume.messages_snapshot,
+                result,
+                llm_config,
+                parent_resume.session_id,
+                parent_resume.profile_excerpt,
+                memory_hits=parent_resume.memory_hits,
+            )
+
+        raw_reply = f"子 Agent ({state.archetype}) 已完成：\n\n{summary}"
+        safe_reply, _, _ = self._prepare_user_reply(raw_reply, "system:confirmed", llm_config)
+        self._append_history("system:confirmed", safe_reply)
+        self._save_to_session("assistant", safe_reply)
+        self._background_review.schedule("system:confirmed", safe_reply, llm_config)
+        return ChatResult(
+            reply=safe_reply,
+            profile_excerpt="",
+            used_llm=True,
+            memory_hits=0,
+            confirmation_scope="subagent",
         )
 
     def clear_history(self) -> None:
@@ -657,7 +805,10 @@ class ChatService:
         decision: GateDecision,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
-        system_prompt = self._build_system_prompt(profile_markdown, hits)
+        profile = self._current_agent_profile()
+        system_prompt = (
+            self._build_system_prompt(profile_markdown, hits) + profile_system_appendix(profile)
+        )
         session_id = self._get_or_create_session_id()
         self._hermes.create_session(session_id)
         self._save_to_session("user", cleaned)
@@ -704,17 +855,53 @@ class ChatService:
         from secretary.agent.grounding import is_filesystem_question
 
         filesystem_turn = is_filesystem_question(cleaned)
-        max_steps = 8 if filesystem_turn else (3 if light_mode else 8)
         suggested = decision.intent.suggested_tools if decision.intent else ()
-        if filesystem_turn:
-            tools = self._build_tools()
-        elif light_mode:
-            tools = self._pick_tools(suggested)
-        else:
-            tools = self._append_browser_tools(self._build_tools(), cleaned)
+        spawn_tool = self._make_spawn_tool(llm_config, session_id)
+        cli_spawn_tool = self._make_cli_spawn_tool()
 
-        if filesystem_turn or not light_mode:
-            tools = [*tools, self._make_spawn_tool(llm_config, session_id)]
+        if profile is AgentProfile.ORCHESTRATOR:
+            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
+            tools = resolve_parent_tools(
+                profile,
+                base_tools,
+                spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
+            )
+            max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
+        elif profile is AgentProfile.PLAN:
+            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
+            tools = resolve_parent_tools(
+                profile,
+                base_tools,
+                spawn_tool=None,
+                cli_spawn_tool=None,
+            )
+            max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
+        elif filesystem_turn:
+            tools = resolve_parent_tools(
+                AgentProfile.BUILD,
+                self._build_tools(),
+                spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
+            )
+            max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=True)
+        elif light_mode:
+            tools = resolve_parent_tools(
+                AgentProfile.BUILD,
+                self._pick_tools(suggested),
+                spawn_tool=None,
+                cli_spawn_tool=None,
+            )
+            max_steps = 3
+        else:
+            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
+            tools = resolve_parent_tools(
+                AgentProfile.BUILD,
+                base_tools,
+                spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
+            )
+            max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=False)
 
         plan = AgentTurnPlan(messages=messages, max_steps=max_steps, tools=tools)
 
@@ -725,7 +912,30 @@ class ChatService:
                 temperature=self._temperature(),
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
+                on_subagent_paused=self._handle_subagent_paused,
             )
+            if (
+                result.pending_confirmation
+                and self._subagent_pending
+                and result.messages_snapshot
+                and result.pending_step
+            ):
+                self._set_parent_turn_resume(
+                    ParentTurnResumeState(
+                        messages_snapshot=list(result.messages_snapshot),
+                        tools=plan.tools,
+                        max_steps=plan.max_steps,
+                        pending_step=result.pending_step,
+                        assistant_message=result.pause_assistant_message,
+                        native_used=result.pause_native_used,
+                        step_idx=result.total_steps - 1,
+                        llm_config=llm_config,
+                        session_id=session_id,
+                        user_message=cleaned,
+                        profile_excerpt=profile_excerpt,
+                        memory_hits=len(hits),
+                    )
+                )
             return self._finalize_agent_result(
                 cleaned,
                 messages,
@@ -819,6 +1029,9 @@ class ChatService:
             self._background_review.schedule(cleaned, safe_reply, llm_config)
 
         cui3 = _confirmation_ui(result.pending_confirmation)
+        confirmation_scope = ""
+        if result.pending_confirmation is not None and self._subagent_pending is not None:
+            confirmation_scope = "subagent"
         return ChatResult(
             reply=safe_reply,
             profile_excerpt=profile_excerpt,
@@ -833,6 +1046,7 @@ class ChatService:
             grounding_verified=grounding_verified,
             grounding_note=grounding_note,
             files_read=result.files_read or None,
+            confirmation_scope=confirmation_scope,
         )
 
     def _prepare_user_reply(
@@ -902,13 +1116,27 @@ class ChatService:
         return build_browser_tools(self._get_or_create_session_id())
 
     def _pick_tools(self, suggested: tuple[str, ...]) -> list[Tool]:
+        from secretary.services.shibei_service import shibei_ready_for_memory_read
+
         all_tools = {tool.name: tool for tool in self._build_tools()}
+        shibei_first = shibei_ready_for_memory_read(self._shibei_service)
         if suggested:
-            picked = [all_tools[name] for name in suggested if name in all_tools]
+            names = list(suggested)
+            if shibei_first and "shibei_search" not in names:
+                if any(name in names for name in ("search_memory", "session_search")):
+                    names.insert(0, "shibei_search")
+            picked = [all_tools[name] for name in names if name in all_tools]
             if picked:
                 return picked
-        defaults = ("search_memory", "session_search", "web_search")
+        defaults = self._default_memory_tool_names()
         return [all_tools[name] for name in defaults if name in all_tools]
+
+    def _default_memory_tool_names(self) -> tuple[str, ...]:
+        from secretary.services.shibei_service import shibei_ready_for_memory_read
+
+        if shibei_ready_for_memory_read(self._shibei_service):
+            return ("shibei_search", "session_search", "search_memory", "web_search")
+        return ("search_memory", "session_search", "web_search")
 
     def _build_tools(self) -> list[Tool]:
         from secretary.agent.p0_tools import (
@@ -960,6 +1188,11 @@ class ChatService:
             )
         return tools
 
+    def _current_agent_profile(self) -> AgentProfile:
+        if self._agent_config_store is None:
+            return AgentProfile.BUILD
+        return parse_agent_profile(self._agent_config_store.load().agent_profile)
+
     def _make_spawn_tool(self, llm_config: LlmConfig, session_id: str) -> SpawnSubagentTool:
         spawn_context = SpawnContext(parent_session_id=session_id, depth=0)
         deps = SubAgentDeps(
@@ -970,8 +1203,25 @@ class ChatService:
             lumina_dir=self._settings.resolved_data_dir(),
             temperature=min(self._temperature(), 0.5),
         )
-        runner = SubAgentRunner(deps)
-        return SpawnSubagentTool(runner, spawn_context)
+        tool = SpawnSubagentTool(deps, spawn_context)
+        self._active_spawn_tool = tool
+        return tool
+
+    def _make_cli_spawn_tool(self) -> SpawnCliAgentTool | None:
+        if not self._cli_agent_config_store.is_enabled():
+            return None
+        projects_dir: Path | None = None
+        raw = self._settings.projects_dir.strip()
+        if raw:
+            expanded = Path(raw).expanduser()
+            if expanded.is_dir():
+                projects_dir = expanded
+        runner = CliAgentRunner(
+            self._cli_agent_config_store,
+            projects_dir=projects_dir,
+            audit_dir=self._settings.resolved_data_dir() / "logs" / "cli-agent",
+        )
+        return SpawnCliAgentTool(runner, default_cwd=self._shell_working_dir())
 
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
         from secretary.agent.browser_tools import agent_browser_available
@@ -992,10 +1242,12 @@ class ChatService:
             view = self._shibei_service.status_view()
             folders = "、".join(view.get("sources") or []) or "（未配置）"
             shibei_section = (
-                "\n\n## Shibei 外挂知识库\n"
-                "灵犀接入了 Shibei 中文语义知识库，用于个人笔记/文档类问题。\n"
+                "\n\n## Shibei 知识库（读取记忆的主路径）\n"
+                "个人笔记、文档、面试资料等 **优先** 用 shibei_search 检索 Shibei 已有索引"
+                "（config.yaml + ~/.shibei/db），**不需要** 先点 Lumina「同步」。\n"
                 f"- 监控文件夹：{folders}\n"
-                "- 优先用 shibei_search 检索；结果为空时 shibei_import 或提示用户同步\n"
+                "- 检索为空时：shibei_import 增量导入，或在 Shibei 应用中 import\n"
+                "- search_memory 仅查 Lumina 连接器同步库，作为 Shibei 的备选\n"
                 "- 不要编造未出现在 shibei_search / search_memory 结果中的文档内容\n"
             )
         style_rule = (

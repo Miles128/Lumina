@@ -9,7 +9,6 @@ const BACKEND_URL = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 
 let mainWindow = null;
 let knowledgeWindow = null;
-let mascotWindow = null;
 let backendProcess = null;
 let isQuitting = false;
 const RESTART_DELAY_MS = 3000;
@@ -101,10 +100,6 @@ function routeInternalUrl(url) {
       createKnowledgeWindow();
       return true;
     }
-    if (parsed.pathname.startsWith("/mascot")) {
-      createMascotWindow();
-      return true;
-    }
   } catch (_error) {
     // ignore malformed URLs
   }
@@ -156,7 +151,7 @@ function createKnowledgeWindow() {
     height: 860,
     minWidth: 960,
     minHeight: 640,
-    title: "灵犀 · 知识库",
+    title: "Shibei · 知识库",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -168,35 +163,6 @@ function createKnowledgeWindow() {
   loadUrlWithBackendRetry(knowledgeWindow, `${BACKEND_URL}/workspace`);
   knowledgeWindow.on("closed", () => {
     knowledgeWindow = null;
-  });
-}
-
-function createMascotWindow() {
-  if (mascotWindow) {
-    mascotWindow.focus();
-    return;
-  }
-  mascotWindow = new BrowserWindow({
-    width: 340,
-    height: 460,
-    minWidth: 300,
-    minHeight: 400,
-    title: "灵犀",
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  attachWindowOpenHandler(mascotWindow);
-  attachLoadRetry(mascotWindow, `${BACKEND_URL}/mascot`);
-  loadUrlWithBackendRetry(mascotWindow, `${BACKEND_URL}/mascot`);
-  mascotWindow.on("closed", () => {
-    mascotWindow = null;
   });
 }
 
@@ -338,8 +304,4 @@ ipcMain.handle("window:openKnowledge", () => {
 
 ipcMain.handle("window:openWorkspace", () => {
   createKnowledgeWindow();
-});
-
-ipcMain.handle("window:openMascot", () => {
-  createMascotWindow();
 });

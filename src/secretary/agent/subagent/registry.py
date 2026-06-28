@@ -11,6 +11,7 @@ from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import (
     BUILTIN_ARCHETYPES,
     EXPLORE_MAX_STEPS,
+    PLAN_MAX_STEPS,
     VERIFY_MAX_STEPS,
     WORKER_MAX_STEPS,
 )
@@ -54,6 +55,13 @@ VERIFY_PROMPT = (
     "Review the task using list_dir, file_read, search_files, and search_memory.\n"
     "Output: (1) Pass/Fail, (2) issues found, (3) suggested fixes.\n"
     "Do not modify files or spawn other agents."
+)
+
+PLAN_SUB_PROMPT = (
+    "You are a planning sub-agent for Lumina (read-only).\n"
+    "Survey the workspace with list_dir, file_read, search_files, and search_memory.\n"
+    "Produce a structured plan: goals, steps, risks, and what worker/explore should do next.\n"
+    "Do not modify files, run shell, or spawn other agents."
 )
 
 def list_archetype_names(lumina_dir: Path | None = None) -> list[str]:
@@ -101,6 +109,23 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
         )
     if normalized == "verify":
         return ArchetypeSpec(name="verify", max_steps=VERIFY_MAX_STEPS, system_prompt=VERIFY_PROMPT)
+    if normalized == "plan":
+        return ArchetypeSpec(
+            name="plan",
+            max_steps=PLAN_MAX_STEPS,
+            system_prompt=PLAN_SUB_PROMPT,
+            tool_names=frozenset(
+                {
+                    "list_dir",
+                    "file_read",
+                    "search_files",
+                    "search_memory",
+                    "web_search",
+                    "web_fetch",
+                    "session_search",
+                }
+            ),
+        )
     return None
 
 

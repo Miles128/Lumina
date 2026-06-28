@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.llm_config import LlmConfig
-from secretary.agent.loop import AgentLoop
+from secretary.agent.loop import AgentLoop, LoopResult
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.policy import (
@@ -27,6 +27,7 @@ from secretary.agent.subagent.registry import (
     list_archetype_names,
     resolve_tools,
 )
+from secretary.agent.subagent.resume import SubAgentResumeState
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.hermes_memory import HermesMemory
@@ -46,8 +47,14 @@ class SubAgentDeps:
 
 
 class SubAgentRunner:
-    def __init__(self, deps: SubAgentDeps) -> None:
+    def __init__(
+        self,
+        deps: SubAgentDeps,
+        *,
+        on_paused: Callable[[SubAgentResumeState], None] | None = None,
+    ) -> None:
         self._deps = deps
+        self._on_paused = on_paused
 
     def run_from_tool(
         self,
@@ -95,12 +102,15 @@ class SubAgentRunner:
                 message=f"正在派生子 Agent ({archetype})：{goal[:100]}",
                 sub_run_id=run_id,
                 archetype=archetype,
+                goal=goal[:200],
+                subagent_status="running",
             ),
         )
 
         tools = resolve_tools(archetype, self._deps)
         messages = build_messages(goal=goal, context=context, spec=spec)
         wrapped_progress = self._wrap_progress(progress_callback, run_id, archetype)
+        child_context = spawn_context.child_context()
 
         try:
             self._deps.hermes.create_session(child_session_id)
@@ -113,7 +123,16 @@ class SubAgentRunner:
                 progress_callback=wrapped_progress,
                 run_id=run_id,
                 archetype=archetype,
+                goal=goal,
+                context=context,
+                child_session_id=child_session_id,
+                spawn_context=child_context,
             )
+            if isinstance(summary, SubAgentResumeState):
+                return (
+                    f"子 Agent ({archetype}) 已暂停，等待确认：{summary.pending.description}"
+                )
+
             self._deps.hermes.add_message(child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
             self._deps.hermes.end_session(child_session_id, summary=summary[:200])
         except FuturesTimeoutError:
@@ -124,17 +143,94 @@ class SubAgentRunner:
             summary = f"Error: sub-agent failed: {exc}"
             success = False
         else:
-            success = not summary.startswith("Error:")
+            success = not str(summary).startswith("Error:")
 
         self._emit(
             progress_callback,
             ProgressEvent(
                 kind="subagent_finished",
                 iteration=0,
-                message=summary[:200],
+                message=str(summary)[:200],
                 sub_run_id=run_id,
                 archetype=archetype,
+                goal=goal[:200],
+                subagent_status="done" if success else "failed",
                 success=success,
+            ),
+        )
+        return str(summary)
+
+    def resume_paused(
+        self,
+        state: SubAgentResumeState,
+        working_dir: Path,
+        *,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
+    ) -> str:
+        """Continue a paused sub-agent after user confirmed a risky tool."""
+        tools = resolve_tools(state.archetype, self._deps)
+        wrapped = self._wrap_progress(progress_callback, state.run_id, state.archetype)
+        loop = AgentLoop(
+            state.llm_config,
+            tools=tools,
+            max_steps=state.max_steps,
+            file_auth=self._deps.file_auth,
+            progress_callback=wrapped,
+            working_dir=working_dir,
+        )
+        result = loop.resume_after_confirmation(
+            state.pending,
+            state.messages,
+            temperature=state.temperature,
+        )
+        if result.pending_confirmation and result.messages_snapshot is not None:
+            paused = SubAgentResumeState(
+                run_id=state.run_id,
+                archetype=state.archetype,
+                goal=state.goal,
+                context=state.context,
+                child_session_id=state.child_session_id,
+                parent_session_id=state.parent_session_id,
+                messages=result.messages_snapshot,
+                max_steps=state.max_steps,
+                working_dir=working_dir,
+                pending=result.pending_confirmation,
+                llm_config=state.llm_config,
+                temperature=state.temperature,
+                pending_step=result.pending_step,
+                steps_completed=result.total_steps,
+                used_tools=list(result.used_tools),
+            )
+            if self._on_paused is not None:
+                self._on_paused(paused)
+            self._emit(
+                progress_callback,
+                ProgressEvent(
+                    kind="subagent_paused",
+                    iteration=0,
+                    message=paused.pending.description,
+                    sub_run_id=state.run_id,
+                    archetype=state.archetype,
+                    goal=state.goal[:200],
+                    subagent_status="paused",
+                ),
+            )
+            return f"子 Agent ({state.archetype}) 仍需确认：{paused.pending.description}"
+
+        summary = format_subagent_result(result, run_id=state.run_id, archetype=state.archetype)
+        self._deps.hermes.add_message(state.child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
+        self._deps.hermes.end_session(state.child_session_id, summary=summary[:200])
+        self._emit(
+            progress_callback,
+            ProgressEvent(
+                kind="subagent_finished",
+                iteration=0,
+                message=summary[:200],
+                sub_run_id=state.run_id,
+                archetype=state.archetype,
+                goal=state.goal[:200],
+                subagent_status="done",
+                success=True,
             ),
         )
         return summary
@@ -149,7 +245,11 @@ class SubAgentRunner:
         progress_callback: Callable[[ProgressEvent], None] | None,
         run_id: str,
         archetype: str,
-    ) -> str:
+        goal: str = "",
+        context: str = "",
+        child_session_id: str = "",
+        spawn_context: SpawnContext | None = None,
+    ) -> str | SubAgentResumeState:
         loop = AgentLoop(
             self._deps.llm_config,
             tools=tools,
@@ -159,13 +259,50 @@ class SubAgentRunner:
             working_dir=working_dir,
         )
 
-        def _execute() -> str:
+        def _execute() -> LoopResult | SubAgentResumeState:
             result = loop.run(messages, temperature=self._deps.temperature)
-            return format_subagent_result(result, run_id=run_id, archetype=archetype)
+            if result.pending_confirmation and result.messages_snapshot is not None:
+                paused = SubAgentResumeState(
+                    run_id=run_id,
+                    archetype=archetype,
+                    goal=goal,
+                    context=context,
+                    child_session_id=child_session_id,
+                    parent_session_id=spawn_context.parent_session_id if spawn_context else "",
+                    messages=result.messages_snapshot,
+                    max_steps=max_steps,
+                    working_dir=working_dir,
+                    pending=result.pending_confirmation,
+                    llm_config=self._deps.llm_config,
+                    temperature=self._deps.temperature,
+                    pending_step=result.pending_step,
+                    steps_completed=result.total_steps,
+                    used_tools=list(result.used_tools),
+                )
+                if self._on_paused is not None:
+                    self._on_paused(paused)
+                self._emit(
+                    progress_callback,
+                    ProgressEvent(
+                        kind="subagent_paused",
+                        iteration=0,
+                        message=paused.pending.description,
+                        sub_run_id=run_id,
+                        archetype=archetype,
+                        goal=goal,
+                        subagent_status="paused",
+                    ),
+                )
+                return paused
+            return result
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(_execute)
-            return future.result(timeout=SUBAGENT_TIMEOUT_SEC)
+            outcome = future.result(timeout=SUBAGENT_TIMEOUT_SEC)
+
+        if isinstance(outcome, SubAgentResumeState):
+            return outcome
+        return format_subagent_result(outcome, run_id=run_id, archetype=archetype)
 
     def _check_policy(self, spawn_context: SpawnContext, archetype: str) -> str | None:
         if spawn_context.depth >= MAX_SPAWN_DEPTH:

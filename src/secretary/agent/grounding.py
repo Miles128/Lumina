@@ -31,7 +31,6 @@ _PERSONAL_MEMORY_MARKERS = (
     "书目",
     "书籍",
     "书《",
-    "记忆",
     "说过",
     "之前说",
     "上次",
@@ -46,6 +45,39 @@ _PERSONAL_MEMORY_MARKERS = (
     "再查",
     "重新找",
     "重新查",
+)
+
+_MEMORY_QUERY_MARKERS = (
+    "读取记忆",
+    "读取 shibei",
+    "读取 Shibei",
+    "记忆",
+    "搜索记忆",
+    "查记忆",
+    "我的记忆",
+    "本地记忆",
+    "根据记忆",
+    "记忆里",
+)
+
+_MEMORY_WRITE_MARKERS = (
+    "写入记忆",
+    "写到记忆",
+    "保存到记忆",
+    "加入记忆",
+    "添加到记忆",
+    "更新记忆",
+    "记到记忆",
+    "写入 memory",
+    "写入 MEMORY",
+    "更新 MEMORY",
+    "写入 USER",
+    "更新 USER",
+    "帮我记住",
+    "请记住",
+    "记一下",
+    "记下：",
+    "记下:",
 )
 
 _CHAT_HISTORY_EVIDENCE_MARKERS = (
@@ -186,10 +218,10 @@ UNGROUNDED_LISTING_FALLBACK = (
 )
 
 UNGROUNDED_MEMORY_FALLBACK = (
-    "我无法核实你的阅读或个人记录——本轮没有调用 search_memory / session_search，"
+    "我无法核实你的个人记录——本轮没有调用 shibei_search / search_memory / session_search，"
     "不能把对话里助手自己说过的话当成事实。\n"
-    "请点右上角「同步」导入微信读书等数据，或直接告诉我书名；"
-    "也可以说「搜索记忆里我读过的书」让我先查本地记忆库。"
+    "请说「搜索 Shibei 知识库：…」或「读取记忆：…」让我先检索；"
+    "若 Shibei 无结果，可尝试 shibei_import，或点右上角「同步」导入连接器数据（备选）。"
 )
 
 
@@ -252,12 +284,29 @@ def mentions_local_files(text: str) -> bool:
     return any(marker in cleaned for marker in file_talk)
 
 
-def is_personal_memory_question(message: str) -> bool:
+def is_memory_write_request(message: str) -> bool:
+    """User wants to persist facts via the memory tool — not query synced sources."""
     text = message.strip()
     if not text:
         return False
     lowered = text.lower()
-    return any(marker in text or marker in lowered for marker in _PERSONAL_MEMORY_MARKERS)
+    if any(marker in text or marker in lowered for marker in _MEMORY_WRITE_MARKERS):
+        return True
+    if text.startswith("记住") and not any(q in text for q in ("吗", "?", "？")):
+        return True
+    return False
+
+
+def is_personal_memory_question(message: str) -> bool:
+    text = message.strip()
+    if not text:
+        return False
+    if is_memory_write_request(text):
+        return False
+    lowered = text.lower()
+    if any(marker in text or marker in lowered for marker in _PERSONAL_MEMORY_MARKERS):
+        return True
+    return any(marker in text or marker in lowered for marker in _MEMORY_QUERY_MARKERS)
 
 
 def has_read_grounding(used_tools: list[str]) -> bool:

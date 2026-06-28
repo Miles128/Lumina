@@ -67,6 +67,30 @@ MAX_LOOP_STEPS = 12
 MAX_TOOL_OUTPUT_CHARS = 4000
 _PROGRESS_DETAIL_LIMIT = 320
 
+# Read / query tools never pause for user confirmation (Claude Code / OpenCode policy).
+_READ_ONLY_TOOL_NAMES = frozenset(
+    {
+        "list_dir",
+        "file_read",
+        "search_files",
+        "search_memory",
+        "session_search",
+        "web_search",
+        "web_fetch",
+        "shibei_search",
+        "shibei_list_sources",
+        "skills_list",
+        "skill_view",
+        "clarify",
+        "todo",
+        "browser_open",
+        "browser_snapshot",
+        "browser_click",
+        "browser_fill",
+        "browser_close",
+    }
+)
+
 
 def _progress_detail_preview(text: str, limit: int = _PROGRESS_DETAIL_LIMIT) -> str:
     cleaned = text.strip()
@@ -134,6 +158,10 @@ class LoopResult:
     used_tools: list[str]
     total_steps: int
     pending_confirmation: PendingConfirmation | None = None
+    pending_step: StepResult | None = None
+    messages_snapshot: list[dict[str, Any]] | None = None
+    pause_assistant_message: dict[str, Any] | None = None
+    pause_native_used: bool = False
     grounding_verified: bool = True
     grounding_note: str = ""
     files_read: list[str] = field(default_factory=list)
@@ -160,6 +188,7 @@ class AgentLoop:
         file_auth: FileAuthService | None = None,
         stop_hooks: list[StopHook] | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        on_subagent_paused: Callable[[Any], None] | None = None,
     ) -> None:
         self._llm_config = llm_config
         self._tools = {t.name: t for t in (tools or _default_tools())}
@@ -174,6 +203,7 @@ class AgentLoop:
         ]
         self._progress_callback = progress_callback
         self._native_tools_enabled = True
+        self._on_subagent_paused = on_subagent_paused
 
     def run(self, messages: list[dict[str, str]], temperature: float = 0.7) -> LoopResult:
         steps: list[StepResult] = []
@@ -479,16 +509,23 @@ class AgentLoop:
                     used_tools=used_tools,
                     total_steps=step_idx + 1,
                     pending_confirmation=pending,
+                    pending_step=step,
+                    messages_snapshot=list(current_messages),
                 )
 
             try:
                 args_detail = _tool_action_detail(tool, tool_call.arguments, self._working_dir)
+                thought_detail = _progress_detail_preview(thought) if thought.strip() else ""
+                if thought_detail and args_detail:
+                    combined_detail = f"{thought_detail}\n\n{args_detail}"
+                else:
+                    combined_detail = thought_detail or args_detail
                 self._emit_progress(
                     ProgressEvent(
                         kind="tool_started",
                         iteration=iteration,
                         tool_name=tool_call.name,
-                        detail=args_detail,
+                        detail=combined_detail,
                     )
                 )
                 if hasattr(tool, "bind_progress"):
@@ -520,6 +557,32 @@ class AgentLoop:
 
             if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
                 tool_output = tool_output[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+
+            if tool_call.name == "spawn_subagent" and hasattr(tool, "consume_paused"):
+                paused = tool.consume_paused()
+                if paused is not None and self._on_subagent_paused is not None:
+                    self._on_subagent_paused(paused)
+                    step = StepResult(
+                        thought=thought,
+                        tool_call=tool_call,
+                        tool_output=f"[Sub-agent paused for confirmation] {paused.pending.description}",
+                        needs_confirmation=True,
+                    )
+                    steps.append(step)
+                    return LoopResult(
+                        reply=(
+                            f"子 Agent ({paused.archetype}) 需要你的确认：\n\n"
+                            f"{paused.pending.description}\n\n是否允许？"
+                        ),
+                        steps=steps,
+                        used_tools=used_tools,
+                        total_steps=step_idx + 1,
+                        pending_confirmation=paused.pending,
+                        pending_step=step,
+                        messages_snapshot=list(current_messages),
+                        pause_assistant_message=assistant_message,
+                        pause_native_used=native_used,
+                    )
 
             step = StepResult(thought=thought, tool_call=tool_call, tool_output=tool_output)
             steps.append(step)
@@ -664,11 +727,80 @@ class AgentLoop:
             pending_confirmation=None,
         )
 
+    def resume_after_confirmation(
+        self,
+        pending: PendingConfirmation,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+    ) -> LoopResult:
+        """Execute a confirmed tool and continue the agent loop (Codex turn-resume)."""
+        tool = self._tools.get(pending.tool_name)
+        if tool is None:
+            return LoopResult(reply="Error: tool no longer available", steps=[], used_tools=[], total_steps=0)
+
+        try:
+            tool_output = tool.execute(pending.arguments, self._working_dir)
+        except Exception as exc:
+            tool_output = f"Error: {exc}"
+
+        if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
+            tool_output = tool_output[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+
+        continued = list(messages)
+        continued.append({
+            "role": "user",
+            "content": (
+                f"[User confirmed: {pending.description}]\n"
+                f"[Tool Result: {pending.tool_name}]\n{tool_output}"
+            ),
+        })
+        result = self.run(continued, temperature=temperature)
+        if pending.tool_name not in result.used_tools:
+            result.used_tools.insert(0, pending.tool_name)
+        return result
+
+    def resume_after_subagent_tool(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        thought: str,
+        tool_call: ToolCall,
+        tool_output: str,
+        assistant_message: dict[str, Any] | None,
+        native_used: bool,
+        step_idx: int,
+        temperature: float = 0.7,
+    ) -> LoopResult:
+        """Append a completed spawn_subagent result and continue the parent loop."""
+        current_messages = list(messages)
+        self._append_tool_result_messages(
+            current_messages,
+            raw=thought,
+            tool_call=tool_call,
+            tool_output=tool_output,
+            assistant_message=assistant_message,
+            native_used=native_used,
+            step_idx=step_idx,
+        )
+        result = self.run(current_messages, temperature=temperature)
+        if "spawn_subagent" not in result.used_tools:
+            result.used_tools.insert(0, "spawn_subagent")
+        return result
+
     def _requires_confirmation(
         self,
         tool: Tool,
         arguments: dict[str, Any],
     ) -> tuple[bool, str]:
+        if tool.name in _READ_ONLY_TOOL_NAMES:
+            return False, ""
+        if tool.name.startswith("mcp_"):
+            from secretary.agent.mcp_manager import mcp_tool_needs_confirmation
+
+            if not mcp_tool_needs_confirmation(tool.name):
+                return False, ""
+
         if tool.name == "file_write":
             path = _resolve_path(str(arguments.get("path", "")), self._working_dir)
             append = bool(arguments.get("append", False))
