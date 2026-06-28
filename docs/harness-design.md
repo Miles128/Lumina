@@ -74,7 +74,8 @@ Harness（灵犀专有）
 - [x] `SpawnContext.depth + 1` 硬限一层
 - [x] Shibei-first 读记忆路由（sync 备选）
 - [ ] Shibei 空结果 → 自动 import 或 UI 引导（v0.2 B1）
-- [ ] **`spawn_cli_agent`**：外接 Codex / Claude CLI（FR-30 C0）
+- [x] **`spawn_cli_agent` 核心**（FR-30 30a）：config store、subprocess 摘要、确认流、SSE 进度
+- [ ] CLI Agents 设置 UI（FR-30 30b）
 - [ ] Explore 便宜模型路由（Cursor 做法）
 - [ ] `~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent
 

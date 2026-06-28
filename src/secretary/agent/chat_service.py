@@ -38,7 +38,9 @@ from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
+from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
+from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
@@ -100,6 +102,7 @@ class ChatService:
         file_auth: FileAuthService | None = None,
         mcp_manager: McpManager | None = None,
         shibei_service: ShibeiService | None = None,
+        cli_agent_config_store: CliAgentConfigStore | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -128,6 +131,9 @@ class ChatService:
         self._turn_orchestrator = TurnOrchestrator(self._file_auth)
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
+        self._cli_agent_config_store = cli_agent_config_store or CliAgentConfigStore(
+            settings.resolved_data_dir() / "cli-agents.json",
+        )
 
     @property
     def hermes_memory(self) -> HermesMemory:
@@ -851,20 +857,32 @@ class ChatService:
         filesystem_turn = is_filesystem_question(cleaned)
         suggested = decision.intent.suggested_tools if decision.intent else ()
         spawn_tool = self._make_spawn_tool(llm_config, session_id)
+        cli_spawn_tool = self._make_cli_spawn_tool()
 
         if profile is AgentProfile.ORCHESTRATOR:
             base_tools = self._append_browser_tools(self._build_tools(), cleaned)
-            tools = resolve_parent_tools(profile, base_tools, spawn_tool=spawn_tool)
+            tools = resolve_parent_tools(
+                profile,
+                base_tools,
+                spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
+            )
             max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
         elif profile is AgentProfile.PLAN:
             base_tools = self._append_browser_tools(self._build_tools(), cleaned)
-            tools = resolve_parent_tools(profile, base_tools, spawn_tool=None)
+            tools = resolve_parent_tools(
+                profile,
+                base_tools,
+                spawn_tool=None,
+                cli_spawn_tool=None,
+            )
             max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
         elif filesystem_turn:
             tools = resolve_parent_tools(
                 AgentProfile.BUILD,
                 self._build_tools(),
                 spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
             )
             max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=True)
         elif light_mode:
@@ -872,6 +890,7 @@ class ChatService:
                 AgentProfile.BUILD,
                 self._pick_tools(suggested),
                 spawn_tool=None,
+                cli_spawn_tool=None,
             )
             max_steps = 3
         else:
@@ -880,6 +899,7 @@ class ChatService:
                 AgentProfile.BUILD,
                 base_tools,
                 spawn_tool=spawn_tool,
+                cli_spawn_tool=cli_spawn_tool,
             )
             max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=False)
 
@@ -1186,6 +1206,20 @@ class ChatService:
         tool = SpawnSubagentTool(deps, spawn_context)
         self._active_spawn_tool = tool
         return tool
+
+    def _make_cli_spawn_tool(self) -> SpawnCliAgentTool:
+        projects_dir: Path | None = None
+        raw = self._settings.projects_dir.strip()
+        if raw:
+            expanded = Path(raw).expanduser()
+            if expanded.is_dir():
+                projects_dir = expanded
+        runner = CliAgentRunner(
+            self._cli_agent_config_store,
+            projects_dir=projects_dir,
+            audit_dir=self._settings.resolved_data_dir() / "logs" / "cli-agent",
+        )
+        return SpawnCliAgentTool(runner, default_cwd=self._shell_working_dir())
 
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
         from secretary.agent.browser_tools import agent_browser_available

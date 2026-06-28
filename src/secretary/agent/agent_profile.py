@@ -79,12 +79,13 @@ def profile_system_appendix(profile: AgentProfile) -> str:
     if profile is AgentProfile.ORCHESTRATOR:
         return (
             "\n\n## Agent mode: Orchestrator\n"
-            "你不直接读改写文件或跑 shell；通过 spawn_subagent 委派 explore / worker / verify。"
-            "可并行 explore（goals 数组，最多 3 路）；整合子 Agent 摘要后回复用户。"
+            "你不直接读改写文件或跑 shell；通过 spawn_subagent 委派 explore / worker / verify，"
+            "或通过 spawn_cli_agent 委派 Codex / Claude CLI 等外进程处理重代码任务。"
+            "可并行 explore（goals 数组，最多 3 路）；整合子 Agent / CLI 摘要后回复用户。"
         )
     return (
         "\n\n## Agent mode: Build\n"
-        "默认执行模式：可读写的工具与子 Agent 委派均可用；危险操作需用户确认。"
+        "默认执行模式：可读写的工具、子 Agent 与 CLI Agent 委派均可用；危险操作需用户确认。"
     )
 
 
@@ -100,15 +101,21 @@ def resolve_parent_tools(
     tools: list[Tool],
     *,
     spawn_tool: Tool | None,
+    cli_spawn_tool: Tool | None = None,
 ) -> list[Tool]:
     """Filter parent-session tools by profile (OpenCode permission ruleset)."""
     by_name = {tool.name: tool for tool in tools}
 
-    if profile is AgentProfile.BUILD:
-        ordered = list(tools)
-        if spawn_tool is not None and spawn_tool.name not in by_name:
+    def _append_spawn_tools(ordered: list[Tool]) -> list[Tool]:
+        names = {tool.name for tool in ordered}
+        if spawn_tool is not None and spawn_tool.name not in names:
             ordered.append(spawn_tool)
+        if cli_spawn_tool is not None and cli_spawn_tool.name not in names:
+            ordered.append(cli_spawn_tool)
         return ordered
+
+    if profile is AgentProfile.BUILD:
+        return _append_spawn_tools(list(tools))
 
     if profile is AgentProfile.PLAN:
         picked: list[Tool] = []
@@ -125,12 +132,14 @@ def resolve_parent_tools(
     # Orchestrator: delegate-only primary (OpenCode Agent Orchestrator / Hermes orchestrator).
     picked = []
     for name in sorted(ORCHESTRATOR_TOOL_NAMES):
-        if name == "spawn_subagent":
+        if name in {"spawn_subagent", "spawn_cli_agent"}:
             continue
         if name in by_name:
             picked.append(by_name[name])
     if spawn_tool is not None:
         picked.append(spawn_tool)
+    if cli_spawn_tool is not None:
+        picked.append(cli_spawn_tool)
     return picked
 
 

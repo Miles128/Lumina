@@ -94,6 +94,7 @@ class McpManager:
         self._loaded = False
         self._loading = False
         self._last_error = ""
+        self._connection_fingerprint_cached: str | None = None
 
     @property
     def available(self) -> bool:
@@ -131,15 +132,20 @@ class McpManager:
         }
 
     def get_tools(self) -> list[Tool]:
-        self.ensure_loaded()
+        try:
+            self.ensure_loaded()
+        except Exception as exc:
+            logger.warning("MCP get_tools degraded: %s", exc)
+            self._record_error(f"get_tools: {exc}")
         return list(self._bridge_tools)
 
-    def reload(self) -> None:
+    def reload(self, *, force: bool = True) -> None:
         with self._lock:
             if self._loading:
                 return
+            if not force and self._loaded and not self._config_changed():
+                return
             self._loading = True
-            self._loaded = False
         try:
             self._run(self._async_reload())
         except Exception as exc:
@@ -149,13 +155,16 @@ class McpManager:
             with self._lock:
                 self._loading = False
                 self._loaded = True
+                if self._connection_fingerprint_cached is None:
+                    self._mark_connected()
 
     def ensure_loaded(self) -> None:
         with self._lock:
-            if self._loaded or self._loading:
+            if self._loaded and not self._config_changed():
+                return
+            if self._loading:
                 return
             self._loading = True
-            self._loaded = False
         try:
             self._run(self._async_reload())
         except Exception as exc:
@@ -165,6 +174,8 @@ class McpManager:
             with self._lock:
                 self._loading = False
                 self._loaded = True
+                if self._connection_fingerprint_cached is None:
+                    self._mark_connected()
 
     def call_tool(
         self,
@@ -202,38 +213,64 @@ class McpManager:
             logger.warning("MCP task timed out after %.0fs", timeout)
             raise RuntimeError(f"MCP 连接超时（{int(timeout)}s）") from exc
 
+    def _connection_fingerprint(self) -> str:
+        document = self._config_store.load()
+        parts: list[str] = []
+        for name in sorted(document.servers):
+            cfg = document.servers[name]
+            if not cfg.enabled or not cfg.command:
+                continue
+            parts.append(
+                "|".join(
+                    [
+                        name,
+                        cfg.command,
+                        " ".join(cfg.args),
+                        str(cfg.timeout),
+                        json.dumps(cfg.env, sort_keys=True, ensure_ascii=True),
+                    ]
+                )
+            )
+        return "\n".join(parts)
+
+    def _config_changed(self) -> bool:
+        return self._connection_fingerprint() != self._connection_fingerprint_cached
+
+    def _mark_connected(self) -> None:
+        self._connection_fingerprint_cached = self._connection_fingerprint()
+
     async def _async_reload(self) -> None:
         try:
             await self._async_shutdown()
-            self._bridge_tools = []
-            self._last_error = ""
-            if not _MCP_AVAILABLE:
-                self._last_error = "未安装 mcp 包"
-                return
-            document = self._config_store.load()
-            for name, config in document.servers.items():
-                if not config.enabled:
-                    continue
-                if config.command:
-                    try:
-                        await self._connect_stdio(name, config)
-                    except Exception as exc:
-                        logger.warning("MCP server %s failed: %s", name, exc)
-                        if self._last_error:
-                            self._last_error += f"; {name}: {exc}"
-                        else:
-                            self._last_error = f"{name}: {exc}"
-                    continue
-                if self._last_error:
-                    self._last_error += f"; {name}: 暂不支持 URL 传输"
-                else:
-                    self._last_error = f"{name}: 暂不支持 URL 传输"
         except Exception as exc:
-            logger.warning("MCP reload failed: %s", exc)
-            self._record_error(f"reload: {exc}")
-        finally:
-            with self._lock:
-                self._loaded = True
+            logger.warning("MCP shutdown during reload: %s", exc)
+            self._record_error(f"shutdown: {exc}")
+        self._bridge_tools = []
+        self._runtimes.clear()
+        self._last_error = ""
+        if not _MCP_AVAILABLE:
+            self._last_error = "未安装 mcp 包"
+            self._mark_connected()
+            return
+        document = self._config_store.load()
+        for name, config in document.servers.items():
+            if not config.enabled:
+                continue
+            if config.command:
+                try:
+                    await self._connect_stdio(name, config)
+                except Exception as exc:
+                    logger.warning("MCP server %s failed: %s", name, exc)
+                    if self._last_error:
+                        self._last_error += f"; {name}: {exc}"
+                    else:
+                        self._last_error = f"{name}: {exc}"
+                continue
+            if self._last_error:
+                self._last_error += f"; {name}: 暂不支持 URL 传输"
+            else:
+                self._last_error = f"{name}: 暂不支持 URL 传输"
+        self._mark_connected()
 
     async def _connect_stdio(self, name: str, config: McpServerConfig) -> None:
         assert StdioServerParameters is not None
@@ -308,8 +345,12 @@ class McpManager:
             logger.warning("MCP stack close failed: %s", exc)
 
     async def _async_shutdown(self) -> None:
-        for runtime in list(self._runtimes.values()):
-            await self._close_stack(runtime.stack)
+        for name, runtime in list(self._runtimes.items()):
+            try:
+                await self._close_stack(runtime.stack)
+            except Exception as exc:
+                logger.warning("MCP server %s shutdown failed: %s", name, exc)
+                self._record_error(f"{name} shutdown: {exc}")
         self._runtimes.clear()
 
 

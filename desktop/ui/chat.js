@@ -33,6 +33,7 @@
     hasTools: false,
     hasSubagent: false,
     hasNetwork: false,
+    hasThought: false,
     panelVisible: false,
   };
   /** @type {Map<string, {archetype: string, goal: string, status: string, tools: string[]}>} */
@@ -682,6 +683,7 @@
       hasTools: false,
       hasSubagent: false,
       hasNetwork: false,
+      hasThought: false,
       panelVisible: false,
     };
     subagentNodes.clear();
@@ -701,7 +703,8 @@
       progressSession.maxIteration > 0 ||
       progressSession.hasTools ||
       progressSession.hasNetwork ||
-      progressSession.hasSubagent
+      progressSession.hasSubagent ||
+      progressSession.hasThought
     );
   }
 
@@ -797,6 +800,13 @@
     );
   }
 
+  function createProgressDetailElement(detail) {
+    const detailEl = document.createElement("div");
+    detailEl.className = "progress-detail markdown";
+    detailEl.innerHTML = renderMarkdown(detail);
+    return detailEl;
+  }
+
   function createProgressListItem(event, label) {
     const item = document.createElement("li");
     const labelEl = document.createElement("div");
@@ -805,10 +815,7 @@
     item.appendChild(labelEl);
     const detail = String(event?.detail || "").trim();
     if (detail) {
-      const detailEl = document.createElement("pre");
-      detailEl.className = "progress-detail";
-      detailEl.textContent = detail;
-      item.appendChild(detailEl);
+      item.appendChild(createProgressDetailElement(detail));
     }
     const kind = String(event?.kind || "");
     if (isSubagentProgressEvent(event)) {
@@ -858,7 +865,9 @@
       kind === "tool_started" ||
       kind === "tool_finished" ||
       kind === "subagent_started" ||
-      kind === "subagent_finished"
+      kind === "subagent_finished" ||
+      kind === "cli_agent_started" ||
+      kind === "cli_agent_finished"
     ) {
       progressSession.hasTools = true;
     }
@@ -926,7 +935,7 @@
       kind === "subagent_started" ||
       (kind === "tool_started" && event?.tool_name === "spawn_subagent")
     ) {
-      clearStreamingBubble();
+      clearStreamingBubble({ saveToProgress: true });
       showTyping(true, label || t("chat.typing.subagent"));
     } else if (kind === "subagent_paused") {
       showTyping(true, label || t("chat.subagent.paused"));
@@ -937,7 +946,7 @@
       kind === "iteration_started" ||
       kind === "iteration_completed"
     ) {
-      clearStreamingBubble();
+      clearStreamingBubble({ saveToProgress: true });
       showTyping(true, label);
     }
     if (event?.kind === "done" && shouldShowProgressPanel()) {
@@ -981,7 +990,17 @@
     scrollChatToBottom();
   }
 
-  function clearStreamingBubble() {
+  function flushStreamingToProgress() {
+    const text = streamingText.trim();
+    if (!text) return;
+    progressSession.hasThought = true;
+    appendProgressItem({ kind: "thought", detail: text }, t("chat.progress.thought"));
+  }
+
+  function clearStreamingBubble(options = {}) {
+    if (options.saveToProgress) {
+      flushStreamingToProgress();
+    }
     if (streamingBubbleEl) {
       streamingBubbleEl.closest(".message")?.remove();
     }

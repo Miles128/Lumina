@@ -17,6 +17,10 @@ class _SpawnStub:
     name = "spawn_subagent"
 
 
+class _CliSpawnStub:
+    name = "spawn_cli_agent"
+
+
 def test_parse_agent_profile_defaults_to_build() -> None:
     assert parse_agent_profile(None) is AgentProfile.BUILD
     assert parse_agent_profile("unknown") is AgentProfile.BUILD
@@ -54,8 +58,37 @@ def test_orchestrator_profile_is_delegate_only(tmp_path) -> None:
     assert "shell" not in names
 
 
+def test_orchestrator_profile_includes_cli_spawn() -> None:
+    tools = [ClarifyTool()]
+    picked = resolve_parent_tools(
+        AgentProfile.ORCHESTRATOR,
+        tools,
+        spawn_tool=_SpawnStub(),
+        cli_spawn_tool=_CliSpawnStub(),
+    )
+    names = {tool.name for tool in picked}
+    assert names == {"clarify", "spawn_subagent", "spawn_cli_agent"}
+
+
+def test_plan_profile_excludes_cli_spawn() -> None:
+    tools = [ListDirTool(), ClarifyTool()]
+    picked = resolve_parent_tools(
+        AgentProfile.PLAN,
+        tools,
+        spawn_tool=_SpawnStub(),
+        cli_spawn_tool=_CliSpawnStub(),
+    )
+    names = {tool.name for tool in picked}
+    assert "spawn_cli_agent" not in names
+
+
 def test_build_profile_keeps_tools_and_spawn() -> None:
     tools = [ListDirTool(), FileReadTool()]
-    picked = resolve_parent_tools(AgentProfile.BUILD, tools, spawn_tool=_SpawnStub())
+    picked = resolve_parent_tools(
+        AgentProfile.BUILD,
+        tools,
+        spawn_tool=_SpawnStub(),
+        cli_spawn_tool=_CliSpawnStub(),
+    )
     names = {tool.name for tool in picked}
-    assert names == {"list_dir", "file_read", "spawn_subagent"}
+    assert names == {"list_dir", "file_read", "spawn_subagent", "spawn_cli_agent"}

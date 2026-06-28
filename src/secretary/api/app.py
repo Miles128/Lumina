@@ -33,6 +33,7 @@ from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
+from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
 from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (
@@ -382,6 +383,7 @@ def _init_services() -> dict[str, object]:
     file_auth = FileAuthService(settings.resolved_data_dir() / "file_auth.json")
     mcp_config_store = McpConfigStore(settings.resolved_data_dir() / "mcp.json")
     mcp_manager = McpManager(mcp_config_store)
+    cli_agent_config_store = CliAgentConfigStore(settings.resolved_data_dir() / "cli-agents.json")
     if settings.mcp_auto_filesystem:
         preferred_root: Path | None = None
         shell_raw = agent_config_store.load().shell_working_dir.strip()
@@ -402,6 +404,7 @@ def _init_services() -> dict[str, object]:
         file_auth=file_auth,
         mcp_manager=mcp_manager,
         shibei_service=shibei_service,
+        cli_agent_config_store=cli_agent_config_store,
     )
     workspace = KnowledgeWorkspace(settings.resolved_data_dir() / "workspace")
     workspace.ensure_layout()
@@ -415,6 +418,7 @@ def _init_services() -> dict[str, object]:
         "chat_service": chat_service,
         "mcp_manager": mcp_manager,
         "mcp_config_store": mcp_config_store,
+        "cli_agent_config_store": cli_agent_config_store,
         "shibei_config_store": shibei_config_store,
         "shibei_service": shibei_service,
         "progress_hub": progress_hub,
@@ -520,6 +524,12 @@ def _finish_progress(request: Request, trace_id: str) -> None:
 def mcp_status(request: Request) -> dict[str, object]:
     manager: McpManager = request.app.state.mcp_manager
     return manager.status()
+
+
+@app.get("/api/cli-agents/status")
+def cli_agents_status(request: Request) -> dict[str, object]:
+    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
+    return store.status()
 
 
 @app.post("/api/mcp/reload")

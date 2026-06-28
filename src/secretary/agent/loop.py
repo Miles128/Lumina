@@ -515,12 +515,17 @@ class AgentLoop:
 
             try:
                 args_detail = _tool_action_detail(tool, tool_call.arguments, self._working_dir)
+                thought_detail = _progress_detail_preview(thought) if thought.strip() else ""
+                if thought_detail and args_detail:
+                    combined_detail = f"{thought_detail}\n\n{args_detail}"
+                else:
+                    combined_detail = thought_detail or args_detail
                 self._emit_progress(
                     ProgressEvent(
                         kind="tool_started",
                         iteration=iteration,
                         tool_name=tool_call.name,
-                        detail=args_detail,
+                        detail=combined_detail,
                     )
                 )
                 if hasattr(tool, "bind_progress"):

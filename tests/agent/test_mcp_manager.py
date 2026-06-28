@@ -49,6 +49,31 @@ def test_ensure_loaded_marks_loaded_when_reload_fails(mcp_store) -> None:
     assert manager.get_tools() == []
 
 
+def test_ensure_loaded_skips_reload_when_config_unchanged(mcp_store) -> None:
+    manager = McpManager(mcp_store)
+    calls = {"count": 0}
+
+    def counting_run(coro, *, timeout=180):  # noqa: ANN001
+        calls["count"] += 1
+        manager._bridge_tools = []
+        manager._mark_connected()
+        return None
+
+    with patch.object(manager, "_run", side_effect=counting_run):
+        manager.ensure_loaded()
+        manager.ensure_loaded()
+        manager.reload(force=False)
+
+    assert calls["count"] == 1
+
+
+def test_get_tools_never_raises(mcp_store) -> None:
+    manager = McpManager(mcp_store)
+    with patch.object(manager, "ensure_loaded", side_effect=RuntimeError("boom")):
+        assert manager.get_tools() == []
+    assert "get_tools:" in manager.last_error
+
+
 def test_ensure_loaded_is_idempotent_under_concurrency(mcp_store) -> None:
     manager = McpManager(mcp_store)
     calls = {"count": 0}

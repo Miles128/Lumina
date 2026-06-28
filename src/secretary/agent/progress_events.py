@@ -13,6 +13,8 @@ ProgressKind = Literal[
     "subagent_started",
     "subagent_paused",
     "subagent_finished",
+    "cli_agent_started",
+    "cli_agent_finished",
     "final_reply",
     "stopped",
     "reply_start",
@@ -62,6 +64,7 @@ _TOOL_LABELS: dict[str, str] = {
     "skill_view": "查看技能",
     "clarify": "澄清问题",
     "spawn_subagent": "委派子任务",
+    "spawn_cli_agent": "委派 CLI Agent",
 }
 
 
@@ -76,6 +79,9 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"
+        if event.tool_name == "spawn_cli_agent":
+            provider = event.archetype or "CLI"
+            return prefix + f"正在运行 {provider} CLI Agent"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -88,6 +94,9 @@ def progress_event_label(event: ProgressEvent) -> str:
         status = "完成" if event.success else "失败"
         if event.tool_name == "spawn_subagent":
             return prefix + f"子 Agent 委派{status}"
+        if event.tool_name == "spawn_cli_agent":
+            provider = event.archetype or "CLI"
+            return prefix + f"{provider} CLI Agent {status}"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -107,6 +116,14 @@ def progress_event_label(event: ProgressEvent) -> str:
         status = "完成" if event.success else "失败"
         detail = event.message[:80] if event.message else f"子任务{status}"
         return prefix + detail
+    if event.kind == "cli_agent_started":
+        provider = event.archetype or "CLI"
+        return f"正在运行 {provider} CLI Agent"
+    if event.kind == "cli_agent_finished":
+        provider = event.archetype or "CLI"
+        status = "完成" if event.success else "失败"
+        detail = event.message[:80] if event.message else status
+        return f"{provider} CLI Agent {status}: {detail}"
     if event.kind == "final_reply":
         return prefix + "整理回复"
     if event.kind == "stopped":

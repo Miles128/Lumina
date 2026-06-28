@@ -491,16 +491,64 @@ html, body {
 .agent-progress .progress-detail {
   margin: 4px 0 0;
   padding: 6px 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
   word-break: break-word;
   color: var(--text-tertiary);
   background: var(--surface-muted, #f8f8f8);
   border-radius: 4px;
-  max-height: 72px;
+  max-height: 120px;
   overflow: auto;
+}
+
+.agent-progress .progress-detail.markdown {
+  font-family: inherit;
+  white-space: normal;
+}
+
+.agent-progress .progress-detail.markdown p,
+.agent-progress .progress-detail.markdown ul,
+.agent-progress .progress-detail.markdown ol,
+.agent-progress .progress-detail.markdown pre,
+.agent-progress .progress-detail.markdown blockquote {
+  margin: 0 0 6px;
+}
+
+.agent-progress .progress-detail.markdown p:last-child,
+.agent-progress .progress-detail.markdown ul:last-child,
+.agent-progress .progress-detail.markdown ol:last-child,
+.agent-progress .progress-detail.markdown pre:last-child,
+.agent-progress .progress-detail.markdown blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.agent-progress .progress-detail.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.agent-progress .progress-detail.markdown pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.agent-progress .progress-detail.markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.agent-progress .progress-detail.markdown a {
+  color: var(--accent, #2563eb);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .agent-progress li.is-subagent {
@@ -1016,6 +1064,26 @@ html, body {
 
 .mcp-server-list li {
   margin-bottom: 4px;
+}
+
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+  margin-left: -18px;
+  padding-left: 0;
+}
+
+.mcp-server-delete {
+  flex-shrink: 0;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+}
+
+.mcp-server-delete:hover {
+  color: var(--danger, #c0392b);
 }
 
 .mcp-tool-table-wrap {

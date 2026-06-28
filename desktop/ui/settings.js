@@ -771,7 +771,9 @@
   function renderAgentMcpPane() {
     const status = mcpStatus || {};
     const tools = Array.isArray(status.tools) ? status.tools : [];
-    const servers = Array.isArray(status.servers) ? status.servers : [];
+    const servers = (Array.isArray(status.servers) ? status.servers : []).filter(
+      (server) => server.enabled !== false,
+    );
     const configPath = status.config_path || "~/.lumina/mcp.json";
     const toolRows = tools.length
       ? tools
@@ -783,12 +785,22 @@
       : `<tr><td colspan="3" class="muted">暂无已连接的 MCP 工具</td></tr>`;
     const serverRows = servers.length
       ? servers
-          .map(
-            (server) =>
-              `<li><strong>${escapeHtml(server.name || "")}</strong> · ${server.connected ? "已连接" : "未连接"} · ${escapeHtml(server.transport || "stdio")}</li>`,
-          )
+          .map((server) => {
+            const name = server.name || "";
+            const statusText = server.enabled === false
+              ? t("settings.mcp.disabled")
+              : server.connected
+                ? t("settings.mcp.connected")
+                : t("settings.mcp.disconnected");
+            return (
+              `<li class="mcp-server-row">` +
+              `<span><strong>${escapeHtml(name)}</strong> · ${statusText} · ${escapeHtml(server.transport || "stdio")}</span>` +
+              `<button class="btn-text mcp-server-delete" type="button" data-mcp-delete="${escapeAttr(name)}" aria-label="${escapeAttr(t("settings.mcp.delete"))}">${escapeHtml(t("settings.mcp.delete"))}</button>` +
+              `</li>`
+            );
+          })
           .join("")
-      : "<li class=\"muted\">尚未配置 MCP 服务器</li>";
+      : `<li class="muted">${escapeHtml(t("settings.mcp.empty"))}</li>`;
 
     contentEl.innerHTML = `
       <div class="settings-pane">
@@ -846,6 +858,11 @@
     document.getElementById("btn-mcp-quickstart-fs")?.addEventListener("click", quickstartFilesystemMcp);
     document.getElementById("btn-import-mcp-hermes")?.addEventListener("click", importMcpFromHermes);
     document.getElementById("btn-reload-mcp")?.addEventListener("click", reloadMcp);
+    contentEl.querySelector(".mcp-server-list")?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-mcp-delete]");
+      if (!btn) return;
+      void deleteMcpServer(btn.getAttribute("data-mcp-delete"));
+    });
   }
 
   function renderAgentShibeiPane() {
@@ -1009,14 +1026,41 @@
 
   async function reloadMcp() {
     const feedback = document.getElementById("mcp-feedback");
-    showFeedback(feedback, "info", "正在重新连接 MCP…");
+    showFeedback(feedback, "info", t("settings.mcp.reloading"));
     try {
       mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/reload");
       renderNav();
       renderAgentMcpPane();
-      showFeedback(document.getElementById("mcp-feedback"), "success", `已加载 ${mcpStatus.tool_count || 0} 个 MCP 工具`);
+      showFeedback(
+        document.getElementById("mcp-feedback"),
+        "success",
+        t("settings.mcp.reloaded", { count: mcpStatus.tool_count || 0 }),
+      );
     } catch (error) {
-      showFeedback(feedback, "error", `连接失败：${error.message}`);
+      showFeedback(feedback, "error", t("settings.mcp.reloadFailed", { error: error.message }));
+    }
+  }
+
+  async function deleteMcpServer(name) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    const feedback = document.getElementById("mcp-feedback");
+    if (!window.confirm(t("settings.mcp.deleteConfirm", { name: trimmed }))) return;
+    showFeedback(feedback, "info", t("settings.mcp.deleting"));
+    try {
+      mcpStatus = await window.SecretaryAPI.request(
+        "DELETE",
+        `/api/mcp/servers/${encodeURIComponent(trimmed)}`,
+      );
+      renderNav();
+      renderAgentMcpPane();
+      showFeedback(
+        document.getElementById("mcp-feedback"),
+        "success",
+        t("settings.mcp.deleted", { name: trimmed }),
+      );
+    } catch (error) {
+      showFeedback(feedback, "error", t("settings.mcp.deleteFailed", { error: error.message }));
     }
   }
 

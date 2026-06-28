@@ -88,12 +88,22 @@ class McpConfigStore:
         self.save(document.model_copy(update={"servers": servers}))
 
     def remove_server(self, name: str) -> bool:
-        document = self.load_persisted()
-        if name not in document.servers:
+        full = self.load()
+        if name not in full.servers:
             return False
-        servers = dict(document.servers)
-        del servers[name]
-        self.save(document.model_copy(update={"servers": servers}))
+        persisted = self.load_persisted()
+        servers = dict(persisted.servers)
+        hermes_names = set(_load_hermes_servers()) if persisted.import_hermes else set()
+        if name in servers:
+            cfg = servers[name]
+            if name in hermes_names:
+                servers[name] = cfg.model_copy(update={"enabled": False})
+            else:
+                del servers[name]
+        else:
+            cfg = full.servers[name]
+            servers[name] = cfg.model_copy(update={"enabled": False})
+        self.save(persisted.model_copy(update={"servers": servers}))
         return True
 
     def import_from_hermes(self) -> int:
