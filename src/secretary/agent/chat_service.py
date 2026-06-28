@@ -20,6 +20,7 @@ from secretary.agent.agent_profile import (
     profile_system_appendix,
     resolve_parent_tools,
 )
+from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
@@ -38,9 +39,7 @@ from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
-from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
@@ -56,6 +55,7 @@ from secretary.memory.db import MemoryStore
 from secretary.memory.hermes_memory import HermesMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import BackgroundReviewService
+from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.profile_service import ProfileService
 from secretary.services.todo_store import TodoStore

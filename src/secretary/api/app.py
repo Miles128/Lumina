@@ -31,9 +31,9 @@ from secretary.memory.graph import GraphBuilder
 from secretary.memory.kb import KnowledgeWorkspace
 from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
+from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
 from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from secretary.agent.llm_config import LlmConfig
+from secretary.agent.subagent import SubAgentDeps
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import MAX_SPAWN_DEPTH
 from secretary.agent.subagent.runner import SubAgentRunner
-from secretary.agent.subagent import SubAgentDeps
-from secretary.agent.llm_config import LlmConfig
 from secretary.memory.db import MemoryStore
 from secretary.memory.hermes_memory import HermesMemory
 
