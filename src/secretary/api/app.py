@@ -166,6 +166,16 @@ class McpServerUpsertRequest(BaseModel):
     timeout: int = Field(default=120, ge=5, le=600)
 
 
+class CliAgentSettingsUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    provider: str | None = None
+    needs_confirmation: bool | None = None
+
+
+class CliProviderToggleRequest(BaseModel):
+    enabled: bool
+
+
 class BackgroundTasksResponse(BaseModel):
     think_enabled: bool
     think_interval_hours: int
@@ -530,6 +540,46 @@ def mcp_status(request: Request) -> dict[str, object]:
 def cli_agents_status(request: Request) -> dict[str, object]:
     store: CliAgentConfigStore = request.app.state.cli_agent_config_store
     return store.status()
+
+
+@app.put("/api/cli-agents/settings")
+def cli_agents_update_settings(
+    request: Request,
+    body: CliAgentSettingsUpdateRequest,
+) -> dict[str, object]:
+    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
+    try:
+        store.update_defaults(
+            enabled=body.enabled,
+            provider=body.provider,
+            needs_confirmation=body.needs_confirmation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return store.status()
+
+
+@app.put("/api/cli-agents/providers/{name}")
+def cli_agents_toggle_provider(
+    request: Request,
+    name: str,
+    body: CliProviderToggleRequest,
+) -> dict[str, object]:
+    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
+    try:
+        store.set_provider_enabled(name, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return store.status()
+
+
+@app.post("/api/cli-agents/providers/{name}/test")
+def cli_agents_test_provider(request: Request, name: str) -> dict[str, object]:
+    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
+    result = store.test_provider(name)
+    status = store.status()
+    status["test"] = result
+    return status
 
 
 @app.post("/api/mcp/reload")

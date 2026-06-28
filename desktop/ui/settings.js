@@ -19,6 +19,7 @@
   let durableUserMd = "";
   let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi" };
   let mcpStatus = null;
+  let cliAgentStatus = null;
   let shibeiConfig = null;
   let backgroundTasks = null;
 
@@ -60,13 +61,14 @@
 
   async function loadSettings() {
     contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
-    const [platformList, profile, config, soul, durable, mcp, shibei, background] = await Promise.all([
+    const [platformList, profile, config, soul, durable, mcp, cliAgents, shibei, background] = await Promise.all([
       window.SecretaryAPI.request("GET", "/api/settings/platforms"),
       window.SecretaryAPI.request("GET", "/api/profile"),
       window.SecretaryAPI.request("GET", "/api/agent/config"),
       window.SecretaryAPI.request("GET", "/api/agent/soul"),
       window.SecretaryAPI.request("GET", "/api/memory/durable"),
       window.SecretaryAPI.request("GET", "/api/mcp/status").catch(() => null),
+      window.SecretaryAPI.request("GET", "/api/cli-agents/status").catch(() => null),
       window.SecretaryAPI.request("GET", "/api/shibei/config").catch(() => null),
       window.SecretaryAPI.request("GET", "/api/agent/background").catch(() => null),
     ]);
@@ -77,6 +79,7 @@
     durableMemoryMd = durable.memory_md || "";
     durableUserMd = durable.user_md || "";
     mcpStatus = mcp;
+    cliAgentStatus = cliAgents;
     shibeiConfig = shibei;
     backgroundTasks = background;
     uiPreferences = loadUiPreferences();
@@ -86,7 +89,7 @@
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
-      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_shibei", "appearance"].includes(activeKey)
+      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_cli", "agent_shibei", "appearance"].includes(activeKey)
     ) {
       activeKey = "agent_llm";
     }
@@ -106,6 +109,11 @@
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
       { key: "agent_mcp", label: t("settings.mcp"), status: mcpStatus?.tool_count ? "ready" : "not_configured" },
+      {
+        key: "agent_cli",
+        label: t("settings.cliAgents"),
+        status: cliAgentStatus?.active ? "ready" : "not_configured",
+      },
       { key: "agent_shibei", label: t("settings.shibei"), status: shibeiConfig?.status || "not_configured" },
       { key: "appearance", label: t("settings.appearance"), status: "ready" },
     ]) {
@@ -172,6 +180,10 @@
     }
     if (key === "agent_mcp") {
       renderAgentMcpPane();
+      return;
+    }
+    if (key === "agent_cli") {
+      renderAgentCliPane();
       return;
     }
     if (key === "agent_shibei") {
@@ -865,6 +877,99 @@
     });
   }
 
+  function cliProviderLabel(name) {
+    const key = `settings.cli.provider.${name}`;
+    const label = t(key);
+    return label === key ? name : label;
+  }
+
+  function renderAgentCliPane() {
+    const status = cliAgentStatus || {};
+    const providers = Array.isArray(status.providers) ? status.providers : [];
+    const defaults = status.defaults || {};
+    const configPath = status.config_path || "~/.lumina/cli-agents.json";
+    const masterEnabled = Boolean(status.enabled);
+    const providerOptions = providers
+      .map(
+        (provider) =>
+          `<option value="${escapeAttr(provider.name)}"${defaults.provider === provider.name ? " selected" : ""}>${escapeHtml(cliProviderLabel(provider.name))}</option>`,
+      )
+      .join("");
+    const providerRows = providers.length
+      ? providers
+          .map((provider) => {
+            const name = provider.name || "";
+            const installLabel = provider.installed
+              ? t("settings.cli.installed")
+              : t("settings.cli.missing");
+            const installClass = provider.installed ? "ready" : "not_configured";
+            const cmdPreview = [provider.command, ...(provider.args || [])].join(" ").trim();
+            return (
+              `<li class="cli-provider-row">` +
+              `<label class="cli-provider-main settings-field-check">` +
+              `<input type="checkbox" data-cli-provider="${escapeAttr(name)}"${provider.enabled ? " checked" : ""}${masterEnabled ? "" : " disabled"} />` +
+              `<span><strong>${escapeHtml(cliProviderLabel(name))}</strong> · <span class="platform-status ${installClass}">${escapeHtml(installLabel)}</span></span>` +
+              `</label>` +
+              `<code class="cli-provider-cmd">${escapeHtml(cmdPreview)}</code>` +
+              `<button class="btn-text cli-provider-test" type="button" data-cli-test="${escapeAttr(name)}">${escapeHtml(t("settings.cli.test"))}</button>` +
+              `</li>`
+            );
+          })
+          .join("")
+      : "";
+
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <h3>${escapeHtml(t("settings.cliAgents"))}</h3>
+          <p>${escapeHtml(t("settings.cli.desc"))}</p>
+          <p class="platform-meta">配置文件：<code>${escapeHtml(configPath)}</code></p>
+        </header>
+        <p class="platform-meta">
+          <span class="platform-status ${status.active ? "ready" : "not_configured"}">${escapeHtml(status.active ? t("settings.cli.active") : t("settings.cli.inactive"))}</span>
+        </p>
+
+        <div class="settings-fields">
+          <label class="settings-field settings-field-check">
+            <input id="cli-master-enabled" type="checkbox"${masterEnabled ? " checked" : ""} />
+            <span>${escapeHtml(t("settings.cli.master"))}</span>
+          </label>
+          <label class="settings-field">
+            <span>${escapeHtml(t("settings.cli.defaultProvider"))}</span>
+            <select id="cli-default-provider"${masterEnabled ? "" : " disabled"}>${providerOptions}</select>
+          </label>
+        </div>
+
+        <h4 class="settings-subtitle">Providers</h4>
+        <ul class="cli-provider-list">${providerRows}</ul>
+
+        <div class="platform-actions">
+          <button class="btn-text save-btn" type="button" id="btn-save-cli-agents">${escapeHtml(t("settings.cli.save"))}</button>
+        </div>
+        <div id="cli-feedback" class="platform-feedback" hidden></div>
+      </div>
+    `;
+
+    document.getElementById("btn-save-cli-agents")?.addEventListener("click", saveCliAgentSettings);
+    document.getElementById("cli-master-enabled")?.addEventListener("change", (event) => {
+      const enabled = event.target.checked;
+      document.getElementById("cli-default-provider")?.toggleAttribute("disabled", !enabled);
+      contentEl.querySelectorAll("[data-cli-provider]").forEach((input) => {
+        input.toggleAttribute("disabled", !enabled);
+      });
+    });
+    contentEl.querySelector(".cli-provider-list")?.addEventListener("change", (event) => {
+      const input = event.target.closest("[data-cli-provider]");
+      if (!input) return;
+      void toggleCliProvider(input.getAttribute("data-cli-provider"), input.checked);
+    });
+    contentEl.querySelector(".cli-provider-list")?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-cli-test]");
+      if (!btn) return;
+      void testCliProvider(btn.getAttribute("data-cli-test"));
+    });
+  }
+
   function renderAgentShibeiPane() {
     const cfg = shibeiConfig || {};
     const sourcesText = (cfg.sources || []).join("\n");
@@ -1061,6 +1166,70 @@
       );
     } catch (error) {
       showFeedback(feedback, "error", t("settings.mcp.deleteFailed", { error: error.message }));
+    }
+  }
+
+  async function saveCliAgentSettings() {
+    const feedback = document.getElementById("cli-feedback");
+    const enabled = Boolean(document.getElementById("cli-master-enabled")?.checked);
+    const provider = document.getElementById("cli-default-provider")?.value || "codex";
+    try {
+      cliAgentStatus = await window.SecretaryAPI.request("PUT", "/api/cli-agents/settings", {
+        enabled,
+        provider,
+      });
+      renderNav();
+      renderAgentCliPane();
+      showFeedback(document.getElementById("cli-feedback"), "success", t("settings.cli.saved"));
+    } catch (error) {
+      showFeedback(feedback, "error", t("settings.cli.saveFailed", { error: error.message }));
+    }
+  }
+
+  async function toggleCliProvider(name, enabled) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    const feedback = document.getElementById("cli-feedback");
+    try {
+      cliAgentStatus = await window.SecretaryAPI.request(
+        "PUT",
+        `/api/cli-agents/providers/${encodeURIComponent(trimmed)}`,
+        { enabled: Boolean(enabled) },
+      );
+      renderNav();
+      const rowStatus = document.querySelector(`[data-cli-provider="${CSS.escape(trimmed)}"]`)
+        ?.closest(".cli-provider-row")
+        ?.querySelector(".platform-status");
+      if (rowStatus) {
+        rowStatus.className = `platform-status ${cliAgentStatus.active ? "ready" : "not_configured"}`;
+      }
+    } catch (error) {
+      showFeedback(feedback, "error", t("settings.cli.saveFailed", { error: error.message }));
+      renderAgentCliPane();
+    }
+  }
+
+  async function testCliProvider(name) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    const feedback = document.getElementById("cli-feedback");
+    showFeedback(feedback, "info", t("settings.cli.testing"));
+    try {
+      cliAgentStatus = await window.SecretaryAPI.request(
+        "POST",
+        `/api/cli-agents/providers/${encodeURIComponent(trimmed)}/test`,
+      );
+      const result = cliAgentStatus?.test || {};
+      showFeedback(
+        feedback,
+        result.ok ? "success" : "error",
+        result.ok
+          ? t("settings.cli.testOk", { message: result.message || trimmed })
+          : t("settings.cli.testFailed", { message: result.message || "unknown" }),
+      );
+      renderAgentCliPane();
+    } catch (error) {
+      showFeedback(feedback, "error", t("settings.cli.testFailed", { message: error.message }));
     }
   }
 

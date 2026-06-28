@@ -26,6 +26,7 @@ def cli_store(tmp_path):
             available_check="echo",
         ),
     )
+    store.update_defaults(enabled=True)
     return store
 
 

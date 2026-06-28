@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,15 +26,17 @@ class CliProviderConfig(BaseModel):
     command: str
     args: list[str] = Field(default_factory=list)
     prompt_mode: PromptMode = "argv_tail"
+    prompt_flag: str = ""
     timeout: int = Field(default=600, ge=30, le=3600)
     needs_confirmation: bool = True
-    enabled: bool = True
+    enabled: bool = False
     env: dict[str, str] = Field(default_factory=dict)
     available_check: str = ""
     summary: CliSummaryConfig = Field(default_factory=CliSummaryConfig)
 
 
 class CliAgentDefaults(BaseModel):
+    enabled: bool = False
     provider: str = "codex"
     needs_confirmation: bool = True
 
@@ -50,20 +54,16 @@ def default_providers() -> dict[str, CliProviderConfig]:
             prompt_mode="argv_tail",
             timeout=600,
             available_check="codex",
+            enabled=False,
         ),
-        "claude": CliProviderConfig(
-            command="claude",
-            args=["-p", "--output-format", "text"],
+        "kimi": CliProviderConfig(
+            command="kimi",
+            args=["-p", "--output-format", "text", "-y"],
             prompt_mode="argv_tail",
-            timeout=300,
-            available_check="claude",
-        ),
-        "opencode": CliProviderConfig(
-            command="opencode",
-            args=["run"],
-            prompt_mode="stdin",
+            prompt_flag="-p",
             timeout=600,
-            available_check="opencode",
+            available_check="kimi",
+            enabled=False,
         ),
     }
 
@@ -98,31 +98,49 @@ class CliAgentConfigStore:
             encoding="utf-8",
         )
 
+    def is_enabled(self) -> bool:
+        return self.load().defaults.enabled
+
     def get_provider(self, name: str) -> CliProviderConfig | None:
         document = self.load()
+        if not document.defaults.enabled:
+            return None
         cfg = document.providers.get(name)
         if cfg is None or not cfg.enabled:
             return None
         return cfg
+
+    def resolve_provider(self, name: str) -> CliProviderConfig | None:
+        """Return provider config even when globally disabled (for settings UI)."""
+        return self.load().providers.get(name)
+
+    @staticmethod
+    def provider_installed(cfg: CliProviderConfig) -> bool:
+        check = (cfg.available_check or cfg.command).strip()
+        return bool(check and shutil.which(check))
 
     def list_view(self) -> list[dict[str, object]]:
         document = self.load()
         rows: list[dict[str, object]] = []
         for name in sorted(document.providers):
             cfg = document.providers[name]
-            rows.append(
-                {
-                    "name": name,
-                    "enabled": cfg.enabled,
-                    "command": cfg.command,
-                    "args": cfg.args,
-                    "timeout": cfg.timeout,
-                    "needs_confirmation": cfg.needs_confirmation,
-                    "prompt_mode": cfg.prompt_mode,
-                    "available_check": cfg.available_check,
-                }
-            )
+            rows.append(self._provider_row(name, cfg))
         return rows
+
+    @classmethod
+    def _provider_row(cls, name: str, cfg: CliProviderConfig) -> dict[str, object]:
+        return {
+            "name": name,
+            "enabled": cfg.enabled,
+            "command": cfg.command,
+            "args": cfg.args,
+            "timeout": cfg.timeout,
+            "needs_confirmation": cfg.needs_confirmation,
+            "prompt_mode": cfg.prompt_mode,
+            "prompt_flag": cfg.prompt_flag,
+            "available_check": cfg.available_check,
+            "installed": cls.provider_installed(cfg),
+        }
 
     def upsert_provider(self, name: str, config: CliProviderConfig) -> None:
         if not _NAME_RE.match(name):
@@ -141,9 +159,87 @@ class CliAgentConfigStore:
         self.save(document.model_copy(update={"providers": providers}))
         return True
 
+    def update_defaults(
+        self,
+        *,
+        enabled: bool | None = None,
+        provider: str | None = None,
+        needs_confirmation: bool | None = None,
+    ) -> CliAgentDefaults:
+        document = self.load_persisted()
+        patch: dict[str, Any] = {}
+        if enabled is not None:
+            patch["enabled"] = enabled
+        if provider is not None:
+            if provider not in self.load().providers:
+                raise ValueError(f"未知 provider: {provider}")
+            patch["provider"] = provider
+        if needs_confirmation is not None:
+            patch["needs_confirmation"] = needs_confirmation
+        defaults = document.defaults.model_copy(update=patch)
+        self.save(document.model_copy(update={"defaults": defaults}))
+        return defaults
+
+    def set_provider_enabled(self, name: str, enabled: bool) -> CliProviderConfig:
+        document = self.load()
+        if name not in document.providers:
+            raise ValueError(f"未知 provider: {name}")
+        persisted = self.load_persisted()
+        providers = dict(persisted.providers)
+        base = document.providers[name]
+        if name in providers:
+            cfg = providers[name].model_copy(update={"enabled": enabled})
+        else:
+            cfg = base.model_copy(update={"enabled": enabled})
+        providers[name] = cfg
+        self.save(persisted.model_copy(update={"providers": providers}))
+        return cfg
+
+    def test_provider(self, name: str) -> dict[str, object]:
+        document = self.load()
+        cfg = document.providers.get(name)
+        if cfg is None:
+            return {"ok": False, "message": f"未知 provider: {name}"}
+        check = (cfg.available_check or cfg.command).strip()
+        path = shutil.which(check)
+        if not path:
+            return {"ok": False, "message": f"未找到 CLI：{check}（请安装并加入 PATH）"}
+        version_args = {
+            "codex": ["--version"],
+            "kimi": ["-V"],
+        }.get(name, ["--version"])
+        try:
+            completed = subprocess.run(
+                [cfg.command, *version_args],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            detail = (completed.stdout or completed.stderr or "").strip().splitlines()
+            snippet = detail[0][:120] if detail else f"exit {completed.returncode}"
+            ok = completed.returncode == 0
+            return {
+                "ok": ok,
+                "message": snippet if ok else f"CLI 返回非零退出码：{snippet}",
+                "path": path,
+            }
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "message": "检测超时", "path": path}
+        except OSError as exc:
+            return {"ok": False, "message": str(exc), "path": path}
+
     def status(self) -> dict[str, Any]:
+        document = self.load()
+        enabled_providers = [
+            row["name"]
+            for row in self.list_view()
+            if row["enabled"] and row["installed"]
+        ]
         return {
             "config_path": str(self._path),
+            "enabled": document.defaults.enabled,
+            "active": document.defaults.enabled and bool(enabled_providers),
             "providers": self.list_view(),
-            "defaults": self.load().defaults.model_dump(),
+            "defaults": document.defaults.model_dump(),
+            "enabled_providers": enabled_providers,
         }

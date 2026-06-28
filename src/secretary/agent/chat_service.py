@@ -1207,7 +1207,9 @@ class ChatService:
         self._active_spawn_tool = tool
         return tool
 
-    def _make_cli_spawn_tool(self) -> SpawnCliAgentTool:
+    def _make_cli_spawn_tool(self) -> SpawnCliAgentTool | None:
+        if not self._cli_agent_config_store.is_enabled():
+            return None
         projects_dir: Path | None = None
         raw = self._settings.projects_dir.strip()
         if raw:

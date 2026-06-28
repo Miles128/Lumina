@@ -49,6 +49,9 @@ class CliAgentRunner:
         if not goal:
             return "Error: spawn_cli_agent requires a non-empty goal."
 
+        if not self._config_store.is_enabled():
+            return "Error: 外接 CLI Agent 未启用。请在设置 → CLI Agents 中开启，或继续使用灵犀自有 Agent。"
+
         cfg = self._config_store.get_provider(provider)
         if cfg is None:
             known = ", ".join(sorted(self._config_store.load().providers))
@@ -156,6 +159,8 @@ class CliAgentRunner:
         stdin_text: str | None = None
         if cfg.prompt_mode == "stdin":
             stdin_text = prompt
+        elif cfg.prompt_flag:
+            argv = self._insert_prompt_after_flag(argv, prompt, cfg.prompt_flag)
         else:
             argv = [*argv, prompt]
 
@@ -187,6 +192,13 @@ class CliAgentRunner:
             timeout=timeout,
         )
         return completed.returncode, completed.stdout or "", completed.stderr or ""
+
+    @staticmethod
+    def _insert_prompt_after_flag(argv: list[str], prompt: str, flag: str) -> list[str]:
+        for index, arg in enumerate(argv):
+            if arg == flag:
+                return [*argv[: index + 1], prompt, *argv[index + 1 :]]
+        return [*argv, flag, prompt]
 
     @staticmethod
     def _kill_process_group(proc: subprocess.Popen[str]) -> None:

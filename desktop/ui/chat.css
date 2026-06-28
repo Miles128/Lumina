@@ -1086,6 +1086,38 @@ html, body {
   color: var(--danger, #c0392b);
 }
 
+.cli-provider-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.cli-provider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.cli-provider-main {
+  margin: 0;
+}
+
+.cli-provider-cmd {
+  grid-column: 1 / -1;
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.cli-provider-test {
+  justify-self: end;
+}
+
 .mcp-tool-table-wrap {
   border: 1px solid var(--line);
   border-radius: var(--radius);

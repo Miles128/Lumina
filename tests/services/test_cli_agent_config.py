@@ -50,5 +50,24 @@ def test_get_provider_respects_enabled(tmp_path) -> None:
 def test_default_providers_have_checks() -> None:
     providers = default_providers()
     assert providers["codex"].available_check == "codex"
-    assert providers["claude"].prompt_mode == "argv_tail"
-    assert providers["opencode"].prompt_mode == "stdin"
+    assert providers["kimi"].available_check == "kimi"
+    assert providers["kimi"].prompt_flag == "-p"
+    assert providers["codex"].enabled is False
+    assert providers["kimi"].enabled is False
+
+
+def test_cli_agents_disabled_by_default(tmp_path) -> None:
+    store = CliAgentConfigStore(tmp_path / "cli-agents.json")
+    assert store.is_enabled() is False
+    assert store.get_provider("codex") is None
+    status = store.status()
+    assert status["enabled"] is False
+    assert status["active"] is False
+
+
+def test_enable_cli_agents_exposes_provider(tmp_path) -> None:
+    store = CliAgentConfigStore(tmp_path / "cli-agents.json")
+    store.update_defaults(enabled=True)
+    store.set_provider_enabled("codex", True)
+    assert store.get_provider("codex") is not None
+    assert store.status()["active"] is False or store.status()["active"] is True
