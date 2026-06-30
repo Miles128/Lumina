@@ -169,7 +169,7 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
         "search_memory": SearchMemoryTool(deps.memory_store),
         "web_search": WebSearchTool(),
         "web_fetch": WebFetchTool(),
-        "session_search": SessionSearchTool(deps.hermes),
+        "session_search": SessionSearchTool(deps.memory),
         "file_write": FileWriteTool(),
         "patch": PatchTool(),
         "shell": ShellTool(),

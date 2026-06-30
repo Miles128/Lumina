@@ -73,6 +73,7 @@ Harness（灵犀专有）
 - [x] 子 Agent 确认后父 loop 续跑（Codex turn stack，一层）
 - [x] `SpawnContext.depth + 1` 硬限一层
 - [x] Shibei-first 读记忆路由（sync 备选）
+- [x] **Hermes runtime 解耦**：移除运行期对 `~/.hermes` 的主动依赖（mcp 自动合并、agent 回退、soul 回退、skills 扫描根）；仅保留「设置 → 一键从 Hermes 导入」入口（LLM/SOUL/Memory/MCP 串行导入），`HermesMemory` 重命名为 `LuminaMemory`
 - [ ] Shibei 空结果 → 自动 import 或 UI 引导（v0.2 B1）
 - [x] **`spawn_cli_agent` 核心**（FR-30 30a）：config store、subprocess 摘要、确认流、SSE 进度
 - [x] CLI Agents 设置 UI（FR-30 30b）：默认关闭、Codex + Kimi provider

@@ -93,12 +93,18 @@ def test_smoke_weread_empty_prompts_sync(client: TestClient, mock_llm_config: Ll
             item_count=0,
         )
     ]
+    shibei = client.app.state.shibei_service
     with patch.object(sync, "get_stored_health", return_value=health):
-        with patch("secretary.agent.chat_service.resolve_llm_config", return_value=mock_llm_config):
-            response = client.post(
-                "/api/chat",
-                json={"message": "我微信读书最近在读什么"},
-            )
+        with patch.object(shibei, "is_enabled", return_value=False):
+            with patch.object(shibei, "is_available", return_value=False):
+                with patch(
+                    "secretary.agent.chat_service.resolve_llm_config",
+                    return_value=mock_llm_config,
+                ):
+                    response = client.post(
+                        "/api/chat",
+                        json={"message": "我微信读书最近在读什么"},
+                    )
     assert response.status_code == 200
     payload = response.json()
     assert payload.get("route") == "sync_empty"

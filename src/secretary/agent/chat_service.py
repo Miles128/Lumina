@@ -1,4 +1,4 @@
-"""Hermes-style chat orchestration with Agent Loop."""
+"""Lumina chat orchestration with Agent Loop."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ from secretary.config import Settings
 from secretary.core.types import MemoryChunk
 from secretary.exceptions import AgentError
 from secretary.memory.db import MemoryStore
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import BackgroundReviewService
 from secretary.services.cli_agent_config import CliAgentConfigStore
@@ -114,9 +114,9 @@ class ChatService:
             settings.resolved_data_dir() / "file_auth.json",
         )
         self._history_path = settings.resolved_data_dir() / "chat_history.json"
-        self._hermes = HermesMemory(settings.resolved_data_dir())
+        self._memory = LuminaMemory(settings.resolved_data_dir())
         self._background_review = BackgroundReviewService(
-            self._hermes,
+            self._memory,
             profile_service=self._profile_service,
         )
         self._exec_skills = ExecutableSkillManager(settings.resolved_data_dir())
@@ -136,8 +136,8 @@ class ChatService:
         )
 
     @property
-    def hermes_memory(self) -> HermesMemory:
-        return self._hermes
+    def memory(self) -> LuminaMemory:
+        return self._memory
 
     @property
     def exec_skills(self) -> ExecutableSkillManager:
@@ -626,7 +626,7 @@ class ChatService:
     ) -> ChatResult:
         system_prompt = self._build_system_prompt(profile_markdown, hits)
         session_id = self._get_or_create_session_id()
-        self._hermes.create_session(session_id)
+        self._memory.create_session(session_id)
         self._save_to_session("user", cleaned)
 
         messages: list[dict[str, str]] = [
@@ -666,7 +666,7 @@ class ChatService:
             if progress_callback and stream_started:
                 progress_callback(ProgressEvent(kind="reply_end", iteration=1))
             reply, verified, note = self._prepare_user_reply(reply, cleaned, llm_config)
-            self._hermes.end_session(session_id, summary=reply[:200])
+            self._memory.end_session(session_id, summary=reply[:200])
             self._append_history(cleaned, reply)
             self._save_to_session("assistant", reply)
             self._background_review.schedule(cleaned, reply, llm_config)
@@ -724,7 +724,7 @@ class ChatService:
         from secretary.agent.web_research import WEB_RESEARCH_APPENDIX
 
         session_id = self._get_or_create_session_id()
-        self._hermes.create_session(session_id)
+        self._memory.create_session(session_id)
         self._save_to_session("user", cleaned)
 
         from secretary.agent.browser_tools import agent_browser_available
@@ -810,7 +810,7 @@ class ChatService:
             self._build_system_prompt(profile_markdown, hits) + profile_system_appendix(profile)
         )
         session_id = self._get_or_create_session_id()
-        self._hermes.create_session(session_id)
+        self._memory.create_session(session_id)
         self._save_to_session("user", cleaned)
 
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -1001,7 +1001,7 @@ class ChatService:
                 llm_config,
             )
 
-        self._hermes.end_session(session_id, summary=safe_reply[:200])
+        self._memory.end_session(session_id, summary=safe_reply[:200])
 
         if result.used_tools:
             episode_id = str(uuid.uuid4())[:8]
@@ -1013,7 +1013,7 @@ class ChatService:
                 }
                 for s in result.steps
             ]
-            self._hermes.save_episode(
+            self._memory.save_episode(
                 episode_id=episode_id,
                 task=cleaned[:500],
                 steps=steps_data,
@@ -1159,8 +1159,8 @@ class ChatService:
             SearchMemoryTool(self._store),
             WebSearchTool(),
             WebFetchTool(),
-            MemoryTool(self._hermes),
-            SessionSearchTool(self._hermes),
+            MemoryTool(self._memory),
+            SessionSearchTool(self._memory),
             FileWriteTool(),
             PatchTool(),
             FileDeleteTool(),
@@ -1199,7 +1199,7 @@ class ChatService:
             llm_config=llm_config,
             file_auth=self._file_auth,
             memory_store=self._store,
-            hermes=self._hermes,
+            memory=self._memory,
             lumina_dir=self._settings.resolved_data_dir(),
             temperature=min(self._temperature(), 0.5),
         )
@@ -1233,10 +1233,10 @@ class ChatService:
         memory_block = self._format_memory_block(hits)
         profile_block = profile_markdown.strip() or "暂无个人画像。用户尚未同步数据源。"
 
-        hermes_snapshot = self._hermes.prompt_snapshot()
-        hermes_section = ""
-        if hermes_snapshot:
-            hermes_section = f"\n\n## Persistent Memory\n{hermes_snapshot}"
+        memory_snapshot = self._memory.prompt_snapshot()
+        memory_section = ""
+        if memory_snapshot:
+            memory_section = f"\n\n## Persistent Memory\n{memory_snapshot}"
         shibei_section = ""
         if self._shibei_service is not None and self._shibei_service.is_enabled():
             view = self._shibei_service.status_view()
@@ -1273,7 +1273,7 @@ class ChatService:
             f"{profile_block[:6000]}\n\n"
             "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
             f"{memory_block}\n"
-            f"{hermes_section}"
+            f"{memory_section}"
             f"{shibei_section}\n\n"
             "## 对话规则\n"
             "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
@@ -1290,6 +1290,11 @@ class ChatService:
             "- 涉及本地文件、目录、代码内容时：必须先调用 list_dir / file_read / search_files 查证；"
             "未读到的不要说「有」或「内容是…」；找不到就明确说未找到\n"
             "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
+            "- 禁止在回复正文里贴 bash/pytest/npm/git/mdls 等命令及其输出，除非该命令确实通过 "
+            "shell 工具执行过；未通过 shell 工具执行的命令不得描述为「已执行/已运行/已通过/输出是…」；"
+            "shell 工具返回结果开头会带 `[receipt:<id>]`，凡在回复里声称执行过命令或引用命令输出，"
+            "必须在该句末标注 `[receipt:<id>]` 引用真实 receipt；禁止伪造 `$ cmd\\noutput`、"
+            "`===== N failed =====`、`exit code: N` 等会话输出\n"
             "- 记忆和画像里的片段不等于真实文件内容，不能当作文本引用\n"
             "- 需要执行操作时，使用 tool-call 调用工具\n"
             "- 实时信息（天气、新闻、股价、汇率、榜单等）必须先 web_search；"
@@ -1406,7 +1411,7 @@ class ChatService:
 
     def _save_to_session(self, role: str, content: str) -> None:
         session_id = self._get_or_create_session_id()
-        self._hermes.add_message(session_id, role, content)
+        self._memory.add_message(session_id, role, content)
 
 
 @dataclass(frozen=True)

@@ -210,6 +210,54 @@ _SIMULATED_DRWX = re.compile(r"^[-drwxl]{10}\s+\d+\s+", re.MULTILINE)
 _TREE_LINE = re.compile(r"^[├└│──]")
 _FAKE_DIR_HEADER = re.compile(r"^📂\s+/", re.MULTILINE)
 
+# --- Command execution receipt system ---
+# Receipts bind prose claims ("我跑了 pytest") to real shell tool calls.
+_RECEIPT_TAG = re.compile(r"\[receipt:([^\]\s]+)\]")
+# Stripping also eats preceding whitespace so we don't leave "text , end".
+_RECEIPT_TAG_STRIP = re.compile(r"\s*\[receipt:[^\]\s]+\]")
+# Fake shell session: `$ <cmd>` lines (exclude `$ ls` which is handled by file listing detection)
+_SIMULATED_SHELL_PROMPT = re.compile(r"^\s*\$\s+(?!ls\b)\S", re.MULTILINE)
+_SIMULATED_PYTEST = re.compile(
+    r"={3,}\s*\d+\s*(?:failed|passed|error)s?[^=\n]*={3,}", re.MULTILINE
+)
+_SIMULATED_EXIT_CODE = re.compile(r"\[?exit\s*code:\s*-?\d+\]?", re.IGNORECASE)
+_SIMULATED_NO_OUTPUT = re.compile(r"^\(no output\)\s*$", re.MULTILINE)
+_SIMULATED_BUILD = re.compile(
+    r"(?i)(?:build|compiled|tests?)\s+(?:successful|succeeded|completed|passed)"
+)
+
+_COMMAND_CLAIM_MARKERS = (
+    # Shell-output specific — always require a receipt when present.
+    "测试通过", "测试失败", "构建成功", "构建失败",
+    "已经install", "已经 install",
+    "已经npm", "已经 npm",
+    "已经git", "已经 git",
+    "已经pip", "已经 pip",
+    "刚才git", "刚才 git",
+    "刚才pip", "刚才 pip",
+    "exit code", "exit_code",
+    "build passed", "tests passed", "build succeeded", "build failed",
+)
+
+# Generic claim verb + shell command name → require a receipt.
+# Read-only commands handled by file grounding (ls/cat/find/grep/rg/tree/head/tail)
+# are excluded to avoid false-positiving on list_dir / file_read claims.
+_COMMAND_NAME_CLAIM = re.compile(
+    r"(?:我跑了|我执行了|我跑了一下|我执行了下|已执行|已运行|刚才跑过|刚刚跑过|"
+    r"I\s+ran|I\s+executed)"
+    r"[^。\n]{0,30}?"
+    r"(?:pytest|npm|git|pip|docker|make|cargo|node|python|ruby|yarn|pnpm|brew|mdls|"
+    r"tsc|webpack|vite|rollup|esbuild|swc|jest|vitest|mocha|tox|ruff|black|mypy|"
+    r"shell|bash|zsh|subprocess)",
+    re.IGNORECASE,
+)
+
+_COMMAND_SUGGESTION_MARKERS = (
+    "你可以跑", "建议执行", "不妨试试", "你可以试",
+    "要不要", "试试看", "可以尝试", "你可以执行",
+    "上次跑", "之前跑", "上次执行", "之前执行",
+)
+
 UNGROUNDED_LISTING_FALLBACK = (
     "我无法确认该目录下的真实文件名——本轮没有成功调用 list_dir / file_read / search_files，"
     "或工具结果不足以支撑当前回答。\n"
@@ -222,6 +270,13 @@ UNGROUNDED_MEMORY_FALLBACK = (
     "不能把对话里助手自己说过的话当成事实。\n"
     "请说「搜索 Shibei 知识库：…」或「读取记忆：…」让我先检索；"
     "若 Shibei 无结果，可尝试 shibei_import，或点右上角「同步」导入连接器数据（备选）。"
+)
+
+UNGROUNDED_COMMAND_FALLBACK = (
+    "我并没有实际执行该命令——本轮没有通过 shell 工具调用它，"
+    "或在回复里未标注真实的 receipt ID。\n"
+    "请明确说「执行：<命令>」，我会通过 shell 工具调用后再给你真实输出；"
+    "若只是想看输出示例，请说明，我不会把它当成已执行的结果。"
 )
 
 
@@ -239,6 +294,22 @@ class VerificationResult:
     ok: bool
     unverified_paths: tuple[str, ...] = ()
     note: str = ""
+
+
+@dataclass
+class CommandEvidence:
+    """Receipts of shell commands actually executed this turn.
+
+    `shell_receipts` maps tool_call.id -> the executed command string, so the
+    verifier can confirm that a prose claim like "我跑了 pytest [receipt:call_shell_3]"
+    references a real shell tool call from this turn.
+    """
+
+    shell_receipts: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def receipt_ids(self) -> set[str]:
+        return set(self.shell_receipts.keys())
 
 
 def is_filesystem_question(message: str) -> bool:
@@ -519,6 +590,109 @@ def reply_injects_lumina_identity_as_project_author(reply: str) -> bool:
     )
 
 
+# --- Command execution receipt helpers ---
+
+
+def reply_simulates_command_execution(reply: str) -> bool:
+    """Detect fake shell session output (pytest banners, exit codes, build status, `$ cmd`)."""
+    text = reply.strip()
+    if not text:
+        return False
+    if _SIMULATED_SHELL_PROMPT.search(text):
+        return True
+    if _SIMULATED_PYTEST.search(text):
+        return True
+    if _SIMULATED_EXIT_CODE.search(text):
+        return True
+    if _SIMULATED_NO_OUTPUT.search(text):
+        return True
+    if _SIMULATED_BUILD.search(text):
+        return True
+    return False
+
+
+def reply_claims_command_execution(reply: str) -> bool:
+    """Detect prose claims of having run a command (excludes suggestions/history).
+
+    Catches either:
+    - Shell-output markers (pytest passed / build succeeded / exit code / already npm)
+    - Generic claim verb + shell command name (我跑了 pytest / I ran npm)
+    """
+    text = reply.strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(m in text or m in lowered for m in _COMMAND_SUGGESTION_MARKERS):
+        return False
+    if any(m in text or m in lowered for m in _COMMAND_CLAIM_MARKERS):
+        return True
+    return bool(_COMMAND_NAME_CLAIM.search(text))
+
+
+def reply_claims_or_simulates_command_execution(reply: str) -> bool:
+    return reply_simulates_command_execution(reply) or reply_claims_command_execution(reply)
+
+
+def extract_receipt_refs(reply: str) -> set[str]:
+    """Extract all [receipt:<id>] tags from reply."""
+    return {m for m in _RECEIPT_TAG.findall(reply)}
+
+
+def strip_receipt_tags(reply: str) -> str:
+    """Remove [receipt:<id>] tags for user-facing display."""
+    return _RECEIPT_TAG_STRIP.sub("", reply).strip()
+
+
+def collect_command_evidence(steps: list[Any]) -> CommandEvidence:
+    """Collect real shell tool call receipts (id -> command) from this turn's steps."""
+    evidence = CommandEvidence()
+    for step in steps:
+        tool_call = getattr(step, "tool_call", None)
+        if tool_call is None:
+            continue
+        name = str(getattr(tool_call, "name", "") or "")
+        if name != "shell":
+            continue
+        call_id = str(getattr(tool_call, "id", "") or "").strip()
+        if not call_id:
+            continue
+        arguments = getattr(tool_call, "arguments", {}) or {}
+        command = str(arguments.get("command", "") or "").strip()
+        evidence.shell_receipts[call_id] = command
+    return evidence
+
+
+def verify_command_receipts(
+    reply: str,
+    evidence: CommandEvidence,
+) -> VerificationResult:
+    """Verify command execution claims are backed by real shell receipts.
+
+    Returns ok=False if the reply claims/simulates command execution but either:
+    - cites no receipt at all, or
+    - cites a receipt id that doesn't exist in this turn's shell calls.
+    """
+    if not reply_claims_or_simulates_command_execution(reply):
+        return VerificationResult(ok=True)
+    refs = extract_receipt_refs(reply)
+    if not refs:
+        return VerificationResult(
+            ok=False,
+            note=(
+                "回复声称执行了命令，但未引用任何 receipt ID；"
+                "请通过 shell 工具执行后，在对应声明末尾标注 [receipt:<id>]"
+            ),
+        )
+    unknown = refs - evidence.receipt_ids
+    if unknown:
+        preview = ", ".join(sorted(unknown)[:3])
+        return VerificationResult(
+            ok=False,
+            note=f"引用了不存在的 receipt ID: {preview}；请仅引用本轮 shell 工具返回的 receipt",
+        )
+    return VerificationResult(ok=True)
+
+
 def enforce_grounded_reply(
     reply: str,
     user_message: str,
@@ -526,8 +700,24 @@ def enforce_grounded_reply(
     *,
     grounding_verified: bool,
     grounding_note: str,
+    command_evidence: CommandEvidence | None = None,
 ) -> tuple[str, bool, str]:
-    """Replace hallucinated directory listings when tools were not used."""
+    """Replace hallucinated directory listings when tools were not used.
+
+    Also enforces command-execution receipts: if the reply claims/simulates
+    running a shell command, it must cite a real `[receipt:<id>]` from this turn.
+    """
+    # Command receipt enforcement runs first — shell claims are not filesystem
+    # questions and would otherwise slip through the early return below.
+    if command_evidence is not None and reply_claims_or_simulates_command_execution(reply):
+        refs = extract_receipt_refs(reply)
+        if not refs or (refs - command_evidence.receipt_ids):
+            note = grounding_note or "回复声称执行命令但未引用真实 receipt，已拦截"
+            return UNGROUNDED_COMMAND_FALLBACK, False, note
+
+    # Strip receipt tags for user-facing display (verification already done above).
+    reply = strip_receipt_tags(reply)
+
     if has_web_grounding(used_tools):
         return reply, True, grounding_note or "已通过 web_search / web_fetch 联网核实"
 
@@ -609,7 +799,16 @@ def verify_reply_against_evidence(
     reply: str,
     evidence: ReadEvidence,
     user_message: str,
+    *,
+    command_evidence: CommandEvidence | None = None,
 ) -> VerificationResult:
+    # Command receipt check runs for ALL questions, not just filesystem —
+    # shell execution claims (e.g. "我跑了 pytest") are not fs questions.
+    if command_evidence is not None:
+        cmd_result = verify_command_receipts(reply, command_evidence)
+        if not cmd_result.ok:
+            return cmd_result
+
     if not is_filesystem_question(user_message):
         return VerificationResult(ok=True)
 
@@ -662,7 +861,32 @@ def should_retry_for_verification(verification: VerificationResult) -> bool:
     return not verification.ok
 
 
-def format_verify_retry(verification: VerificationResult, evidence: ReadEvidence) -> str:
+def format_verify_retry(
+    verification: VerificationResult,
+    evidence: ReadEvidence,
+    *,
+    command_evidence: CommandEvidence | None = None,
+) -> str:
+    # Command-receipt failures get a tailored retry prompt listing real receipts.
+    if command_evidence is not None and "receipt" in verification.note.lower():
+        if command_evidence.shell_receipts:
+            receipts = "\n".join(
+                f"- [receipt:{rid}]: {cmd}"
+                for rid, cmd in sorted(command_evidence.shell_receipts.items())[:6]
+            )
+        else:
+            receipts = "（本轮未执行任何 shell 命令）"
+        return (
+            f"[System] 回复二次验证未通过：{verification.note}\n"
+            f"本轮真实 shell receipt：\n{receipts}\n"
+            "要求：\n"
+            "- 凡声称执行过 shell 命令或引用命令输出的句子，必须在该句末标注 [receipt:<id>]，"
+            "<id> 是上方列出的真实 receipt 编号\n"
+            "- 未通过 shell 工具执行的命令，禁止描述为「已执行/已运行/输出是/测试通过」\n"
+            "- 禁止伪造 shell 会话输出（如 `$ cmd\\noutput`、`===== N failed =====`、`exit code: N`）\n"
+            "- 若确实需要执行命令，请通过 shell 工具调用\n"
+            "请重写回答。"
+        )
     read_list = "、".join(sorted(evidence.read_files | evidence.search_hits)[:6]) or "（无）"
     listed = "、".join(sorted(evidence.listed_names)[:6]) or "（无）"
     return (

@@ -1,4 +1,4 @@
-"""Tests for Hermes P0 tools."""
+"""Tests for Lumina P0 tools."""
 
 from __future__ import annotations
 

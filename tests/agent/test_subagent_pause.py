@@ -11,7 +11,7 @@ from secretary.agent.loop import AgentLoop
 from secretary.agent.subagent import SpawnContext, SubAgentDeps
 from secretary.agent.subagent.spawn_tool import SpawnSubagentTool
 from secretary.memory.db import MemoryStore
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 
 
 def _llm_config() -> LlmConfig:
@@ -29,7 +29,7 @@ def _deps(tmp_path: Path) -> SubAgentDeps:
         llm_config=_llm_config(),
         file_auth=None,
         memory_store=store,
-        hermes=HermesMemory(tmp_path),
+        memory=LuminaMemory(tmp_path),
     )
 
 

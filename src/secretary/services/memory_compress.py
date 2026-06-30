@@ -8,10 +8,10 @@ from collections.abc import Callable
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
-from secretary.memory.hermes_memory import (
+from secretary.memory.lumina_memory import (
     MEMORY_MD_MAX_CHARS,
     USER_MD_MAX_CHARS,
-    HermesMemory,
+    LuminaMemory,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ _COMPRESS_SYSTEM = """你是持久记忆压缩器。将下面的记忆文本压�
 
 
 class MemoryCompressionService:
-    def __init__(self, hermes: HermesMemory) -> None:
-        self._hermes = hermes
+    def __init__(self, memory: LuminaMemory) -> None:
+        self._memory = memory
 
     def compress_if_needed(self, llm_config: LlmConfig | None) -> bool:
         if llm_config is None:
@@ -36,15 +36,15 @@ class MemoryCompressionService:
         changed = False
         changed |= self._compress_target(
             llm_config,
-            read=self._hermes.read_memory_md,
-            write=self._hermes.write_memory_md,
+            read=self._memory.read_memory_md,
+            write=self._memory.write_memory_md,
             max_chars=MEMORY_MD_MAX_CHARS,
             label="MEMORY.md",
         )
         changed |= self._compress_target(
             llm_config,
-            read=self._hermes.read_user_md,
-            write=self._hermes.write_user_md,
+            read=self._memory.read_user_md,
+            write=self._memory.write_user_md,
             max_chars=USER_MD_MAX_CHARS,
             label="USER.md",
         )

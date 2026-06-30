@@ -30,7 +30,7 @@ from secretary.agent.subagent.registry import (
 from secretary.agent.subagent.resume import SubAgentResumeState
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class SubAgentDeps:
     llm_config: LlmConfig
     file_auth: FileAuthService | None
     memory_store: MemoryStore
-    hermes: HermesMemory
+    memory: LuminaMemory
     lumina_dir: Path | None = None
     temperature: float = 0.3
 
@@ -113,8 +113,8 @@ class SubAgentRunner:
         child_context = spawn_context.child_context()
 
         try:
-            self._deps.hermes.create_session(child_session_id)
-            self._deps.hermes.add_message(child_session_id, "user", goal[:MAX_MESSAGE_LEN])
+            self._deps.memory.create_session(child_session_id)
+            self._deps.memory.add_message(child_session_id, "user", goal[:MAX_MESSAGE_LEN])
             summary = self._run_child_loop(
                 messages=messages,
                 tools=tools,
@@ -133,8 +133,8 @@ class SubAgentRunner:
                     f"子 Agent ({archetype}) 已暂停，等待确认：{summary.pending.description}"
                 )
 
-            self._deps.hermes.add_message(child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
-            self._deps.hermes.end_session(child_session_id, summary=summary[:200])
+            self._deps.memory.add_message(child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
+            self._deps.memory.end_session(child_session_id, summary=summary[:200])
         except FuturesTimeoutError:
             summary = f"Error: sub-agent timed out after {SUBAGENT_TIMEOUT_SEC}s."
             success = False
@@ -218,8 +218,8 @@ class SubAgentRunner:
             return f"子 Agent ({state.archetype}) 仍需确认：{paused.pending.description}"
 
         summary = format_subagent_result(result, run_id=state.run_id, archetype=state.archetype)
-        self._deps.hermes.add_message(state.child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
-        self._deps.hermes.end_session(state.child_session_id, summary=summary[:200])
+        self._deps.memory.add_message(state.child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
+        self._deps.memory.end_session(state.child_session_id, summary=summary[:200])
         self._emit(
             progress_callback,
             ProgressEvent(

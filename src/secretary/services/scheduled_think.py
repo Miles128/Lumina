@@ -11,7 +11,7 @@ from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import re_search_json_fence
 from secretary.services.profile_service import ProfileService
@@ -34,7 +34,7 @@ class ScheduledThinkService:
     def __init__(
         self,
         settings: Settings,
-        hermes: HermesMemory,
+        hermes: LuminaMemory,
         profile_service: ProfileService,
         agent_config_store: AgentConfigStore,
     ) -> None:

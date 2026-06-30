@@ -1,4 +1,4 @@
-"""Persistent agent / LLM configuration (Hermes-compatible)."""
+"""Persistent agent / LLM configuration for Lumina."""
 
 from __future__ import annotations
 
@@ -49,7 +49,6 @@ class AgentConfigDocument(BaseModel):
     model: str = "deepseek-chat"
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_history_turns: int = Field(default=16, ge=2, le=64)
-    use_hermes_fallback: bool = False
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
     agent_profile: str = Field(default="build", pattern="^(build|plan|orchestrator)$")
     shell_working_dir: str = ""
@@ -64,7 +63,6 @@ class AgentConfigView:
     model: str
     temperature: float
     max_history_turns: int
-    use_hermes_fallback: bool
     response_style: str
     agent_profile: str
     shell_working_dir: str
@@ -136,7 +134,6 @@ class AgentConfigStore:
             model=normalize_model_name(hermes.model),
             temperature=current.temperature,
             max_history_turns=current.max_history_turns,
-            use_hermes_fallback=current.use_hermes_fallback,
             response_style=current.response_style,
         )
         self.save(document)
@@ -154,18 +151,14 @@ class AgentConfigStore:
         resolved = resolve_effective_llm_config(settings, self)
         if resolved is None:
             status = "not_configured"
-            message = "请填写 API Key 并测试连接，或开启 Hermes 配置回退"
+            message = "请填写 API Key 并测试连接，或点击『从 Hermes 导入』"
         else:
             status = "ready"
             source_label = {
                 "local": "灵犀本地配置",
                 "env": ".env 环境变量",
-                "hermes": "Hermes（.env / config）",
             }.get(resolved.source, resolved.source)
-            hint = ""
-            if resolved.source == "hermes":
-                hint = " · 已从 ~/.hermes/.env 读取真实 Key"
-            message = f"当前使用 {source_label} · 模型 {resolved.model}{hint}"
+            message = f"当前使用 {source_label} · 模型 {resolved.model}"
         return AgentConfigView(
             provider=document.provider,
             api_key=document.api_key,
@@ -174,7 +167,6 @@ class AgentConfigStore:
             model=document.model,
             temperature=document.temperature,
             max_history_turns=document.max_history_turns,
-            use_hermes_fallback=document.use_hermes_fallback,
             response_style=document.response_style,
             agent_profile=document.agent_profile,
             shell_working_dir=document.shell_working_dir,
@@ -203,15 +195,6 @@ def resolve_effective_llm_config(
             model=normalize_model_name(settings.llm_model.strip() or "deepseek-chat"),
             source="env",
         )
-    if document.use_hermes_fallback:
-        hermes = load_hermes_llm_config()
-        if hermes:
-            return LlmConfig(
-                api_key=hermes.api_key,
-                base_url=hermes.base_url,
-                model=normalize_model_name(hermes.model),
-                source="hermes",
-            )
     return None
 
 

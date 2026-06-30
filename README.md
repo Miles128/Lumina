@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  Electron · FastAPI · self-built agent harness · Shibei KB · Hermes memory
+  Electron · FastAPI · self-built agent harness · Shibei KB · Lumina durable memory
 </p>
 
 ---
@@ -32,13 +32,13 @@
 |------|------|
 | **对话 Agent** | 自研 `AgentLoop`：读/写文件、Shell、联网、MCP；高风险操作需确认 |
 | **Shibei 知识库（主）** | 直连 Shibei `config.yaml` + `~/.shibei/db`；`shibei_search` 读个人笔记/文档；**无需先同步** |
-| **知识库页** | `workspace` 路由：浏览索引、搜索、预览（设置 → Shibei 同源） |
-| **连接器同步（备选）** | 飞书、微信读书、小红书、邮箱等 → Lumina SQLite → `search_memory` |
+| **知识库页** | `workspace` 路由：浏览 Shibei 索引、搜索、预览（设置 → Shibei 同源） |
+| **连接器同步（备选）** | 飞书、微信读书、小红书、邮箱等 → Lumina SQLite → `search_memory`；旧 `/api/kb/*` workspace 仅 legacy 手动导出 |
 | **Sub-agent** | `explore` / `worker` / `verify` + 自定义 md；暂停/恢复；进度树 UI |
-| **CLI Agent（规划）** | **`spawn_cli_agent`** 外接 codex/claude 等 CLI — [FR-30](docs/PRD.md) |
+| **CLI Agent** | **`spawn_cli_agent`** 外接 codex/kimi 等 CLI；核心与设置 UI 已落地，provider 集成继续推进 — [FR-30](docs/PRD.md) |
 | **Agent 模式** | `build` / `plan` / `orchestrator`（设置 → 大模型） |
 | **防幻觉 Grounding** | 文件/记忆类回答需工具佐证；Verified / Unverified 标记 |
-| **持久记忆** | Hermes `MEMORY.md` / `USER.md`；`memory` 工具写入 |
+| **持久记忆** | Lumina `MEMORY.md` / `USER.md`；`memory` 工具写入 |
 | **联网 / 天气** | `web_search`（多引擎降级）+ 桌面定位 |
 | **Chat Markdown** | `markdown-it` + DOMPurify 渲染助手回复 |
 | **技能 & MCP** | 本地技能；stdio MCP 扩展 |
@@ -87,7 +87,7 @@ cp .env.example .env
 # LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 ```
 
-或编辑 `~/.lumina/agent.json`。默认只用灵犀配置；Hermes 密钥需显式 `"use_hermes_fallback": true`。
+或编辑 `~/.lumina/agent.json`。仅使用灵犀自己的配置；如需迁移，可在「设置 → 大模型」点击「一键从 Hermes 导入全部」。
 
 ### 3. 配置 Shibei（推荐）
 
@@ -134,7 +134,6 @@ cd desktop && npm run pack
 
 ```json
 {
-  "import_hermes": true,
   "servers": {
     "filesystem": {
       "command": "npx",
@@ -220,8 +219,8 @@ CI：`.github/workflows/ci.yml`（Python 3.11 / 3.12）
 | 版本 | 说明 |
 |------|------|
 | `v0.1.1` | 已发布：E2E、Shibei tools、sync empty |
-| `feat/logo-subagent-grounding` | 待合入 → **v0.1.2**：子 Agent pause、KB UI、Shibei-first 路由、Markdown |
-| **v0.2** | 见 [PRD §12](docs/PRD.md) Sprint B–D；**FR-30 `spawn_cli_agent`** 外接 CLI |
+| `v0.1.2` | 已发布：子 Agent pause、KB UI、Shibei-first 路由、Markdown、Hermes runtime 解耦 |
+| **v0.2** | 见 [PRD §12](docs/PRD.md) Sprint B–D；Shibei 空结果 UX、会话 v2、CLI provider 集成、打包体验 |
 
 ---
 

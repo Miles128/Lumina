@@ -36,7 +36,6 @@
               <button id="btn-skills" type="button" data-i18n="menu.skills">技能</button>
               <button id="btn-platforms" type="button" data-i18n="menu.settings">设置</button>
               <button id="btn-kb" type="button" data-i18n="menu.knowledge">知识库</button>
-              <button id="btn-sync" type="button" data-i18n="menu.sync">同步</button>
               <button id="btn-about" type="button" data-i18n="menu.about">关于</button>
             </nav>
           </div>
@@ -65,7 +64,12 @@
       <div class="workspace">
         <aside class="chat-sidebar">
           <div class="chat-sidebar-head">
-            <button id="btn-new-thread" type="button" data-i18n="chat.newThread">新对话</button>
+            <button id="btn-new-thread" type="button" class="new-thread-btn" title="新对话 (Ctrl+N)" data-i18n-title="chat.newThread" data-i18n-aria="chat.newThread">
+              <svg class="new-thread-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              <span class="new-thread-label" data-i18n="chat.newThread">新对话</span>
+            </button>
           </div>
           <nav id="thread-list" class="thread-list"></nav>
         </aside>
@@ -99,6 +103,28 @@
 
           <footer class="composer-wrap">
             <form id="chat-form" class="composer">
+              <div class="agent-mode-picker" id="agent-mode-picker">
+                <button type="button" class="agent-mode-btn" id="agent-mode-btn" aria-haspopup="listbox" aria-expanded="false" title="Agent 模式">
+                  <span class="agent-mode-label" id="agent-mode-label">Build</span>
+                  <svg class="agent-mode-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6"/>
+                  </svg>
+                </button>
+                <ul class="agent-mode-menu" id="agent-mode-menu" role="listbox" hidden>
+                  <li role="option" data-mode="build">
+                    <strong>Build · 执行</strong>
+                    <span>可读写工具 + 子 Agent 委派</span>
+                  </li>
+                  <li role="option" data-mode="plan">
+                    <strong>Plan · 规划</strong>
+                    <span>只读分析，不改文件不跑 shell</span>
+                  </li>
+                  <li role="option" data-mode="orchestrator">
+                    <strong>Orchestrator · 编排</strong>
+                    <span>仅委派子 Agent / CLI Agent</span>
+                  </li>
+                </ul>
+              </div>
               <textarea
                 id="chat-input"
                 rows="1"

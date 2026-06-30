@@ -1,4 +1,4 @@
-"""Post-turn memory review (Hermes background_review pattern)."""
+"""Post-turn memory review (Lumina background_review pattern)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.memory_compress import MemoryCompressionService
 
 if TYPE_CHECKING:
@@ -46,12 +46,12 @@ class ReviewDecision:
 class BackgroundReviewService:
     def __init__(
         self,
-        hermes: HermesMemory,
+        memory: LuminaMemory,
         profile_service: ProfileService | None = None,
     ) -> None:
-        self._hermes = hermes
+        self._memory = memory
         self._profile_service = profile_service
-        self._compress = MemoryCompressionService(hermes)
+        self._compress = MemoryCompressionService(memory)
         self._lock = threading.Lock()
 
     def schedule(self, user_message: str, assistant_reply: str, llm_config: LlmConfig | None) -> None:
@@ -76,7 +76,7 @@ class BackgroundReviewService:
             decision = self._classify(user_message, assistant_reply, llm_config)
             if decision.action == "none":
                 return
-            self._hermes.mutate_memory(
+            self._memory.mutate_memory(
                 decision.action,
                 decision.target,
                 text=decision.text,
@@ -105,7 +105,7 @@ class BackgroundReviewService:
         assistant_reply: str,
         llm_config: LlmConfig,
     ) -> ReviewDecision:
-        snapshot = self._hermes.prompt_snapshot() or "(empty)"
+        snapshot = self._memory.prompt_snapshot() or "(empty)"
         raw = chat_completion(
             llm_config,
             [
@@ -126,7 +126,7 @@ class BackgroundReviewService:
     def apply_decision_for_tests(self, decision: ReviewDecision) -> None:
         if decision.action == "none":
             return
-        self._hermes.mutate_memory(
+        self._memory.mutate_memory(
             decision.action,
             decision.target,
             text=decision.text,

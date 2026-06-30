@@ -61,7 +61,6 @@ class SyncService:
             results.append(self.sync_source(connector.source))
         results.append(self.sync_source(SourceKind.LOCAL_DOCUMENTS))
         self._persist_profile()
-        self.export_kb_from_memory()
         self._maybe_import_shibei()
         return results
 
@@ -190,6 +189,7 @@ class SyncService:
         service.persist_after_sync()
 
     def export_kb_from_memory(self) -> int:
+        """Legacy manual export from Lumina SQLite chunks to the old workspace."""
         workspace = KnowledgeWorkspace(self._settings.resolved_data_dir() / "workspace")
         chunks: list[MemoryChunk] = []
         for source in SourceKind:

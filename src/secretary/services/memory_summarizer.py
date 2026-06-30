@@ -12,7 +12,7 @@ from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore
 
 logger = logging.getLogger(__name__)
@@ -28,11 +28,11 @@ class MemorySummarizerService:
     def __init__(
         self,
         settings: Settings,
-        hermes: HermesMemory,
+        memory: LuminaMemory,
         agent_config_store: AgentConfigStore,
     ) -> None:
         self._settings = settings
-        self._hermes = hermes
+        self._memory = memory
         self._agent_config_store = agent_config_store
         self._state_path = settings.resolved_data_dir() / _STATE_FILE
 
@@ -49,7 +49,7 @@ class MemorySummarizerService:
         if llm_config is None:
             raise AgentError("未配置大模型，无法生成记忆摘要")
 
-        recent = self._hermes.recent_session_messages(limit=60)
+        recent = self._memory.recent_session_messages(limit=60)
         if not recent:
             summary = "暂无近期对话，跳过摘要。"
             self._save_state(summary)
@@ -94,7 +94,7 @@ class MemorySummarizerService:
         }
 
     def _upsert_memory_summary(self, summary: str) -> None:
-        current = self._hermes.read_memory_md()
+        current = self._memory.read_memory_md()
         block = f"{_SUMMARY_HEADER}\n\n{summary.strip()}\n"
         if _SUMMARY_HEADER in current:
             updated = re.sub(
@@ -105,7 +105,7 @@ class MemorySummarizerService:
             )
         else:
             updated = (block + "\n" + current).strip() + "\n"
-        self._hermes.write_memory_md(updated[:8000])
+        self._memory.write_memory_md(updated[:8000])
 
     def _load_state(self) -> dict[str, object]:
         if not self._state_path.exists():

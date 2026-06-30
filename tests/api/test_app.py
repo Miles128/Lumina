@@ -47,14 +47,18 @@ def test_kb_tree_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert "topics" in payload
+    assert payload["legacy_workspace"] is True
 
 
 def test_kb_note_update_endpoint() -> None:
     client = TestClient(app)
     rebuild = client.post("/api/kb/rebuild")
     assert rebuild.status_code == 200
+    assert rebuild.json()["legacy_workspace"] is True
 
-    notes = client.get("/api/kb/notes").json()["notes"]
+    notes_payload = client.get("/api/kb/notes").json()
+    assert notes_payload["legacy_workspace"] is True
+    notes = notes_payload["notes"]
     if not notes:
         return
 

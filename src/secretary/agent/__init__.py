@@ -1,1 +1,1 @@
-"""Hermes-inspired agent core for 灵犀."""
+"""Lumina agent core for 灵犀."""

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +23,6 @@ class McpServerConfig(BaseModel):
 
 
 class McpConfigDocument(BaseModel):
-    import_hermes: bool = True
     servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
@@ -37,16 +35,11 @@ class McpConfigStore:
         return self._path
 
     def load(self) -> McpConfigDocument:
-        payload: dict[str, Any] = {}
-        if self._path.exists():
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
-        document = McpConfigDocument.model_validate(payload)
-        if document.import_hermes:
-            merged = dict(document.servers)
-            for name, config in _load_hermes_servers().items():
-                merged.setdefault(name, config)
-            document = document.model_copy(update={"servers": merged})
-        return document
+        """Load persisted config. Hermes is never auto-merged; use import_from_hermes()."""
+        if not self._path.exists():
+            return McpConfigDocument()
+        payload = json.loads(self._path.read_text(encoding="utf-8"))
+        return McpConfigDocument.model_validate(payload)
 
     def save(self, document: McpConfigDocument) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,11 +49,7 @@ class McpConfigStore:
         )
 
     def load_persisted(self) -> McpConfigDocument:
-        """Load only what is stored on disk (no Hermes merge)."""
-        if not self._path.exists():
-            return McpConfigDocument()
-        payload = json.loads(self._path.read_text(encoding="utf-8"))
-        return McpConfigDocument.model_validate(payload)
+        return self.load()
 
     def list_view(self) -> list[dict[str, object]]:
         document = self.load()
@@ -88,27 +77,17 @@ class McpConfigStore:
         self.save(document.model_copy(update={"servers": servers}))
 
     def remove_server(self, name: str) -> bool:
-        full = self.load()
-        if name not in full.servers:
+        document = self.load()
+        if name not in document.servers:
             return False
-        persisted = self.load_persisted()
-        servers = dict(persisted.servers)
-        hermes_names = set(_load_hermes_servers()) if persisted.import_hermes else set()
-        if name in servers:
-            cfg = servers[name]
-            if name in hermes_names:
-                servers[name] = cfg.model_copy(update={"enabled": False})
-            else:
-                del servers[name]
-        else:
-            cfg = full.servers[name]
-            servers[name] = cfg.model_copy(update={"enabled": False})
-        self.save(persisted.model_copy(update={"servers": servers}))
+        servers = dict(document.servers)
+        del servers[name]
+        self.save(document.model_copy(update={"servers": servers}))
         return True
 
     def import_from_hermes(self) -> int:
         """Copy Hermes mcp_servers into Lumina config (Lumina entries win)."""
-        document = self.load_persisted()
+        document = self.load()
         hermes = _load_hermes_servers()
         if not hermes:
             return 0
@@ -120,7 +99,7 @@ class McpConfigStore:
             servers[name] = config
             added += 1
         if added:
-            self.save(document.model_copy(update={"servers": servers, "import_hermes": True}))
+            self.save(document.model_copy(update={"servers": servers}))
         return added
 
     def add_filesystem_server(self, root: Path) -> bool:

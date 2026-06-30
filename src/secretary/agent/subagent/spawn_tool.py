@@ -19,7 +19,7 @@ class SpawnSubagentTool(Tool):
         "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
         "Archetypes: explore (read-only), worker (read/write), verify (review), plan (read-only planning). "
-        "Optional goals[] runs up to 3 explore tasks in parallel (Hermes batch)."
+        "Optional goals[] runs up to 3 explore tasks in parallel (Lumina batch)."
     )
     needs_confirmation = False
     risk_level = "low"

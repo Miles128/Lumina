@@ -8,7 +8,8 @@ import logging
 import os
 import re
 import threading
-from concurrent.futures import CancelledError
+from collections.abc import Callable, Coroutine
+from concurrent.futures import CancelledError, Future
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -147,7 +148,7 @@ class McpManager:
                 return
             self._loading = True
         try:
-            self._run(self._async_reload())
+            self._run(self._async_reload)
         except Exception as exc:
             logger.warning("MCP reload failed: %s", exc)
             self._record_error(f"reload: {exc}")
@@ -166,7 +167,7 @@ class McpManager:
                 return
             self._loading = True
         try:
-            self._run(self._async_reload())
+            self._run(self._async_reload)
         except Exception as exc:
             logger.warning("MCP ensure_loaded failed: %s", exc)
             self._record_error(f"load: {exc}")
@@ -186,13 +187,13 @@ class McpManager:
         timeout: int,
     ) -> str:
         return self._run(  # type: ignore[no-any-return]
-            self._async_call_tool(server_name, tool_name, arguments),
+            lambda: self._async_call_tool(server_name, tool_name, arguments),
             timeout=timeout + 5,
         )
 
     def shutdown(self) -> None:
         try:
-            self._run(self._async_shutdown(), timeout=10)
+            self._run(self._async_shutdown, timeout=10)
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
@@ -202,8 +203,14 @@ class McpManager:
         else:
             self._last_error = message
 
-    def _run(self, coro: Any, *, timeout: float = 180) -> Any:
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+    def _run(
+        self,
+        coro_factory: Callable[[], Coroutine[Any, Any, Any]],
+        *,
+        timeout: float = 180,
+    ) -> Any:
+        coro = coro_factory()
+        future: Future[Any] = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
             return future.result(timeout=timeout)
         except CancelledError as exc:

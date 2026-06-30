@@ -18,7 +18,7 @@ MEMORY_MD_MAX_CHARS = 2200
 USER_MD_MAX_CHARS = 1375
 
 
-class HermesMemory:
+class LuminaMemory:
     def __init__(self, data_dir: Path, session_db: Path | None = None) -> None:
         self._data_dir = data_dir
         self._memories_dir = data_dir / "memories"
@@ -123,6 +123,34 @@ class HermesMemory:
         if len(content) > USER_MD_MAX_CHARS:
             content = content[:USER_MD_MAX_CHARS]
         self.user_md_path.write_text(content + "\n", encoding="utf-8")
+
+    def import_from_hermes(self) -> dict[str, str]:
+        """One-shot import of MEMORY.md and USER.md from ~/.hermes/ into Lumina.
+
+        Looks for files at both top-level and `memories/` nested paths.
+        First existing file per target wins; overwrites Lumina's copy.
+        Returns dict mapping target key ("memory_md" / "user_md") to imported path.
+        """
+        hermes_root = Path.home() / ".hermes"
+        candidates: list[tuple[Path, Path, str]] = [
+            (hermes_root / "MEMORY.md", self.memory_md_path, "memory_md"),
+            (hermes_root / "memories" / "MEMORY.md", self.memory_md_path, "memory_md"),
+            (hermes_root / "USER.md", self.user_md_path, "user_md"),
+            (hermes_root / "memories" / "USER.md", self.user_md_path, "user_md"),
+        ]
+        imported: dict[str, str] = {}
+        for src, dst, key in candidates:
+            if key in imported:
+                continue
+            if not src.exists():
+                continue
+            text = src.read_text(encoding="utf-8").strip()
+            if not text:
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(text + "\n", encoding="utf-8")
+            imported[key] = str(src)
+        return imported
 
     def prompt_snapshot(self) -> str:
         memory = self.read_memory_md()

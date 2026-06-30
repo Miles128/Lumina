@@ -1,4 +1,4 @@
-"""Primary agent profiles (OpenCode / Claude Code / Hermes patterns, Lumina runtime).
+"""Primary agent profiles (OpenCode / Claude Code / Lumina patterns, Lumina runtime).
 
 Permissions are enforced by filtering the tool list before the model sees it —
 not by prompt alone (OpenCode permission ruleset).

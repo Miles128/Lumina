@@ -1,5 +1,4 @@
 {
-  "import_hermes": true,
   "servers": {
     "filesystem": {
       "command": "npx",

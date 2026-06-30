@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.tools.base import Tool
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 
 
 class SearchMemoryTool(Tool):
@@ -52,8 +52,8 @@ class MemoryTool(Tool):
     needs_confirmation = False
     risk_level = "low"
 
-    def __init__(self, hermes: HermesMemory) -> None:
-        self._hermes = hermes
+    def __init__(self, memory: LuminaMemory) -> None:
+        self._memory = memory
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -80,7 +80,7 @@ class MemoryTool(Tool):
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
         try:
-            return self._hermes.mutate_memory(
+            return self._memory.mutate_memory(
                 str(arguments.get("action", "")),
                 str(arguments.get("target", "")),
                 text=str(arguments.get("text", "")),
@@ -96,8 +96,8 @@ class SessionSearchTool(Tool):
     needs_confirmation = False
     risk_level = "low"
 
-    def __init__(self, hermes: HermesMemory) -> None:
-        self._hermes = hermes
+    def __init__(self, memory: LuminaMemory) -> None:
+        self._memory = memory
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -114,7 +114,7 @@ class SessionSearchTool(Tool):
         if not query:
             return "Error: empty query"
         limit = int(arguments.get("limit", 8))
-        results = self._hermes.search_sessions(query, limit=limit)
+        results = self._memory.search_sessions(query, limit=limit)
         if not results:
             return "No matching session messages found."
         lines: list[str] = []

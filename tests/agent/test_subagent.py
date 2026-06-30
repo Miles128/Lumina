@@ -15,7 +15,7 @@ from secretary.agent.subagent.registry import get_archetype, resolve_tools
 from secretary.agent.subagent.spawn_tool import SpawnSubagentTool as SpawnTool
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 
 
 def _llm_config() -> LlmConfig:
@@ -33,7 +33,7 @@ def _deps(tmp_path: Path) -> SubAgentDeps:
         llm_config=_llm_config(),
         file_auth=None,
         memory_store=store,
-        hermes=HermesMemory(tmp_path),
+        memory=LuminaMemory(tmp_path),
     )
 
 
@@ -86,7 +86,7 @@ def test_custom_archetype_from_lumina_dir(tmp_path: Path) -> None:
         llm_config=_llm_config(),
         file_auth=None,
         memory_store=MemoryStore(tmp_path / "m.db"),
-        hermes=HermesMemory(tmp_path),
+        memory=LuminaMemory(tmp_path),
         lumina_dir=tmp_path,
     ))
     assert {t.name for t in tools} == {"file_read", "list_dir", "web_search"}

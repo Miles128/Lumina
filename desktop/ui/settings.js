@@ -89,7 +89,7 @@
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
-      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_cli", "agent_shibei", "appearance"].includes(activeKey)
+      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_cli", "agent_shibei", "appearance", "about"].includes(activeKey)
     ) {
       activeKey = "agent_llm";
     }
@@ -114,8 +114,6 @@
         label: t("settings.cliAgents"),
         status: cliAgentStatus?.active ? "ready" : "not_configured",
       },
-      { key: "agent_shibei", label: t("settings.shibei"), status: shibeiConfig?.status || "not_configured" },
-      { key: "appearance", label: t("settings.appearance"), status: "ready" },
     ]) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -130,10 +128,19 @@
     }
     navEl.appendChild(agentGroup);
 
-    const sourceGroup = document.createElement("div");
-    sourceGroup.className = "settings-nav-group";
-    sourceGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.sources"))}</div>`;
-
+    const knowledgeGroup = document.createElement("div");
+    knowledgeGroup.className = "settings-nav-group";
+    knowledgeGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.knowledge"))}</div>`;
+    const shibeiBtn = document.createElement("button");
+    shibeiBtn.type = "button";
+    shibeiBtn.className = `settings-nav-item${activeKey === "agent_shibei" ? " active" : ""}`;
+    shibeiBtn.dataset.key = "agent_shibei";
+    shibeiBtn.innerHTML = `
+      <span>${escapeHtml(t("settings.shibei"))}</span>
+      <span class="status-dot ${shibeiConfig?.status || "not_configured"}" aria-hidden="true"></span>
+    `;
+    shibeiBtn.addEventListener("click", () => selectTab("agent_shibei"));
+    knowledgeGroup.appendChild(shibeiBtn);
     for (const platform of platforms) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -144,17 +151,27 @@
         <span class="status-dot ${platform.status}" aria-hidden="true"></span>
       `;
       btn.addEventListener("click", () => selectTab(platform.source));
-      sourceGroup.appendChild(btn);
+      knowledgeGroup.appendChild(btn);
     }
-    navEl.appendChild(sourceGroup);
+    navEl.appendChild(knowledgeGroup);
 
-    const profileBtn = document.createElement("button");
-    profileBtn.type = "button";
-    profileBtn.className = `settings-nav-item${activeKey === "profile" ? " active" : ""}`;
-    profileBtn.dataset.key = "profile";
-    profileBtn.innerHTML = `<span>${escapeHtml(t("settings.profile"))}</span>`;
-    profileBtn.addEventListener("click", () => selectTab("profile"));
-    navEl.appendChild(profileBtn);
+    const personalGroup = document.createElement("div");
+    personalGroup.className = "settings-nav-group";
+    personalGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.personal"))}</div>`;
+    for (const item of [
+      { key: "profile", label: t("settings.profile") },
+      { key: "appearance", label: t("settings.appearance") },
+      { key: "about", label: t("settings.about") },
+    ]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `settings-nav-item${activeKey === item.key ? " active" : ""}`;
+      btn.dataset.key = item.key;
+      btn.innerHTML = `<span>${escapeHtml(item.label)}</span>`;
+      btn.addEventListener("click", () => selectTab(item.key));
+      personalGroup.appendChild(btn);
+    }
+    navEl.appendChild(personalGroup);
   }
 
   function selectTab(key) {
@@ -220,6 +237,10 @@
       renderAppearancePane();
       return;
     }
+    if (key === "about") {
+      renderAboutPane();
+      return;
+    }
 
     const platform = platforms.find((item) => item.source === key);
     if (!platform) {
@@ -228,7 +249,7 @@
     }
 
     const pane = document.createElement("div");
-    pane.className = "settings-pane";
+    pane.className = "settings-pane is-wide";
     pane.dataset.source = platform.source;
 
     const fieldsHtml =
@@ -249,6 +270,7 @@
       <div class="platform-actions">
         ${platform.fields.length > 0 ? '<button class="btn-text save-btn" type="button" data-action="save">保存</button>' : ""}
         <button class="btn-text test-btn" type="button" data-action="test">测试连接</button>
+        <button class="btn-text" type="button" data-action="sync">立即同步此源</button>
       </div>
       <div class="platform-feedback" hidden></div>
     `;
@@ -258,8 +280,29 @@
       saveBtn.addEventListener("click", () => savePlatform(platform.source, pane));
     }
     pane.querySelector('[data-action="test"]').addEventListener("click", () => testPlatform(platform.source, pane));
+    pane.querySelector('[data-action="sync"]').addEventListener("click", () => syncPlatform(platform.source, pane));
     contentEl.innerHTML = "";
     contentEl.appendChild(pane);
+  }
+
+  async function syncPlatform(source, pane) {
+    const feedback = pane.querySelector(".platform-feedback");
+    showFeedback(feedback, "info", `正在同步 ${source}…`);
+    try {
+      const result = await window.SecretaryAPI.request("POST", `/api/sync/${source}`, null, {
+        timeoutMs: 90_000,
+      });
+      const inserted = Number(result?.inserted || 0);
+      showFeedback(feedback, "success", `${result?.message || "同步完成"}（写入 ${inserted} 条）`);
+      const updated = await window.SecretaryAPI.request("GET", "/api/settings/platforms");
+      platforms = updated;
+      const platform = platforms.find((item) => item.source === source);
+      if (platform) {
+        updatePaneStatus(pane, source, platform.status, platform.status_message);
+      }
+    } catch (error) {
+      showFeedback(feedback, "error", `同步失败：${error.message}`);
+    }
   }
 
   function renderField(source, field) {
@@ -393,7 +436,7 @@
             <h3>大模型</h3>
             <span class="platform-status ${escapeAttr(cfg.status || "not_configured")}">${statusLabel(cfg.status || "not_configured")}</span>
           </div>
-          <p>配置 OpenAI 兼容 API。若 Hermes config.yaml 里是 sk-990...7755 这种脱敏占位符，会自动改读 ~/.hermes/.env 里的真实 Key。</p>
+          <p>配置 OpenAI 兼容 API。也可点击下方「从 Hermes 导入」一次性拷贝 Hermes 的 LLM 配置。</p>
         </header>
         <p class="platform-meta">${escapeHtml(cfg.status_message || "")}</p>
         <div class="settings-fields">
@@ -421,10 +464,6 @@
             <span>上下文轮数</span>
             <input id="agent-history" type="number" min="2" max="64" value="${escapeAttr(String(cfg.max_history_turns ?? 16))}" />
           </label>
-          <label class="settings-field settings-field-check">
-            <input id="agent-hermes-fallback" type="checkbox"${cfg.use_hermes_fallback ? " checked" : ""} />
-            <span>本地未配置时，回退读取 ~/.hermes/config.yaml</span>
-          </label>
           <label class="settings-field">
             <span>Agent 模式 · Profile</span>
             <select id="agent-profile">
@@ -448,7 +487,7 @@
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-agent">保存</button>
           <button class="btn-text test-btn" type="button" id="btn-test-agent">测试连接</button>
-          <button class="btn-text" type="button" id="btn-import-hermes">从 Hermes 导入</button>
+          <button class="btn-text" type="button" id="btn-import-all-hermes">一键从 Hermes 导入全部</button>
           <button class="btn-text" type="button" id="btn-clear-chat">清空对话历史</button>
           <button class="btn-text" type="button" id="btn-clear-pollution">清除对话污染记忆</button>
         </div>
@@ -458,7 +497,7 @@
 
     document.getElementById("btn-save-agent").addEventListener("click", saveAgentConfig);
     document.getElementById("btn-test-agent").addEventListener("click", testAgentConfig);
-    document.getElementById("btn-import-hermes").addEventListener("click", importHermesConfig);
+    document.getElementById("btn-import-all-hermes").addEventListener("click", importAllFromHermes);
     document.getElementById("btn-clear-chat").addEventListener("click", clearChatHistory);
     document.getElementById("btn-clear-pollution").addEventListener("click", clearPollutedMemory);
     document.getElementById("agent-provider").addEventListener("change", onProviderChange);
@@ -482,11 +521,32 @@
       model: document.getElementById("agent-model")?.value || "",
       temperature: Number(document.getElementById("agent-temperature")?.value || 0.7),
       max_history_turns: Number(document.getElementById("agent-history")?.value || 16),
-      use_hermes_fallback: Boolean(document.getElementById("agent-hermes-fallback")?.checked),
       response_style: document.getElementById("agent-response-style")?.value || "standard",
       agent_profile: document.getElementById("agent-profile")?.value || "build",
       shell_working_dir: document.getElementById("agent-shell-cwd")?.value || "",
     };
+  }
+
+  function renderAboutPane() {
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <h3>${escapeHtml(t("settings.about"))}</h3>
+        </header>
+        <div class="about-pane-body">
+          <div class="about-brand">
+            <div class="about-logo-wrap">
+              <img class="about-logo" src="/assets/logo.png?v=3" alt="Lumina · 灵犀" decoding="async" />
+            </div>
+            <p class="about-product">Lumina · 灵犀</p>
+            <p class="about-tagline">本地优先的个人 AI 秘书</p>
+          </div>
+          <p><span class="about-label">开发者</span><span>四海</span></p>
+          <p><span class="about-label">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
+          <p><span class="about-label">版本号</span><span>0.1.2</span></p>
+        </div>
+      </div>
+    `;
   }
 
   function renderAppearancePane() {
@@ -628,18 +688,53 @@
     }
   }
 
-  async function importHermesConfig() {
+  async function importAllFromHermes() {
     const feedback = document.getElementById("agent-feedback");
-    showFeedback(feedback, "info", "导入中…");
+    showFeedback(feedback, "info", "正在从 Hermes 一键导入全部…");
+    const lines = [];
+    // 1. LLM config
     try {
       agentConfig = await window.SecretaryAPI.request("POST", "/api/agent/config/import-hermes");
       notifyAgentConfig(agentConfig);
-      showFeedback(feedback, "success", "已从 Hermes 导入，请点测试连接确认 Key 是否有效");
-      renderContent("agent_llm");
-      renderNav();
+      lines.push("✓ 大模型配置");
     } catch (error) {
-      showFeedback(feedback, "error", `导入失败：${error.message}`);
+      lines.push(`✗ 大模型配置：${error.message}`);
     }
+    // 2. SOUL (GET + PUT to persist)
+    try {
+      const soul = await window.SecretaryAPI.request("GET", "/api/agent/soul/hermes");
+      if (soul?.markdown) {
+        await window.SecretaryAPI.request("PUT", "/api/agent/soul", { markdown: soul.markdown });
+        lines.push("✓ SOUL.md");
+      } else {
+        lines.push("○ SOUL.md（Hermes 中不存在）");
+      }
+    } catch (error) {
+      lines.push(`✗ SOUL.md：${error.message}`);
+    }
+    // 3. Memory (MEMORY.md + USER.md)
+    try {
+      const mem = await window.SecretaryAPI.request("POST", "/api/memory/import-hermes");
+      const keys = Object.keys(mem?.imported || {});
+      if (keys.length) {
+        lines.push(`✓ 持久记忆 (${keys.join(", ")})`);
+      } else {
+        lines.push("○ 持久记忆（Hermes 中不存在）");
+      }
+    } catch (error) {
+      lines.push(`✗ 持久记忆：${error.message}`);
+    }
+    // 4. MCP
+    try {
+      mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/import-hermes");
+      const count = Number(mcpStatus?.imported_count || 0);
+      lines.push(count ? `✓ MCP (${count} 个新服务器)` : "○ MCP（Hermes 中无新服务器）");
+    } catch (error) {
+      lines.push(`✗ MCP：${error.message}`);
+    }
+    renderNav();
+    renderContent("agent_llm");
+    showFeedback(feedback, "success", `一键导入完成：\n${lines.join("\n")}`);
   }
 
   async function clearChatHistory() {
@@ -680,7 +775,7 @@
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
           <h3>人格 SOUL</h3>
-          <p>对应 Hermes 的 SOUL.md。灵犀优先使用 ~/.lumina/SOUL.md，保存后立即生效。</p>
+          <p>灵犀使用 ~/.lumina/SOUL.md 定义人格语气，保存后立即生效。可点击下方「从 Hermes 导入」一次性拷贝 Hermes 的 SOUL.md。</p>
         </header>
         <p class="platform-meta">${escapeHtml(agentSoulPath)}</p>
         <div class="settings-fields">
@@ -697,14 +792,12 @@
         <textarea id="soul-editor" class="profile-editor" rows="18">${escapeHtml(agentSoul)}</textarea>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-soul">保存</button>
-          <button class="btn-text" type="button" id="btn-import-hermes-soul">从 Hermes 导入 SOUL</button>
         </div>
         <div id="soul-feedback" class="platform-feedback" hidden></div>
       </div>
     `;
 
     document.getElementById("btn-save-soul").addEventListener("click", saveAgentSoul);
-    document.getElementById("btn-import-hermes-soul").addEventListener("click", importHermesSoul);
     document.getElementById("soul-preset").addEventListener("change", applySoulPreset);
   }
 
@@ -731,19 +824,6 @@
     }
   }
 
-  async function importHermesSoul() {
-    const feedback = document.getElementById("soul-feedback");
-    showFeedback(feedback, "info", "读取 Hermes SOUL…");
-    try {
-      const payload = await window.SecretaryAPI.request("GET", "/api/agent/soul/hermes");
-      const editor = document.getElementById("soul-editor");
-      if (editor) editor.value = payload.markdown || "";
-      showFeedback(feedback, "success", "已载入 Hermes SOUL，点保存写入灵犀");
-    } catch (error) {
-      showFeedback(feedback, "error", `导入失败：${error.message}`);
-    }
-  }
-
   function renderAgentMemoryPane() {
     const bg = backgroundTasks || {};
     const thinkInfo = bg.think_enabled
@@ -757,7 +837,7 @@
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
           <h3>持久记忆</h3>
-          <p>对应 Hermes 的 MEMORY.md 与 USER.md，每次对话开始时注入系统提示。Agent 也可通过 memory 工具自动更新。</p>
+          <p>灵犀使用 MEMORY.md（环境与项目事实）与 USER.md（用户偏好与画像），每次对话开始时注入系统提示。Agent 也可通过 memory 工具自动更新。</p>
         </header>
         <div class="platform-meta">
           <p>后台思考：${thinkInfo}</p>
@@ -815,7 +895,7 @@
       : `<li class="muted">${escapeHtml(t("settings.mcp.empty"))}</li>`;
 
     contentEl.innerHTML = `
-      <div class="settings-pane">
+      <div class="settings-pane is-wide">
         <header class="settings-pane-head">
           <h3>MCP 工具</h3>
           <p>外部 MCP 服务器提供的工具，对话时 Agent 可直接调用。配置文件：<code>${escapeHtml(configPath)}</code></p>
@@ -850,7 +930,6 @@
         </div>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-add-mcp">保存并连接</button>
-          <button class="btn-text" type="button" id="btn-import-mcp-hermes">从 Hermes 导入</button>
           <button class="btn-text" type="button" id="btn-reload-mcp">重新连接</button>
         </div>
 
@@ -868,7 +947,6 @@
     `;
     document.getElementById("btn-add-mcp")?.addEventListener("click", addMcpServer);
     document.getElementById("btn-mcp-quickstart-fs")?.addEventListener("click", quickstartFilesystemMcp);
-    document.getElementById("btn-import-mcp-hermes")?.addEventListener("click", importMcpFromHermes);
     document.getElementById("btn-reload-mcp")?.addEventListener("click", reloadMcp);
     contentEl.querySelector(".mcp-server-list")?.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-mcp-delete]");
@@ -919,7 +997,7 @@
       : "";
 
     contentEl.innerHTML = `
-      <div class="settings-pane">
+      <div class="settings-pane is-wide">
         <header class="settings-pane-head">
           <h3>${escapeHtml(t("settings.cliAgents"))}</h3>
           <p>${escapeHtml(t("settings.cli.desc"))}</p>
@@ -1015,6 +1093,7 @@
           <button class="btn-text save-btn" type="button" id="btn-save-shibei">保存</button>
           <button class="btn-text test-btn" type="button" id="btn-test-shibei">测试检索</button>
           <button class="btn-text" type="button" id="btn-import-shibei">立即导入</button>
+          <button class="btn-text" type="button" id="btn-open-kb">打开知识库浏览</button>
         </div>
         <div id="shibei-feedback" class="platform-feedback" hidden></div>
       </div>
@@ -1022,6 +1101,9 @@
     document.getElementById("btn-save-shibei")?.addEventListener("click", saveShibeiConfig);
     document.getElementById("btn-test-shibei")?.addEventListener("click", testShibeiConfig);
     document.getElementById("btn-import-shibei")?.addEventListener("click", importShibeiNow);
+    document.getElementById("btn-open-kb")?.addEventListener("click", () => {
+      window.open("/workspace.html", "_blank");
+    });
   }
 
   async function saveShibeiConfig() {
@@ -1108,24 +1190,6 @@
       showFeedback(document.getElementById("mcp-feedback"), "success", `已添加 ${name}，加载 ${mcpStatus.tool_count || 0} 个工具`);
     } catch (error) {
       showFeedback(feedback, "error", `添加失败：${error.message}`);
-    }
-  }
-
-  async function importMcpFromHermes() {
-    const feedback = document.getElementById("mcp-feedback");
-    showFeedback(feedback, "info", "正在从 Hermes 导入…");
-    try {
-      mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/import-hermes");
-      renderNav();
-      renderAgentMcpPane();
-      const count = Number(mcpStatus.imported_count || 0);
-      showFeedback(
-        document.getElementById("mcp-feedback"),
-        "success",
-        count ? `已从 Hermes 导入 ${count} 个服务器` : "Hermes 里没有新的 MCP 服务器可导入",
-      );
-    } catch (error) {
-      showFeedback(feedback, "error", `导入失败：${error.message}`);
     }
   }
 

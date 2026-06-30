@@ -1,4 +1,4 @@
-"""Discover, install, and manage agent skills (Hermes/Cursor/Claude compatible)."""
+"""Discover, install, and manage agent skills (Cursor/Claude compatible)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SCALAR = re.compile(r"^([A-Za-z0-9_-]+):\s*(.+?)\s*$", re.MULTILINE)
 
 AGENT_SCAN_ROOTS: tuple[Path, ...] = (
-    Path.home() / ".hermes",
     Path.home() / ".cursor",
     Path.home() / ".claude",
     Path.home() / ".agents",
@@ -453,8 +452,6 @@ def _iter_skill_files() -> list[Path]:
 def _classify_path(path: Path) -> tuple[str, str]:
     text = path.as_posix()
     home = Path.home().as_posix()
-    if f"{home}/.hermes/" in text or text.startswith(f"{home}/.hermes"):
-        return "hermes", "Hermes"
     if f"{home}/.cursor/" in text or text.startswith(f"{home}/.cursor"):
         return "cursor", "Cursor"
     if f"{home}/.claude/" in text or text.startswith(f"{home}/.claude"):
@@ -466,7 +463,6 @@ def _classify_path(path: Path) -> tuple[str, str]:
 
 def _source_root(source_key: str) -> Path | None:
     mapping = {
-        "hermes": Path.home() / ".hermes",
         "cursor": Path.home() / ".cursor",
         "claude": Path.home() / ".claude",
         "agents": Path.home() / ".agents",

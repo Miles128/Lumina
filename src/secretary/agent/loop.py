@@ -16,6 +16,7 @@ from typing import Any
 
 from secretary.agent.grounding import (
     GROUNDING_RETRY_USER,
+    collect_command_evidence,
     collect_read_evidence,
     enforce_grounded_reply,
     format_verify_retry,
@@ -421,8 +422,12 @@ class AgentLoop:
                     continue
 
                 evidence = collect_read_evidence(steps)
+                command_evidence = collect_command_evidence(steps)
                 verification = verify_reply_against_evidence(
-                    reply, evidence, turn_user_message
+                    reply,
+                    evidence,
+                    turn_user_message,
+                    command_evidence=command_evidence,
                 )
                 if (
                     verify_retries < max_verify_retries
@@ -431,7 +436,12 @@ class AgentLoop:
                     verify_retries += 1
                     current_messages.append({"role": "assistant", "content": raw})
                     current_messages.append(
-                        {"role": "user", "content": format_verify_retry(verification, evidence)}
+                        {
+                            "role": "user",
+                            "content": format_verify_retry(
+                                verification, evidence, command_evidence=command_evidence
+                            ),
+                        }
                     )
                     continue
 
@@ -442,6 +452,7 @@ class AgentLoop:
                     used_tools,
                     grounding_verified=verification.ok,
                     grounding_note=verification.note,
+                    command_evidence=command_evidence,
                 )
                 self._emit_progress(
                     ProgressEvent(
@@ -654,6 +665,20 @@ class AgentLoop:
                 pass
 
         reply = self._sanitize_reply(thought if steps else raw, snapshot)
+        # Strip receipt tags and enforce command receipts on the max-steps path too.
+        from secretary.agent.grounding import (
+            UNGROUNDED_COMMAND_FALLBACK,
+            extract_receipt_refs,
+            reply_claims_or_simulates_command_execution,
+            strip_receipt_tags,
+        )
+
+        command_evidence = collect_command_evidence(steps)
+        if reply_claims_or_simulates_command_execution(reply):
+            refs = extract_receipt_refs(reply)
+            if not refs or (refs - command_evidence.receipt_ids):
+                reply = UNGROUNDED_COMMAND_FALLBACK
+        reply = strip_receipt_tags(reply)
         self._emit_progress(
             ProgressEvent(kind="final_reply", iteration=self._max_steps, message=reply)
         )
@@ -948,6 +973,10 @@ class AgentLoop:
         step_idx: int,
     ) -> None:
         paired_call = ensure_tool_call_id(tool_call, suffix=str(step_idx))
+        # Inject receipt header for shell commands so the LLM can cite execution
+        # in its final reply via [receipt:<id>].
+        if paired_call.name == "shell":
+            tool_output = f"[receipt:{paired_call.id}]\n{tool_output}"
         if native_used and assistant_message is not None:
             self._append_tool_exchange(
                 messages,
@@ -1017,6 +1046,11 @@ class AgentLoop:
                 "- In final answers, only mention files that appeared in tool results.\n"
                 "- Use one tool call per step.\n"
                 "- Write tools (file_write, patch, file_delete, shell) need user confirmation.\n"
+                "- Shell tool results include a `[receipt:<id>]` header. When your final reply claims to have "
+                "run a command or cites its output, append `[receipt:<id>]` after that claim. "
+                "Never describe a command as 'executed/run/passed' unless it went through the shell tool this turn. "
+                "Never paste simulated shell output (e.g. `$ cmd\\noutput`, `===== N failed =====`, `exit code: N`) "
+                "without a real receipt — call the shell tool instead.\n"
             )
         else:
             instruction = (
@@ -1040,6 +1074,11 @@ class AgentLoop:
                 "- New files can be created without repeated prompts after session write authorization.\n"
                 "- Modifying or deleting files always needs user confirmation.\n"
                 "- Write tools (file_write, patch, file_delete, shell) follow the authorization rules above.\n"
+                "- Shell tool results include a `[receipt:<id>]` header. When your final reply claims to have "
+                "run a command or cites its output, append `[receipt:<id>]` after that claim. "
+                "Never describe a command as 'executed/run/passed' unless it went through the shell tool this turn. "
+                "Never paste simulated shell output (e.g. `$ cmd\\noutput`, `===== N failed =====`, `exit code: N`) "
+                "without a real receipt — call the shell tool instead.\n"
             )
         patched: list[dict[str, str]] = []
         for msg in messages:

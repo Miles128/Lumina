@@ -1,4 +1,4 @@
-"""Hermes P0 tools: search_files, patch, todo, skills, clarify."""
+"""Lumina P0 tools: search_files, patch, todo, skills, clarify."""
 
 from __future__ import annotations
 

@@ -15,7 +15,7 @@
 
 ### English
 
-Lumina is a **local-first personal AI secretary** for a single user. It runs on the user's machine, connects to OpenAI-compatible LLMs, and acts as a persistent assistant that knows the user's context through **Shibei semantic KB**, Hermes-style durable memory, optional connector sync, and tool use — without turning into a generic chatbot.
+Lumina is a **local-first personal AI secretary** for a single user. It runs on the user's machine, connects to OpenAI-compatible LLMs, and acts as a persistent assistant that knows the user's context through **Shibei semantic KB**, Lumina durable memory, optional connector sync, and tool use — without turning into a generic chatbot.
 
 Design principles:
 
@@ -59,7 +59,7 @@ Design principles:
 
 ## 3. Target User · 目标用户
 
-**Primary · 主要用户：** 产品拥有者（四海）— 基于 Shibei 索引的个人笔记/文档提问、在可控前提下委派文件/Shell 任务、跨会话积累 Hermes 记忆。
+**Primary · 主要用户：** 产品拥有者（四海）— 基于 Shibei 索引的个人笔记/文档提问、在可控前提下委派文件/Shell 任务、跨会话积累 Lumina 记忆。
 
 **Not targeting (v0.2) · 非目标：** 团队、多租户 SaaS、移动优先、无需确认的全自动 Agent。
 
@@ -91,10 +91,11 @@ Design principles:
 |-------------------|---------------|--------|
 | **Shibei KB（主路径）** | 直连 Shibei `config.yaml` + `~/.shibei/db`；`shibei_search` / `import` / `list_sources` | **Done** |
 | **KB 浏览 UI** | `workspace.html`：源列表、搜索、预览（替代 mascot 窗口） | **Done** |
-| **读记忆路由** | Shibei 就绪时不拦截；LIGHT 模式优先 `shibei_search` | **Done** (待合入) |
-| **写记忆路由** | `写入记忆` 不被 sync_empty 误拦 | **Done** (待合入) |
-| Hermes `MEMORY.md` / `USER.md` | `memory` 工具 + 设置编辑 | Done |
+| **读记忆路由** | Shibei 就绪时不拦截；LIGHT 模式优先 `shibei_search` | **Done** |
+| **写记忆路由** | `写入记忆` 不被 sync_empty 误拦 | **Done** |
+| Lumina `MEMORY.md` / `USER.md` | `memory` 工具 + 设置编辑 | Done |
 | SQLite + FTS | 连接器同步后的 chunk 索引（**备选**） | Done |
+| Legacy Lumina workspace | 旧 `/api/kb/*` 与 workspace export 仅保留手动兼容；不再随 sync 默认导出 | Legacy |
 | Profile | 用户层 / 自动层 / chat facts 分离；保存不丢编辑 | Done |
 | Background review | 仅持久化用户陈述事实 | Done |
 | Scheduled think + daily summary | APScheduler | Done |
@@ -232,7 +233,7 @@ spawn_subagent(worker) → file_write 需确认
            │             │
     ~/.lumina/      Shibei app
     SQLite sync     config.yaml + ~/.shibei/db  ← 读记忆主路径
-    Hermes MD
+    Lumina MD
 ```
 
 **知识读取优先级**
@@ -240,7 +241,7 @@ spawn_subagent(worker) → file_write 需确认
 1. `shibei_search` — Shibei 语义索引（个人笔记、简历、文章）
 2. `session_search` — 历史对话
 3. `search_memory` — Lumina 连接器同步库（备选）
-4. Hermes `MEMORY.md` / `USER.md` — 稳定事实与用户偏好
+4. Lumina `MEMORY.md` / `USER.md` — 稳定事实与用户偏好
 
 ---
 
@@ -268,16 +269,16 @@ spawn_subagent(worker) → file_write 需确认
 | FR-20 | Trust / anti-hallucination | P1 | Done |
 | FR-21 | GitHub Actions CI | P1 | Done |
 | **FR-22** | **Shibei KB integration** | P0 | **Done** |
-| **FR-23** | **Shibei-first memory read routing** | P0 | **Done** (待合入) |
+| **FR-23** | **Shibei-first memory read routing** | P0 | **Done** |
 | **FR-24** | **Sub-agent pause/resume + tree UI** | P1 | **Done** |
 | **FR-25** | **KB workspace UI (replace mascot)** | P1 | **Done** |
-| **FR-26** | **Chat Markdown (markdown-it + DOMPurify)** | P1 | **Done** (待合入) |
+| **FR-26** | **Chat Markdown (markdown-it + DOMPurify)** | P1 | **Done** |
 | FR-15 | MCP HTTP/SSE | P2 | Planned |
 | FR-16 | IM gateways | P3 | Backlog |
 | **FR-27** | **Bundled Python for .dmg** | P2 | Planned |
 | **FR-28** | **Explore cheap-model routing** | P2 | Planned |
 | **FR-29** | **Web search API (Brave/Tavily)** | P2 | Planned |
-| **FR-30** | **CLI Agent delegation (`spawn_cli_agent`)** | **P1** | **Planned (v0.2)** |
+| **FR-30** | **CLI Agent delegation (`spawn_cli_agent`)** | **P1** | **Core Done; provider integration ongoing** |
 
 ---
 
@@ -488,17 +489,18 @@ spawn_subagent(worker) → file_write 需确认
 |---|------|--------|-----|
 | B1 | Shibei 空结果 UX | Agent 自动 `shibei_import` 或 UI 一键导入提示 | FR-22 |
 | B2 | 连接器问答降级链 | weread/feishu 问句：shibei → search_memory → 明确「无数据」 | FR-23 |
-| B3 | Briefing / Think 数据源 | 优先 Shibei + Hermes；连接器 sync 仅作补充 | FR-06 |
+| B3 | Briefing / Think 数据源 | 优先 Shibei + Lumina；连接器 sync 仅作补充 | FR-06 |
 | B4 | Chat 会话持久化 v2 | 多会话列表 / 切换（desktop `localStorage` + API） | FR-12 |
 | B5 | Markdown 增强 | GFM 表格（可选 plugin）；代码块 copy 按钮 | FR-26 |
+| B6 | Legacy workspace 收束 | `/api/kb/*` 标记 legacy；sync 不再默认 export workspace | FR-22 |
 
 #### Sprint C — 平台、外接 CLI 与成本（P1–P2，~2–3 周）
 
 | # | Task | Detail | FR |
 |---|------|--------|-----|
-| **C0a** | **`spawn_cli_agent` 核心** | Config store、`CliAgentRunner`、subprocess 摘要、路径校验 | **FR-30** |
-| **C0b** | **确认 + SSE** | `cli_agent_started/finished`；build/orchestrator 权限过滤 | FR-30 |
-| **C0c** | **设置 UI** | CLI Agents 面板：provider 列表、测试、启用开关 | FR-30 |
+| **C0a** | **`spawn_cli_agent` 核心** | Config store、`CliAgentRunner`、subprocess 摘要、路径校验 | **Done** |
+| **C0b** | **确认 + SSE** | `cli_agent_started/finished`；build/orchestrator 权限过滤 | Done |
+| **C0c** | **设置 UI** | CLI Agents 面板：provider 列表、测试、启用开关 | Done |
 | **C0d** | **Provider 适配** | `codex exec`、`claude -p` 首批 | FR-30 |
 | C1 | Explore 便宜模型 | `explore` 子 Agent 路由到小模型 / 低 max_tokens | FR-28 |
 | C2 | Web search API | Brave 或 Tavily 替代 HTML scrape | FR-29 |
@@ -524,7 +526,7 @@ spawn_subagent(worker) → file_write 需确认
 | Shibei service | `src/secretary/services/shibei_service.py` |
 | Sub-agents | `src/secretary/agent/subagent/` |
 | Sub-agent pause/resume | `subagent/resume.py`, `spawn_tool.py` |
-| **CLI Agent (planned)** | `cli_agent/` · `spawn_cli_agent` · `~/.lumina/cli-agents.json` |
+| **CLI Agent** | `cli_agent/` · `spawn_cli_agent` · `~/.lumina/cli-agents.json` |
 | Prompt gate | `src/secretary/agent/prompt_gate.py` |
 | Chat UI + Markdown | `desktop/ui/chat.js`, `markdown.js`, `vendor/` |
 | KB workspace UI | `desktop/ui/workspace.html`, `workspace.js` |

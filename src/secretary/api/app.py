@@ -136,15 +136,18 @@ class GraphResponse(BaseModel):
     nodes: list[dict[str, object]]
     edges: list[dict[str, str]]
     layout: str
+    legacy_workspace: bool = False
 
 
 class NoteListResponse(BaseModel):
     notes: list[dict[str, str]]
+    legacy_workspace: bool = False
 
 
 class NoteDetailResponse(BaseModel):
     path: str
     content: str
+    legacy_workspace: bool = False
 
 
 class NoteUpdateRequest(BaseModel):
@@ -272,7 +275,6 @@ class AgentConfigResponse(BaseModel):
     model: str
     temperature: float
     max_history_turns: int
-    use_hermes_fallback: bool
     response_style: str
     agent_profile: str = "build"
     shell_working_dir: str = ""
@@ -289,7 +291,6 @@ class AgentConfigUpdateRequest(BaseModel):
     model: str = ""
     temperature: float | None = None
     max_history_turns: int | None = None
-    use_hermes_fallback: bool | None = None
     response_style: str = ""
     agent_profile: str = ""
     shell_working_dir: str | None = None
@@ -452,16 +453,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         or settings.memory_summary_enabled
     ):
         briefing_service = BriefingService(settings, app.state.store)
-        hermes = app.state.chat_service.hermes_memory
+        memory = app.state.chat_service.memory
         think_service = ScheduledThinkService(
             settings,
-            hermes,
+            memory,
             app.state.profile_service,
             app.state.agent_config_store,
         )
         memory_summarizer = MemorySummarizerService(
             settings,
-            hermes,
+            memory,
             app.state.agent_config_store,
         )
         scheduler = BackgroundScheduler(
@@ -512,7 +513,10 @@ def _svc(request: Request) -> Any:
     return request.app.state
 
 
-def _build_progress_callback(request: Request, trace_id: str) -> Callable[[ProgressEvent], None] | None:
+def _build_progress_callback(
+    request: Request,
+    trace_id: str,
+) -> Callable[[ProgressEvent], None] | None:
     if not trace_id:
         return None
     hub: ProgressHub = request.app.state.progress_hub
@@ -878,10 +882,10 @@ def clear_chat_history(request: Request) -> dict[str, str]:
 @app.get("/api/memory/durable")
 def get_durable_memory(request: Request) -> dict[str, str]:
     chat_service: ChatService = _svc(request).chat_service
-    hermes = chat_service.hermes_memory
+    memory = chat_service.memory
     return {
-        "memory_md": hermes.read_memory_md(),
-        "user_md": hermes.read_user_md(),
+        "memory_md": memory.read_memory_md(),
+        "user_md": memory.read_user_md(),
     }
 
 
@@ -890,28 +894,46 @@ def update_durable_memory(
     request: Request, body: dict[str, str]
 ) -> dict[str, str]:
     chat_service: ChatService = _svc(request).chat_service
-    hermes = chat_service.hermes_memory
+    memory = chat_service.memory
     if "memory_md" in body:
-        hermes.write_memory_md(body["memory_md"])
+        memory.write_memory_md(body["memory_md"])
     if "user_md" in body:
-        hermes.write_user_md(body["user_md"])
+        memory.write_user_md(body["user_md"])
     return {
-        "memory_md": hermes.read_memory_md(),
-        "user_md": hermes.read_user_md(),
+        "memory_md": memory.read_memory_md(),
+        "user_md": memory.read_user_md(),
+    }
+
+
+@app.post("/api/memory/import-hermes")
+def import_memory_from_hermes(request: Request) -> dict[str, object]:
+    """One-shot import of Hermes MEMORY.md/USER.md into ~/.lumina/memories/."""
+    chat_service: ChatService = _svc(request).chat_service
+    memory = chat_service.memory
+    imported = memory.import_from_hermes()
+    if not imported:
+        raise HTTPException(
+            status_code=404,
+            detail="未找到可导入的 Hermes 记忆文件（~/.hermes/MEMORY.md 或 USER.md）",
+        )
+    return {
+        "imported": imported,
+        "memory_md": memory.read_memory_md(),
+        "user_md": memory.read_user_md(),
     }
 
 
 @app.get("/api/memory/sessions/search")
 def search_sessions(request: Request, q: str, limit: int = 10) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
-    results = chat_service.hermes_memory.search_sessions(q, limit=limit)
+    results = chat_service.memory.search_sessions(q, limit=limit)
     return {"query": q, "results": results}
 
 
 @app.get("/api/memory/episodes/search")
 def search_episodes(request: Request, q: str, limit: int = 5) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
-    results = chat_service.hermes_memory.search_episodes(q, limit=limit)
+    results = chat_service.memory.search_episodes(q, limit=limit)
     return {"query": q, "results": results}
 
 
@@ -971,7 +993,12 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
     agent_config_store: AgentConfigStore = _svc(request).agent_config_store
     view = agent_config_store.get_view(settings)
     providers = [
-        {"key": key, "label": preset["label"], "base_url": preset["base_url"], "model": preset["model"]}
+        {
+            "key": key,
+            "label": preset["label"],
+            "base_url": preset["base_url"],
+            "model": preset["model"],
+        }
         for key, preset in PROVIDER_PRESETS.items()
     ]
     return AgentConfigResponse(
@@ -981,7 +1008,6 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         model=view.model,
         temperature=view.temperature,
         max_history_turns=view.max_history_turns,
-        use_hermes_fallback=view.use_hermes_fallback,
         response_style=view.response_style,
         agent_profile=view.agent_profile,
         shell_working_dir=view.shell_working_dir,
@@ -1008,8 +1034,6 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["temperature"] = body.temperature
     if body.max_history_turns is not None:
         payload["max_history_turns"] = body.max_history_turns
-    if body.use_hermes_fallback is not None:
-        payload["use_hermes_fallback"] = body.use_hermes_fallback
     if body.response_style in {"standard", "brief"}:
         payload["response_style"] = body.response_style.strip()
     if body.agent_profile in {"build", "plan", "orchestrator"}:
@@ -1037,7 +1061,10 @@ def test_agent_config(request: Request) -> AgentTestResponse:
     agent_config_store: AgentConfigStore = _svc(request).agent_config_store
     config = resolve_llm_config(settings, agent_config_store)
     if config is None:
-        raise HTTPException(status_code=400, detail="未配置 API Key。请保存大模型设置或开启 Hermes 回退。")
+        raise HTTPException(
+            status_code=400,
+            detail="未配置 API Key。请保存大模型设置，或点击『从 Hermes 导入』。",
+        )
     try:
         reply = chat_completion(
             config,
@@ -1258,7 +1285,11 @@ def uninstall_skill(request: Request, body: SkillUninstallRequest) -> dict[str, 
 
 
 @app.put("/api/skills/{name}/category")
-def update_skill_category(name: str, request: Request, body: SkillCategoryUpdateRequest) -> dict[str, object]:
+def update_skill_category(
+    name: str,
+    request: Request,
+    body: SkillCategoryUpdateRequest,
+) -> dict[str, object]:
     skill_manager: SkillManager = _svc(request).skill_manager
     skill_manager.update_category(name, body.category, body.tags)
     return {"status": "ok", "name": name, "category": body.category, "tags": body.tags}
@@ -1277,7 +1308,11 @@ def read_installed_skill(name: str, request: Request) -> dict[str, str]:
 @app.get("/api/kb/tree")
 def kb_tree(request: Request) -> dict[str, object]:
     workspace: KnowledgeWorkspace = _svc(request).workspace
-    return {"topics": workspace.topic_tree()}
+    return {
+        "topics": workspace.topic_tree(),
+        "legacy_workspace": True,
+        "message": "Legacy Lumina workspace; Shibei is the primary knowledge path.",
+    }
 
 
 @app.get("/api/kb/notes")
@@ -1295,7 +1330,8 @@ def kb_notes(request: Request) -> NoteListResponse:
                 "updated_at": note.updated_at,
             }
             for note in notes
-        ]
+        ],
+        legacy_workspace=True,
     )
 
 
@@ -1306,7 +1342,7 @@ def kb_note(path: str, request: Request) -> NoteDetailResponse:
         content = workspace.read_note(path)
     except IngestError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return NoteDetailResponse(path=path, content=content)
+    return NoteDetailResponse(path=path, content=content, legacy_workspace=True)
 
 
 @app.put("/api/kb/note")
@@ -1316,7 +1352,7 @@ def kb_note_update(body: NoteUpdateRequest, request: Request) -> NoteDetailRespo
         workspace.write_note(body.path, body.content)
     except IngestError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return NoteDetailResponse(path=body.path, content=body.content)
+    return NoteDetailResponse(path=body.path, content=body.content, legacy_workspace=True)
 
 
 @app.get("/api/briefing/latest")
@@ -1350,14 +1386,15 @@ def graph_data(request: Request, filter: str = "all") -> GraphResponse:
             for edge in graph.edges
         ],
         layout=graph.layout,
+        legacy_workspace=True,
     )
 
 
 @app.post("/api/kb/rebuild")
-async def kb_rebuild(request: Request) -> dict[str, int]:
+async def kb_rebuild(request: Request) -> dict[str, object]:
     sync_service: SyncService = _svc(request).sync_service
     count = await asyncio.to_thread(sync_service.export_kb_from_memory)
-    return {"exported": count}
+    return {"exported": count, "legacy_workspace": True}
 
 
 def _platform_field_values(source: SourceKind, request: Request) -> dict[str, object]:

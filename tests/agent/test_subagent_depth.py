@@ -11,7 +11,7 @@ from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import MAX_SPAWN_DEPTH
 from secretary.agent.subagent.runner import SubAgentRunner
 from secretary.memory.db import MemoryStore
-from secretary.memory.hermes_memory import HermesMemory
+from secretary.memory.lumina_memory import LuminaMemory
 
 
 def _deps(tmp_path: Path) -> SubAgentDeps:
@@ -24,7 +24,7 @@ def _deps(tmp_path: Path) -> SubAgentDeps:
         ),
         file_auth=None,
         memory_store=MemoryStore(tmp_path / "memory.db"),
-        hermes=HermesMemory(tmp_path),
+        memory=LuminaMemory(tmp_path),
     )
 
 

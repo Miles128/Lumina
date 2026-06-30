@@ -1,0 +1,14 @@
+---
+description: Lumina verification commands
+alwaysApply: true
+---
+
+# Verify (Lumina)
+
+Before claiming done:
+
+```bash
+cd "/Users/sihai/Documents/My Projects/Lumina" && pytest && ruff check src tests
+```
+
+Run `mypy src` when changing typed API surfaces.

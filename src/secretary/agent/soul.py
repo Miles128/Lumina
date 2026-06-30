@@ -1,4 +1,4 @@
-"""Load agent personality from SOUL.md (Hermes-compatible)."""
+"""Load agent personality from SOUL.md for Lumina."""
 
 from __future__ import annotations
 
@@ -38,11 +38,6 @@ def load_soul(data_dir: Path) -> str:
     local = soul_path(data_dir)
     if local.exists():
         text = local.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    hermes = hermes_soul_path()
-    if hermes.exists():
-        text = hermes.read_text(encoding="utf-8").strip()
         if text:
             return text
     return DEFAULT_SOUL

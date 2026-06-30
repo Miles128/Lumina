@@ -16,6 +16,17 @@
   const sendBtn = document.getElementById("btn-send");
   const mainScrollEl = document.querySelector(".chat-column .main");
   const BOT_AVATAR_SRC = "/assets/logo.png?v=3";
+  const agentModePicker = document.getElementById("agent-mode-picker");
+  const agentModeBtn = document.getElementById("agent-mode-btn");
+  const agentModeLabel = document.getElementById("agent-mode-label");
+  const agentModeMenu = document.getElementById("agent-mode-menu");
+
+  const AGENT_MODE_LABELS = {
+    build: "Build",
+    plan: "Plan",
+    orchestrator: "Orchestrator",
+  };
+  let currentAgentMode = "build";
 
   let busy = false;
   let pendingActionId = null;
@@ -64,7 +75,6 @@
     /^本次(?:回答|操作|同步|处理|确认)?(?:已返回结果|已执行)?[,，]?\s*耗时\s*[\d.]+\s*秒[。.]?$/;
 
   document.getElementById("btn-kb").addEventListener("click", openKnowledgeBase);
-  document.getElementById("btn-sync").addEventListener("click", syncAll);
 
   document.querySelectorAll(".prompt, .suggestion").forEach((button) => {
     button.addEventListener("click", () => {
@@ -89,6 +99,84 @@
   newThreadBtn.addEventListener("click", () => {
     createThread();
   });
+
+  // Shortcut: Ctrl/Cmd+N to start a new thread (prevent browser default new window).
+  window.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      createThread();
+      newThreadBtn.focus();
+    }
+  });
+
+  // Agent mode picker: load current profile, bind toggle + selection.
+  function setAgentModeMenuOpen(open) {
+    if (!agentModeBtn || !agentModeMenu) return;
+    agentModeBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    agentModeMenu.hidden = !open;
+    agentModeMenu.querySelectorAll("li").forEach((li) => {
+      li.classList.toggle("is-active", li.dataset.mode === currentAgentMode);
+    });
+  }
+
+  function renderAgentModeLabel() {
+    if (!agentModeLabel) return;
+    agentModeLabel.textContent = AGENT_MODE_LABELS[currentAgentMode] || "Build";
+  }
+
+  async function switchAgentMode(mode) {
+    if (mode === currentAgentMode) {
+      setAgentModeMenuOpen(false);
+      return;
+    }
+    const previous = currentAgentMode;
+    currentAgentMode = mode;
+    renderAgentModeLabel();
+    setAgentModeMenuOpen(false);
+    try {
+      await window.SecretaryAPI.request("PUT", "/api/agent/config", { agent_profile: mode });
+    } catch (error) {
+      currentAgentMode = previous;
+      renderAgentModeLabel();
+      console.error("Failed to switch agent mode:", error);
+    }
+  }
+
+  async function loadAgentMode() {
+    if (!agentModeBtn) return;
+    try {
+      const config = await window.SecretaryAPI.request("GET", "/api/agent/config");
+      const profile = String(config?.agent_profile || "build").toLowerCase();
+      if (AGENT_MODE_LABELS[profile]) {
+        currentAgentMode = profile;
+      }
+    } catch (_error) {
+      // Keep default "build".
+    }
+    renderAgentModeLabel();
+  }
+
+  if (agentModeBtn && agentModeMenu) {
+    agentModeBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const open = agentModeBtn.getAttribute("aria-expanded") === "true";
+      setAgentModeMenuOpen(!open);
+    });
+    agentModeMenu.addEventListener("click", (event) => {
+      const li = event.target.closest("li[data-mode]");
+      if (!li) return;
+      void switchAgentMode(li.dataset.mode);
+    });
+    document.addEventListener("click", (event) => {
+      if (!agentModePicker) return;
+      if (agentModePicker.contains(event.target)) return;
+      setAgentModeMenuOpen(false);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setAgentModeMenuOpen(false);
+    });
+    void loadAgentMode();
+  }
 
   const LUMINA_IDENTITY_INTRO_FALLBACK =
     "我是灵犀（Lumina），在你本机运行的个人 AI 秘书。\n\n" +
@@ -120,30 +208,6 @@
   function autoResize() {
     chatInput.style.height = "auto";
     chatInput.style.height = `${Math.min(chatInput.scrollHeight, 160)}px`;
-  }
-
-  async function syncAll() {
-    if (busy) return;
-    appendMessage("user", t("chat.sync.user"));
-    setBusy(true);
-    showTyping(true, t("chat.typing.sync"));
-    beginTypingTicker();
-    try {
-      const controller = createActiveController();
-      const results = await window.SecretaryAPI.request("POST", "/api/sync", null, {
-        signal: controller.signal,
-        timeoutMs: 90_000,
-      });
-      const inserted = results.reduce((sum, item) => sum + item.inserted, 0);
-      appendMessage("bot", t("chat.sync.done", { n: inserted }));
-    } catch (error) {
-      handleRequestError(error, t("chat.error.sync"));
-    } finally {
-      endTypingTicker();
-      clearActiveController();
-      showTyping(false);
-      setBusy(false);
-    }
   }
 
   async function prefetchIdentityIntro() {
@@ -737,12 +801,24 @@
     if (
       toolName &&
       (kind === "tool_started" || kind === "tool_finished") &&
-      !existing.tools.includes(toolName)
+      !existing.tools.some((t) => t.name === toolName)
     ) {
-      existing.tools.push(toolName);
+      const entry = { name: toolName, preview: "" };
+      if (kind === "tool_started" && toolName === "shell") {
+        entry.preview = _extractShellPreview(String(event?.detail || ""));
+      }
+      existing.tools.push(entry);
     }
     subagentNodes.set(runId, existing);
     renderSubagentTree();
+  }
+
+  function _extractShellPreview(detail) {
+    const match = String(detail || "").match(/执行命令[:：]\s*`([^`]+)`/);
+    if (!match) return "";
+    let cmd = match[1].trim().replace(/\s+/g, " ");
+    if (cmd.length > 48) cmd = cmd.slice(0, 47) + "…";
+    return cmd;
   }
 
   function renderSubagentTree() {
@@ -782,7 +858,18 @@
         toolsEl.className = "subagent-tree-tools";
         for (const tool of node.tools) {
           const li = document.createElement("li");
-          li.textContent = tool;
+          if (tool.preview) {
+            const nameSpan = document.createElement("span");
+            nameSpan.className = "subagent-tool-name";
+            nameSpan.textContent = tool.name;
+            const code = document.createElement("code");
+            code.className = "subagent-tool-preview";
+            code.textContent = tool.preview;
+            li.appendChild(nameSpan);
+            li.appendChild(code);
+          } else {
+            li.textContent = tool.name;
+          }
           toolsEl.appendChild(li);
         }
         item.appendChild(toolsEl);

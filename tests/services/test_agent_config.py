@@ -22,7 +22,6 @@ def test_agent_config_local_priority(tmp_path: Path) -> None:
             "api_key": "sk-local-test-key-0123456789",
             "base_url": "https://api.deepseek.com/v1",
             "model": "deepseek-chat",
-            "use_hermes_fallback": True,
         }
     )
     settings = Settings(data_dir=tmp_path / "data")
