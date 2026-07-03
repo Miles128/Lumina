@@ -13,7 +13,8 @@ class ShibeiSearchTool(Tool):
     name = "shibei_search"
     description = (
         "Search Lumina's Shibei semantic knowledge base (indexed markdown/docs). "
-        "Use for personal notes, articles, interview prep, and synced document Q&A."
+        "Use for personal notes, articles, interview prep, and synced document Q&A. "
+        "If results are empty, call shibei_import or guide the user to Settings → Shibei."
     )
 
     def __init__(self, service: ShibeiService) -> None:
@@ -36,11 +37,16 @@ class ShibeiSearchTool(Tool):
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
         try:
-            return self._service.search(
+            result = self._service.search(
                 str(arguments.get("query", "")),
                 limit=int(arguments.get("limit", 5)),
                 tag=str(arguments.get("tag", "")).strip() or None,
             )
+            from secretary.services.shibei_service import is_shibei_empty_result
+
+            if is_shibei_empty_result(result):
+                return f"{result}\n\n[Agent hint] 可调用 shibei_import 增量导入，或让用户在设置 → Shibei 检查 sources。"
+            return result
         except Exception as error:
             return f"Error: {error}"
 

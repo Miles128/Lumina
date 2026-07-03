@@ -18,9 +18,8 @@ from secretary.agent.agent_profile import (
     default_max_steps_for_profile,
     parse_agent_profile,
     profile_system_appendix,
-    resolve_parent_tools,
 )
-from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
+from secretary.agent.chat_tool_registry import ChatToolRegistry
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
@@ -39,14 +38,13 @@ from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
-from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
+from secretary.agent.subagent import SpawnSubagentTool
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
-from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
-from secretary.agent.tools.shell import ShellTool
-from secretary.agent.tools.web import WebFetchTool
+from secretary.agent.session_store import SessionStore
+from secretary.agent.turn_models import TurnContext
 from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
+from secretary.agent.turn_runner import TurnRunner
 from secretary.agent.web_routing import WebSearchPlan, resolve_web_search
 from secretary.config import Settings
 from secretary.core.types import MemoryChunk
@@ -55,10 +53,10 @@ from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import BackgroundReviewService
+from secretary.services.chat_threads import ChatThreadStore
 from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.profile_service import ProfileService
-from secretary.services.todo_store import TodoStore
 
 if TYPE_CHECKING:
     from secretary.agent.mcp_manager import McpManager
@@ -103,6 +101,8 @@ class ChatService:
         mcp_manager: McpManager | None = None,
         shibei_service: ShibeiService | None = None,
         cli_agent_config_store: CliAgentConfigStore | None = None,
+        session_store: SessionStore | None = None,
+        turn_runner: TurnRunner | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -128,11 +128,30 @@ class ChatService:
         self._parent_turn_resume: ParentTurnResumeState | None = None
         self._active_spawn_tool: SpawnSubagentTool | None = None
         self._prompt_gate = PromptGate(settings, agent_config_store)
-        self._turn_orchestrator = TurnOrchestrator(self._file_auth)
+        self._session_store = session_store or SessionStore()
+        orchestrator = TurnOrchestrator(self._file_auth)
+        self._turn_runner = turn_runner or TurnRunner(orchestrator, self._session_store)
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
         self._cli_agent_config_store = cli_agent_config_store or CliAgentConfigStore(
             settings.resolved_data_dir() / "cli-agents.json",
+        )
+        self._thread_store = ChatThreadStore(settings.resolved_data_dir() / "chat_threads.json")
+        self._active_thread_id = ""
+        self._active_trace_id = ""
+        self._tool_registry = ChatToolRegistry(
+            settings=settings,
+            store=store,
+            memory=self._memory,
+            skills=skill_manager,
+            file_auth=self._file_auth,
+            mcp_manager=mcp_manager,
+            shibei_service=shibei_service,
+            sync_service=sync_service,
+            cli_agent_config_store=self._cli_agent_config_store,
+            get_session_id=self._get_or_create_session_id,
+            shell_working_dir=self._shell_working_dir,
+            temperature=self._temperature,
         )
 
     @property
@@ -203,16 +222,34 @@ class ChatService:
             return False
         return is_identity_request(cleaned, self._load_history())
 
+    @property
+    def session_store(self) -> SessionStore:
+        return self._session_store
+
+    @property
+    def _turn_orchestrator(self) -> TurnOrchestrator:
+        """Backward-compatible access for tests patching the inner orchestrator."""
+        return self._turn_runner.orchestrator
+
+    def _active_turn(self, trace_id: str | None) -> TurnContext | None:
+        if not trace_id:
+            return None
+        return self._session_store.get_turn(trace_id)
+
     def reply(
         self,
         message: str,
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        thread_id: str | None = None,
+        trace_id: str | None = None,
         location_city: str | None = None,
         location_lat: float | None = None,
         location_lng: float | None = None,
     ) -> ChatResult:
         cleaned = message.strip()
+        self._active_thread_id = thread_id.strip() if thread_id else ""
+        self._active_trace_id = trace_id.strip() if trace_id else ""
         history = self._load_history()
         if is_author_request(cleaned):
             return self._handle_author_gate(cleaned)
@@ -238,9 +275,6 @@ class ChatService:
         web_plan = resolve_web_search(
             cleaned,
             history,
-            location_city=location_city,
-            location_lat=location_lat,
-            location_lng=location_lng,
         )
         if web_plan is not None:
             llm_config = resolve_llm_config(self._settings, self._agent_config_store)
@@ -349,7 +383,9 @@ class ChatService:
         grant_permanent_read: bool = False,
         grant_session_write: bool = False,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        trace_id: str | None = None,
     ) -> ChatResult:
+        self._active_trace_id = trace_id.strip() if trace_id else ""
         sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
         spawn_tool = self._active_spawn_tool
@@ -378,8 +414,8 @@ class ChatService:
                 progress_callback=progress_callback,
             )
 
-        tools = self._build_tools()
-        result = self._turn_orchestrator.run_confirmed_action(
+        tools = self._tool_registry.build_tools()
+        result = self._turn_runner.run_confirmed_action(
             llm_config,
             tools,
             pending,
@@ -387,6 +423,7 @@ class ChatService:
             temperature=0.7,
             working_dir=self._shell_working_dir(),
             progress_callback=progress_callback,
+            turn=self._active_turn(self._active_trace_id),
         )
 
         if result.pending_confirmation:
@@ -465,7 +502,7 @@ class ChatService:
 
         parent_resume = self._take_parent_turn_resume()
         if parent_resume is not None:
-            result = self._turn_orchestrator.resume_after_subagent(
+            result = self._turn_runner.resume_after_subagent(
                 llm_config,
                 parent_resume,
                 summary,
@@ -473,6 +510,7 @@ class ChatService:
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
+                turn=self._active_turn(self._active_trace_id),
             )
             if (
                 result.pending_confirmation
@@ -754,12 +792,13 @@ class ChatService:
             )
 
         try:
-            result = self._turn_orchestrator.run_agent_turn(
+            result = self._turn_runner.run_agent_turn(
                 llm_config,
                 agent_plan,
                 temperature=self._temperature(),
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
+                turn=self._active_turn(self._active_trace_id),
             )
             chat = self._finalize_agent_result(
                 cleaned,
@@ -856,63 +895,38 @@ class ChatService:
 
         filesystem_turn = is_filesystem_question(cleaned)
         suggested = decision.intent.suggested_tools if decision.intent else ()
-        spawn_tool = self._make_spawn_tool(llm_config, session_id)
-        cli_spawn_tool = self._make_cli_spawn_tool()
+        tools, spawn_tool = self._tool_registry.resolve_tools(
+            profile=profile,
+            user_message=cleaned,
+            suggested=suggested,
+            filesystem_turn=filesystem_turn,
+            light_mode=light_mode,
+            llm_config=llm_config,
+        )
+        self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None
 
-        if profile is AgentProfile.ORCHESTRATOR:
-            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
-            tools = resolve_parent_tools(
-                profile,
-                base_tools,
-                spawn_tool=spawn_tool,
-                cli_spawn_tool=cli_spawn_tool,
-            )
+        if profile is AgentProfile.PLAN:
             max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
-        elif profile is AgentProfile.PLAN:
-            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
-            tools = resolve_parent_tools(
-                profile,
-                base_tools,
-                spawn_tool=None,
-                cli_spawn_tool=None,
-            )
+        elif profile is AgentProfile.ASK:
             max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
         elif filesystem_turn:
-            tools = resolve_parent_tools(
-                AgentProfile.BUILD,
-                self._build_tools(),
-                spawn_tool=spawn_tool,
-                cli_spawn_tool=cli_spawn_tool,
-            )
             max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=True)
         elif light_mode:
-            tools = resolve_parent_tools(
-                AgentProfile.BUILD,
-                self._pick_tools(suggested),
-                spawn_tool=None,
-                cli_spawn_tool=None,
-            )
             max_steps = 3
         else:
-            base_tools = self._append_browser_tools(self._build_tools(), cleaned)
-            tools = resolve_parent_tools(
-                AgentProfile.BUILD,
-                base_tools,
-                spawn_tool=spawn_tool,
-                cli_spawn_tool=cli_spawn_tool,
-            )
             max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=False)
 
         plan = AgentTurnPlan(messages=messages, max_steps=max_steps, tools=tools)
 
         try:
-            result = self._turn_orchestrator.run_agent_turn(
+            result = self._turn_runner.run_agent_turn(
                 llm_config,
                 plan,
                 temperature=self._temperature(),
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
+                turn=self._active_turn(self._active_trace_id),
             )
             if (
                 result.pending_confirmation
@@ -1090,138 +1104,21 @@ class ChatService:
         from secretary.agent.tools.web import WebFetchTool
         from secretary.agent.web_search import WebSearchTool
 
-        tools: list[Tool] = [WebSearchTool(), WebFetchTool()]
-        tools.extend(self._browser_tool_instances(user_message))
-        return tools
-
-    def _append_browser_tools(self, tools: list[Tool], user_message: str) -> list[Tool]:
-        from secretary.agent.browser_routing import needs_browser_tools
-
-        if not needs_browser_tools(user_message):
-            return tools
-        existing = {tool.name for tool in tools}
-        merged = list(tools)
-        for tool in self._browser_tool_instances(user_message):
-            if tool.name not in existing:
-                merged.append(tool)
-                existing.add(tool.name)
-        return merged
-
-    def _browser_tool_instances(self, user_message: str) -> list[Tool]:
-        from secretary.agent.browser_routing import needs_browser_tools
-        from secretary.agent.browser_tools import build_browser_tools
-
-        if not needs_browser_tools(user_message):
-            return []
-        return build_browser_tools(self._get_or_create_session_id())
-
-    def _pick_tools(self, suggested: tuple[str, ...]) -> list[Tool]:
-        from secretary.services.shibei_service import shibei_ready_for_memory_read
-
-        all_tools = {tool.name: tool for tool in self._build_tools()}
-        shibei_first = shibei_ready_for_memory_read(self._shibei_service)
-        if suggested:
-            names = list(suggested)
-            if shibei_first and "shibei_search" not in names:
-                if any(name in names for name in ("search_memory", "session_search")):
-                    names.insert(0, "shibei_search")
-            picked = [all_tools[name] for name in names if name in all_tools]
-            if picked:
-                return picked
-        defaults = self._default_memory_tool_names()
-        return [all_tools[name] for name in defaults if name in all_tools]
-
-    def _default_memory_tool_names(self) -> tuple[str, ...]:
-        from secretary.services.shibei_service import shibei_ready_for_memory_read
-
-        if shibei_ready_for_memory_read(self._shibei_service):
-            return ("shibei_search", "session_search", "search_memory", "web_search")
-        return ("search_memory", "session_search", "web_search")
-
-    def _build_tools(self) -> list[Tool]:
-        from secretary.agent.p0_tools import (
-            ClarifyTool,
-            PatchTool,
-            SearchFilesTool,
-            SkillsListTool,
-            SkillViewTool,
-            TodoTool,
+        return self._tool_registry.append_browser_tools(
+            [WebSearchTool(), WebFetchTool()],
+            user_message,
         )
-        from secretary.agent.web_search import WebSearchTool
 
-        session_id = self._get_or_create_session_id()
-        todo_path = self._settings.resolved_data_dir() / "todos" / f"{session_id}.json"
+    def list_threads(self) -> dict[str, object]:
+        return self._thread_store.list_view()
 
-        tools: list[Tool] = [
-            ListDirTool(),
-            FileReadTool(),
-            SearchFilesTool(),
-            SearchMemoryTool(self._store),
-            WebSearchTool(),
-            WebFetchTool(),
-            MemoryTool(self._memory),
-            SessionSearchTool(self._memory),
-            FileWriteTool(),
-            PatchTool(),
-            FileDeleteTool(),
-            ShellTool(),
-            TodoTool(TodoStore(todo_path)),
-            SkillsListTool(self._skills),
-            SkillViewTool(self._skills),
-            ClarifyTool(),
-        ]
-        if self._mcp_manager is not None:
-            tools.extend(self._mcp_manager.get_tools())
-        if self._shibei_service is not None and self._shibei_service.is_enabled():
-            from secretary.agent.tools.shibei_tools import (
-                ShibeiImportTool,
-                ShibeiListSourcesTool,
-                ShibeiSearchTool,
-            )
-
-            tools.extend(
-                [
-                    ShibeiSearchTool(self._shibei_service),
-                    ShibeiImportTool(self._shibei_service),
-                    ShibeiListSourcesTool(self._shibei_service),
-                ]
-            )
-        return tools
+    def save_threads(self, *, current_id: str, threads: list[dict[str, object]]) -> dict[str, object]:
+        return self._thread_store.replace_all(current_id=current_id, threads=threads)
 
     def _current_agent_profile(self) -> AgentProfile:
         if self._agent_config_store is None:
             return AgentProfile.BUILD
         return parse_agent_profile(self._agent_config_store.load().agent_profile)
-
-    def _make_spawn_tool(self, llm_config: LlmConfig, session_id: str) -> SpawnSubagentTool:
-        spawn_context = SpawnContext(parent_session_id=session_id, depth=0)
-        deps = SubAgentDeps(
-            llm_config=llm_config,
-            file_auth=self._file_auth,
-            memory_store=self._store,
-            memory=self._memory,
-            lumina_dir=self._settings.resolved_data_dir(),
-            temperature=min(self._temperature(), 0.5),
-        )
-        tool = SpawnSubagentTool(deps, spawn_context)
-        self._active_spawn_tool = tool
-        return tool
-
-    def _make_cli_spawn_tool(self) -> SpawnCliAgentTool | None:
-        if not self._cli_agent_config_store.is_enabled():
-            return None
-        projects_dir: Path | None = None
-        raw = self._settings.projects_dir.strip()
-        if raw:
-            expanded = Path(raw).expanduser()
-            if expanded.is_dir():
-                projects_dir = expanded
-        runner = CliAgentRunner(
-            self._cli_agent_config_store,
-            projects_dir=projects_dir,
-            audit_dir=self._settings.resolved_data_dir() / "logs" / "cli-agent",
-        )
-        return SpawnCliAgentTool(runner, default_cwd=self._shell_working_dir())
 
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
         from secretary.agent.browser_tools import agent_browser_available
@@ -1368,6 +1265,10 @@ class ChatService:
         return MAX_HISTORY_TURNS * 2
 
     def _load_history(self) -> list[dict[str, str]]:
+        if self._active_thread_id:
+            thread_history = self._thread_store.agent_history(self._active_thread_id)
+            if thread_history:
+                return thread_history
         if not self._history_path.exists():
             return []
         raw = json.loads(self._history_path.read_text(encoding="utf-8"))
@@ -1389,6 +1290,13 @@ class ChatService:
         return items
 
     def _append_history(self, user_message: str, assistant_message: str) -> None:
+        if self._active_thread_id:
+            self._thread_store.append_turn(
+                self._active_thread_id,
+                user_message,
+                assistant_message,
+            )
+            return
         history = self._load_history()
         history.append({"role": "user", "content": user_message[:MAX_MESSAGE_CHARS]})
         history.append({"role": "assistant", "content": assistant_message[:MAX_MESSAGE_CHARS]})

@@ -28,6 +28,7 @@ from secretary.agent.subagent.registry import (
     resolve_tools,
 )
 from secretary.agent.subagent.resume import SubAgentResumeState
+from secretary.agent.delegation import DelegationResult
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
@@ -129,9 +130,16 @@ class SubAgentRunner:
                 spawn_context=child_context,
             )
             if isinstance(summary, SubAgentResumeState):
-                return (
-                    f"子 Agent ({archetype}) 已暂停，等待确认：{summary.pending.description}"
-                )
+                return DelegationResult(
+                    kind="subagent",
+                    run_id=summary.run_id,
+                    provider=summary.archetype,
+                    goal=goal,
+                    summary=f"子 Agent ({summary.archetype}) 已暂停，等待确认",
+                    success=False,
+                    status="paused",
+                    detail=summary.pending.description,
+                ).to_tool_output()
 
             self._deps.memory.add_message(child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
             self._deps.memory.end_session(child_session_id, summary=summary[:200])
@@ -217,7 +225,12 @@ class SubAgentRunner:
             )
             return f"子 Agent ({state.archetype}) 仍需确认：{paused.pending.description}"
 
-        summary = format_subagent_result(result, run_id=state.run_id, archetype=state.archetype)
+        summary = format_subagent_result(
+            result,
+            run_id=state.run_id,
+            archetype=state.archetype,
+            goal=state.goal,
+        )
         self._deps.memory.add_message(state.child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
         self._deps.memory.end_session(state.child_session_id, summary=summary[:200])
         self._emit(
@@ -302,7 +315,7 @@ class SubAgentRunner:
 
         if isinstance(outcome, SubAgentResumeState):
             return outcome
-        return format_subagent_result(outcome, run_id=run_id, archetype=archetype)
+        return format_subagent_result(outcome, run_id=run_id, archetype=archetype, goal=goal)
 
     def _check_policy(self, spawn_context: SpawnContext, archetype: str) -> str | None:
         if spawn_context.depth >= MAX_SPAWN_DEPTH:

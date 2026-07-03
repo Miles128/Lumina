@@ -50,7 +50,7 @@ class AgentConfigDocument(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_history_turns: int = Field(default=16, ge=2, le=64)
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
-    agent_profile: str = Field(default="build", pattern="^(build|plan|orchestrator)$")
+    agent_profile: str = Field(default="build", pattern="^(build|ask|plan)$")
     shell_working_dir: str = ""
 
 
@@ -83,6 +83,8 @@ class AgentConfigStore:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise SecretaryError(f"invalid agent config: {self._path}") from exc
+        if isinstance(raw, dict) and raw.get("agent_profile") == "orchestrator":
+            raw["agent_profile"] = "build"
         return AgentConfigDocument.model_validate(raw)
 
     def save(self, document: AgentConfigDocument) -> None:

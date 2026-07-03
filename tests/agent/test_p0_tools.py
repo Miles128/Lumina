@@ -7,10 +7,13 @@ from unittest.mock import MagicMock
 
 from secretary.agent.loop import AgentLoop
 from secretary.agent.p0_tools import (
+    AskUserTool,
     ClarifyTool,
+    GlobFilesTool,
     PatchTool,
     SearchFilesTool,
     TodoTool,
+    is_ask_user_output,
     is_clarify_output,
 )
 from secretary.services.todo_store import TodoStore
@@ -49,6 +52,57 @@ def test_todo_tool_lifecycle(tmp_path: Path) -> None:
     item_id = listing.split("]")[1].strip().split(":")[0]
     done = tool.execute({"action": "complete", "id": item_id}, tmp_path)
     assert "Completed" in done
+
+
+def test_glob_files_matches_by_pattern(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("x", encoding="utf-8")
+    tool = GlobFilesTool()
+    output = tool.execute({"pattern": "*.py", "path": str(tmp_path)}, tmp_path)
+    assert "a.py" in output
+    assert "b.txt" not in output
+
+
+def test_ask_user_tool_emits_structured_payload(tmp_path: Path) -> None:
+    tool = AskUserTool()
+    output = tool.execute(
+        {
+            "questions": [
+                {
+                    "id": "scope",
+                    "prompt": "要同步哪个数据源？",
+                    "options": ["全部", "飞书"],
+                }
+            ],
+            "context": "需要确认范围",
+        },
+        tmp_path,
+    )
+    assert is_ask_user_output(output)
+    assert "要同步哪个数据源" in output
+    assert "全部" in output
+
+
+def test_agent_loop_stops_on_ask_user(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    ask = AskUserTool()
+    loop = AgentLoop(
+        MagicMock(),
+        tools=[ask],
+        max_steps=3,
+        working_dir=tmp_path,
+    )
+    raw = (
+        "Need choice.\n"
+        "```tool-call\n"
+        '{"name": "ask_user", "arguments": {"questions": [{"prompt": "选 A 还是 B？", "options": ["A", "B"]}]}}\n'
+        "```"
+    )
+    with patch("secretary.agent.loop.chat_completion", return_value=raw):
+        result = loop.run([{"role": "user", "content": "帮我决定"}], temperature=0.0)
+    assert is_ask_user_output(result.reply)
+    assert result.used_tools == ["ask_user"]
 
 
 def test_clarify_tool_marks_output(tmp_path: Path) -> None:

@@ -74,18 +74,23 @@ _READ_ONLY_TOOL_NAMES = frozenset(
         "list_dir",
         "file_read",
         "search_files",
+        "glob_files",
         "search_memory",
         "session_search",
         "web_search",
         "web_fetch",
         "shibei_search",
         "shibei_list_sources",
+        "list_connectors",
+        "connector_status",
         "skills_list",
         "skill_view",
         "clarify",
+        "ask_user",
         "todo",
         "browser_open",
         "browser_snapshot",
+        "browser_screenshot",
         "browser_click",
         "browser_fill",
         "browser_close",
@@ -429,9 +434,19 @@ class AgentLoop:
                     turn_user_message,
                     command_evidence=command_evidence,
                 )
+                from secretary.services.shibei_service import is_shibei_empty_result
+
+                shibei_empty = any(
+                    step.tool_call
+                    and step.tool_call.name == "shibei_search"
+                    and step.tool_output
+                    and is_shibei_empty_result(str(step.tool_output))
+                    for step in steps
+                )
                 if (
                     verify_retries < max_verify_retries
                     and should_retry_for_verification(verification)
+                    and not shibei_empty
                 ):
                     verify_retries += 1
                     current_messages.append({"role": "assistant", "content": raw})
@@ -598,13 +613,10 @@ class AgentLoop:
             step = StepResult(thought=thought, tool_call=tool_call, tool_output=tool_output)
             steps.append(step)
 
-            from secretary.agent.p0_tools import is_clarify_output
+            from secretary.agent.p0_tools import format_user_input_reply, is_user_input_request
 
-            if is_clarify_output(tool_output):
-                if "\n" in tool_output:
-                    clarify_reply = tool_output.split("\n", 1)[1].strip()
-                else:
-                    clarify_reply = thought
+            if is_user_input_request(tool_output):
+                clarify_reply = format_user_input_reply(tool_output, thought=thought)
                 reply = self._sanitize_reply(clarify_reply or thought, snapshot)
                 self._emit_progress(
                     ProgressEvent(

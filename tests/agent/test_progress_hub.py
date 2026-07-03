@@ -74,3 +74,4 @@ def test_progress_event_payload_includes_detail() -> None:
         )
     )
     assert payload["detail"] == "ls -la\nfile.txt"
+    assert payload["schema_version"] == 2

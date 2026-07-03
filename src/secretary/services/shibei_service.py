@@ -72,6 +72,9 @@ class ShibeiService:
                 message = (
                     f"已连接 Shibei · 监控 {len(sources)} 个文件夹 · 索引 {source_count} 篇"
                 )
+                noise = shibei_sources_noise_warning(sources)
+                if noise:
+                    message = f"{message} · {noise}"
             except Exception as error:
                 status = "error"
                 message = f"Shibei 不可用：{error}"
@@ -228,12 +231,46 @@ class ShibeiService:
         return None
 
 
+SHIBEI_EMPTY_HINT = (
+    "未在 Shibei 知识库中找到相关内容。\n"
+    "建议：\n"
+    "1. 设置 → Shibei 知识库：确认 sources 已配置\n"
+    "2. 让 Agent 调用 shibei_import 增量导入，或在 Shibei 应用中 import\n"
+    "3. 打开「知识库」页查看索引是否为空"
+)
+
+SHIBEI_NOISE_DIR_NAMES = frozenset(
+    {"target", "node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv"}
+)
+
+
+def shibei_sources_noise_warning(sources: list[str]) -> str:
+    """Warn when monitored paths likely include build artifacts (config hygiene)."""
+    hits: list[str] = []
+    for source in sources:
+        parts = {part.lower() for part in Path(source).expanduser().parts}
+        overlap = parts & SHIBEI_NOISE_DIR_NAMES
+        if overlap:
+            hits.append(f"{source}（含 {', '.join(sorted(overlap))}）")
+    if not hits:
+        return ""
+    return (
+        "建议在 Shibei config.yaml 的 ignore 中排除构建目录，避免索引噪音："
+        + "；".join(hits[:3])
+    )
+
+
+def is_shibei_empty_result(text: str) -> bool:
+    cleaned = text.strip()
+    return cleaned.startswith("未在 Shibei 知识库中找到")
+
+
 def _format_search(payload: dict[str, Any]) -> str:
     if payload.get("error"):
         return f"Error: {payload['error']}"
     results = payload.get("results")
     if not isinstance(results, list) or not results:
-        return "未在 Shibei 知识库中找到相关内容。可在 Shibei 中执行 import 或点「导入」。"
+        return SHIBEI_EMPTY_HINT
     lines = [f"Shibei 检索「{payload.get('query', '')}」共 {payload.get('total', len(results))} 条："]
     for item in results[:8]:
         if not isinstance(item, dict):

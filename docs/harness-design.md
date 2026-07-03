@@ -16,6 +16,8 @@ Harness（灵犀专有）
 
 **不复用 runtime** = 不 import Hermes `AIAgent`、不嵌 OpenCode TS worker；只复用**协议与权限模型**。
 
+**为何不用 LangGraph**：PRD 非目标。灵犀已有 `PromptGate` + `TurnOrchestrator` + `AgentLoop`，并内建 Electron 确认流、SSE 进度、子 Agent pause/resume、Shibei-first 路由——这些是产品专有 harness 层，LangGraph 的图状态机不会替代它们，只会增加依赖与调试面。后续若需要 cron/IM 触达，优先 MCP + 定时任务接入，而非引入通用 graph runtime。
+
 ---
 
 ## 2. 三家思路在灵犀的映射
@@ -23,7 +25,7 @@ Harness（灵犀专有）
 | 来源 | 核心思路 | Lumina 实现 |
 |------|----------|-------------|
 | **OpenCode** | Permission ruleset：模型看不到的工具就不会被调用 | `agent_profile.py` → `resolve_parent_tools()` |
-| **OpenCode** | Primary agents：`build` / `plan` / orchestrator | 设置 → Agent 模式：`build` · `plan` · `orchestrator` |
+| **OpenCode** | Primary agents：`build` / `ask` / `plan` | 设置 → Agent 模式：`build` · `ask` · `plan` |
 | **OpenCode** | 子 session 委派 + 并行 Task | `spawn_subagent` + `goals[]` 最多 3 路 explore |
 | **Claude Code** | 类型化 subagent + md 定义 + **子 agent 禁递归** | `explore` / `worker` / `verify` / `plan` + `~/.lumina/subagents/*.md`；子 tool 集不含 `spawn_subagent` |
 | **Hermes** | `delegate_task`、leaf 无 delegate、batch≤3 | `SpawnSubagentTool`；`MAX_SPAWN_DEPTH=1`；`MAX_PARALLEL_EXPLORE=3` |
@@ -35,11 +37,11 @@ Harness（灵犀专有）
 
 | Profile | 工具 | 用途 |
 |---------|------|------|
-| **build** | 全工具 + `spawn_subagent` | 默认执行（读写、shell、委派） |
-| **plan** | 只读 + clarify | 分析/规划，不改文件 |
-| **orchestrator** | `spawn_subagent` + todo/skills/记忆检索 | 只编排，不直接改 repo |
+| **build** | 全工具 + `spawn_subagent` + `spawn_cli_agent` | 默认执行（读写、shell、委派） |
+| **ask** | 只读 + Shibei/记忆/联网/浏览器/连接器状态/`ask_user` | 问答检索，不改环境 |
+| **plan** | ask 子集 + todo/skills | 分析/规划，不改文件 |
 
-配置：`~/.lumina/agent.json` → `"agent_profile": "build|plan|orchestrator"`，或设置 → 大模型 → Agent 模式。
+配置：`~/.lumina/agent.json` → `"agent_profile": "build|ask|plan"`，或聊天输入框旁模式切换。
 
 ---
 
@@ -71,6 +73,7 @@ Harness（灵犀专有）
 - [x] 子任务 pause/resume（Codex turn approve 语义）
 - [x] UI 子 Agent 树（OpenCode session tree）
 - [x] 子 Agent 确认后父 loop 续跑（Codex turn stack，一层）
+- [x] Harness P0：`TurnContext` + `SessionStore`；SSE schema v2；`TurnRunner`；`DelegationResult`
 - [x] `SpawnContext.depth + 1` 硬限一层
 - [x] Shibei-first 读记忆路由（sync 备选）
 - [x] **Hermes runtime 解耦**：移除运行期对 `~/.hermes` 的主动依赖（mcp 自动合并、agent 回退、soul 回退、skills 扫描根）；仅保留「设置 → 一键从 Hermes 导入」入口（LLM/SOUL/Memory/MCP 串行导入），`HermesMemory` 重命名为 `LuminaMemory`

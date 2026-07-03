@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from secretary.agent.turn_models import PROGRESS_SCHEMA_VERSION
+
 ProgressKind = Literal[
+    "turn_started",
+    "turn_completed",
+    "pause_confirmation",
     "iteration_started",
     "iteration_completed",
     "tool_started",
@@ -36,6 +41,10 @@ class ProgressEvent:
     goal: str = ""
     subagent_status: str = ""
     parent_sub_run_id: str = ""
+    turn_id: str = ""
+    thread_id: str = ""
+    item_id: str = ""
+    parent_turn_id: str = ""
 
 
 _TOOL_LABELS: dict[str, str] = {
@@ -44,6 +53,7 @@ _TOOL_LABELS: dict[str, str] = {
     "file_write": "写入文件",
     "file_delete": "删除文件",
     "search_files": "搜索文件",
+    "glob_files": "查找文件",
     "shell": "执行命令",
     "search_memory": "搜索记忆",
     "session_search": "搜索会话",
@@ -51,9 +61,13 @@ _TOOL_LABELS: dict[str, str] = {
     "web_fetch": "抓取网页",
     "browser_open": "打开网页",
     "browser_snapshot": "浏览器快照",
+    "browser_screenshot": "浏览器截图",
     "browser_click": "浏览器点击",
     "browser_fill": "浏览器填写",
     "browser_close": "关闭浏览器",
+    "list_connectors": "连接器列表",
+    "connector_status": "连接器状态",
+    "sync_source": "同步数据源",
     "shibei_search": "Shibei 检索",
     "shibei_import": "Shibei 导入",
     "shibei_list_sources": "Shibei 索引",
@@ -63,6 +77,7 @@ _TOOL_LABELS: dict[str, str] = {
     "skills_list": "列出技能",
     "skill_view": "查看技能",
     "clarify": "澄清问题",
+    "ask_user": "询问用户",
     "spawn_subagent": "委派子任务",
     "spawn_cli_agent": "委派 CLI Agent",
 }
@@ -72,6 +87,12 @@ def progress_event_label(event: ProgressEvent) -> str:
     prefix = _subagent_prefix(event)
     if event.message.strip():
         return prefix + event.message.strip()
+    if event.kind == "turn_started":
+        return "开始处理"
+    if event.kind == "turn_completed":
+        return "本轮完成" if event.success else "本轮结束（待确认）"
+    if event.kind == "pause_confirmation":
+        return event.message.strip() or "等待确认"
     if event.kind == "iteration_started":
         return prefix + f"第 {event.iteration} 轮思考"
     if event.kind == "iteration_completed":
@@ -152,6 +173,7 @@ def _tool_display_name(name: str) -> str:
 
 def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
     payload: dict[str, object] = {
+        "schema_version": PROGRESS_SCHEMA_VERSION,
         "kind": event.kind,
         "iteration": event.iteration,
         "tool_name": event.tool_name,
@@ -172,5 +194,13 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["subagent_status"] = event.subagent_status.strip()
     if event.parent_sub_run_id.strip():
         payload["parent_sub_run_id"] = event.parent_sub_run_id.strip()
+    if event.turn_id.strip():
+        payload["turn_id"] = event.turn_id.strip()
+    if event.thread_id.strip():
+        payload["thread_id"] = event.thread_id.strip()
+    if event.item_id.strip():
+        payload["item_id"] = event.item_id.strip()
+    if event.parent_turn_id.strip():
+        payload["parent_turn_id"] = event.parent_turn_id.strip()
     return payload
 

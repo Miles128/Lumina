@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import json
 import logging
 import os
@@ -264,6 +265,13 @@ class McpManager:
             if not config.enabled:
                 continue
             if config.command:
+                if shutil.which(config.command) is None:
+                    logger.warning("MCP server %s skipped: command not found (%s)", name, config.command)
+                    if self._last_error:
+                        self._last_error += f"; {name}: 未安装 ({config.command})"
+                    else:
+                        self._last_error = f"{name}: 未安装 ({config.command})"
+                    continue
                 try:
                     await self._connect_stdio(name, config)
                 except Exception as exc:

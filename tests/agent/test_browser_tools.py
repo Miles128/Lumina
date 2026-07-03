@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from secretary.agent.browser_routing import needs_browser_tools
@@ -37,6 +38,23 @@ def test_browser_open_tool() -> None:
     tool = BrowserOpenTool("lumina-test")
     with patch("secretary.agent.browser_tools.run_agent_browser", return_value=(True, "ok")):
         assert tool.execute({"url": "https://example.com"}, __import__("pathlib").Path(".")) == "ok"
+
+
+def test_needs_browser_tools_for_ask_research() -> None:
+    from secretary.agent.agent_profile import AgentProfile
+
+    with patch("secretary.agent.browser_routing.agent_browser_available", return_value=True):
+        assert needs_browser_tools("帮我调研一下官网功能", profile=AgentProfile.ASK)
+
+
+def test_browser_screenshot_tool() -> None:
+    from secretary.agent.browser_tools import BrowserScreenshotTool
+
+    tool = BrowserScreenshotTool("lumina-test")
+    with patch("secretary.agent.browser_tools.run_agent_browser", return_value=(True, "saved.png")) as run:
+        output = tool.execute({"full_page": True, "annotate": True}, Path("."))
+    assert output == "saved.png"
+    assert run.call_args.args[0] == ["screenshot", "--full", "--annotate"]
 
 
 def test_build_browser_tools_empty_when_cli_missing() -> None:

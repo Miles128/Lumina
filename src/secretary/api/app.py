@@ -21,6 +21,9 @@ from secretary.agent.llm_config import resolve_llm_config
 from secretary.agent.mcp_manager import McpManager
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
+from secretary.agent.session_store import SessionStore
+from secretary.agent.turn_orchestrator import TurnOrchestrator
+from secretary.agent.turn_runner import TurnRunner
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
 from secretary.config import settings
@@ -88,9 +91,15 @@ class MemorySearchResponse(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     trace_id: str = Field(default="", max_length=64)
+    thread_id: str = Field(default="", max_length=64)
     location_city: str = Field(default="", max_length=64)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class ChatThreadsPutRequest(BaseModel):
+    current_id: str = Field(default="", max_length=64)
+    threads: list[dict[str, object]] = Field(default_factory=list)
 
 
 class LocationReverseRequest(BaseModel):
@@ -405,6 +414,8 @@ def _init_services() -> dict[str, object]:
         if mcp_config_store.ensure_filesystem_server(preferred_root):
             mcp_manager.reload()
     progress_hub = ProgressHub()
+    session_store = SessionStore()
+    turn_runner = TurnRunner(TurnOrchestrator(file_auth), session_store)
     chat_service = ChatService(
         settings,
         store,
@@ -416,6 +427,8 @@ def _init_services() -> dict[str, object]:
         mcp_manager=mcp_manager,
         shibei_service=shibei_service,
         cli_agent_config_store=cli_agent_config_store,
+        session_store=session_store,
+        turn_runner=turn_runner,
     )
     workspace = KnowledgeWorkspace(settings.resolved_data_dir() / "workspace")
     workspace.ensure_layout()
@@ -433,6 +446,8 @@ def _init_services() -> dict[str, object]:
         "shibei_config_store": shibei_config_store,
         "shibei_service": shibei_service,
         "progress_hub": progress_hub,
+        "session_store": session_store,
+        "turn_runner": turn_runner,
         "workspace": workspace,
     }
 
@@ -528,10 +543,12 @@ def _build_progress_callback(
     return callback
 
 
-def _finish_progress(request: Request, trace_id: str) -> None:
+def _finish_progress(request: Request, trace_id: str, *, keep_turn: bool = False) -> None:
     if not trace_id:
         return
     request.app.state.progress_hub.close(trace_id)
+    if not keep_turn:
+        request.app.state.session_store.clear_turn(trace_id)
 
 
 @app.get("/api/mcp/status")
@@ -838,20 +855,27 @@ def chat(request: Request, body: ChatRequest) -> ChatResponse:
     author_turn = chat_service.is_author_turn(message)
     identity_turn = chat_service.is_identity_turn(message)
     trace_id = "" if (author_turn or identity_turn) else body.trace_id.strip()
+    thread_id = body.thread_id.strip()
     progress = _build_progress_callback(request, trace_id)
-    location_city = body.location_city.strip()
+    if trace_id:
+        request.app.state.session_store.start_turn(
+            trace_id=trace_id,
+            thread_id=thread_id,
+            user_message=message,
+        )
+    keep_turn = False
     try:
         with llm_usage_scope() as usage:
             result = chat_service.reply(
                 message,
                 progress_callback=progress,
-                location_city=location_city or None,
-                location_lat=body.location_lat,
-                location_lng=body.location_lng,
+                thread_id=thread_id or None,
+                trace_id=trace_id or None,
             )
+        keep_turn = bool(result.pending_confirmation)
         return _to_chat_response(result, usage)
     finally:
-        _finish_progress(request, trace_id)
+        _finish_progress(request, trace_id, keep_turn=keep_turn)
 
 
 @app.post("/api/chat/confirm")
@@ -859,6 +883,13 @@ def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse
     chat_service: ChatService = _svc(request).chat_service
     trace_id = body.trace_id.strip()
     progress = _build_progress_callback(request, trace_id)
+    if trace_id and request.app.state.session_store.get_turn(trace_id) is None:
+        request.app.state.session_store.start_turn(
+            trace_id=trace_id,
+            thread_id="",
+            user_message="confirm",
+        )
+    keep_turn = False
     try:
         with llm_usage_scope() as usage:
             result = chat_service.confirm_action(
@@ -866,10 +897,12 @@ def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse
                 grant_permanent_read=body.grant_permanent_read,
                 grant_session_write=body.grant_session_write,
                 progress_callback=progress,
+                trace_id=trace_id or None,
             )
+        keep_turn = bool(result.pending_confirmation)
         return _to_chat_response(result, usage)
     finally:
-        _finish_progress(request, trace_id)
+        _finish_progress(request, trace_id, keep_turn=keep_turn)
 
 
 @app.delete("/api/chat/history")
@@ -877,6 +910,18 @@ def clear_chat_history(request: Request) -> dict[str, str]:
     chat_service: ChatService = _svc(request).chat_service
     chat_service.clear_history()
     return {"status": "ok"}
+
+
+@app.get("/api/chat/threads")
+def get_chat_threads(request: Request) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.list_threads()
+
+
+@app.put("/api/chat/threads")
+def put_chat_threads(request: Request, body: ChatThreadsPutRequest) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.save_threads(current_id=body.current_id, threads=body.threads)
 
 
 @app.get("/api/memory/durable")
@@ -1036,7 +1081,7 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["max_history_turns"] = body.max_history_turns
     if body.response_style in {"standard", "brief"}:
         payload["response_style"] = body.response_style.strip()
-    if body.agent_profile in {"build", "plan", "orchestrator"}:
+    if body.agent_profile in {"build", "ask", "plan"}:
         payload["agent_profile"] = body.agent_profile.strip()
     if body.shell_working_dir is not None:
         payload["shell_working_dir"] = body.shell_working_dir.strip()

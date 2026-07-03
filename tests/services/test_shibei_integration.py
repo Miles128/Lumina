@@ -120,7 +120,7 @@ def test_build_tools_includes_shibei_when_enabled(tmp_path: Path) -> None:
     shibei_store = ShibeiConfigStore(settings.resolved_data_dir() / "shibei.json", data_dir=settings.resolved_data_dir())
     shibei = ShibeiService(shibei_store)
     chat = ChatService(settings, memory, profile, SkillManager(settings.resolved_data_dir()), shibei_service=shibei)
-    names = {tool.name for tool in chat._build_tools()}
+    names = {tool.name for tool in chat._tool_registry.build_tools()}
     assert "shibei_search" in names
     assert "shibei_import" in names
 
@@ -163,5 +163,5 @@ def test_pick_tools_prefers_shibei_search(tmp_path: Path) -> None:
     chat = ChatService(settings, memory, profile, SkillManager(settings.resolved_data_dir()), shibei_service=shibei)
 
     with patch.object(shibei, "_resolve_src_path", return_value=shibei_root / "src"):
-        tools = chat._pick_tools(("search_memory", "session_search"))
+        tools = chat._tool_registry.pick_tools(("search_memory", "session_search"))
         assert tools[0].name == "shibei_search"

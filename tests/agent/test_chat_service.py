@@ -45,7 +45,7 @@ def test_chat_fallback_without_llm(tmp_path: Path) -> None:
 
 def test_build_tools_includes_p0_agent_tools(tmp_path: Path) -> None:
     service = _build_chat_service(tmp_path)
-    names = {tool.name for tool in service._build_tools()}
+    names = {tool.name for tool in service._tool_registry.build_tools()}
     expected = {
         "list_dir",
         "file_read",

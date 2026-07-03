@@ -64,7 +64,8 @@ def test_cli_runner_success(cli_store, tmp_path, monkeypatch) -> None:
         root,
     )
     assert "tests passed" in output
-    assert "成功" in output
+    assert output.startswith("[cli:mock:")
+    assert "Status: done" in output
 
 
 def test_cli_runner_rejects_cwd_outside_allowed(cli_store, tmp_path, monkeypatch) -> None:

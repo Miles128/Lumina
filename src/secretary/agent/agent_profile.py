@@ -1,8 +1,4 @@
-"""Primary agent profiles (OpenCode / Claude Code / Lumina patterns, Lumina runtime).
-
-Permissions are enforced by filtering the tool list before the model sees it —
-not by prompt alone (OpenCode permission ruleset).
-"""
+"""Primary agent profiles (Build / Ask / Plan)."""
 
 from __future__ import annotations
 
@@ -11,35 +7,37 @@ from enum import StrEnum
 from secretary.agent.tools.base import Tool
 
 # Claude Code: sub-agents never receive spawn_subagent (enforced in subagent/registry).
-# OpenCode: primary agents differ by permission ruleset, not prompt wishful thinking.
-# Hermes: orchestrator delegates; leaf sub-agents have no delegate_task.
 
-READ_ONLY_TOOL_NAMES = frozenset(
+ASK_TOOL_NAMES = frozenset(
     {
         "list_dir",
         "file_read",
         "search_files",
+        "glob_files",
         "search_memory",
         "session_search",
         "web_search",
         "web_fetch",
         "shibei_search",
         "shibei_list_sources",
+        "list_connectors",
+        "connector_status",
         "clarify",
+        "ask_user",
+        "browser_open",
+        "browser_snapshot",
+        "browser_screenshot",
+        "browser_click",
+        "browser_fill",
+        "browser_close",
     }
 )
 
-ORCHESTRATOR_TOOL_NAMES = frozenset(
+PLAN_TOOL_NAMES = ASK_TOOL_NAMES | frozenset(
     {
-        "spawn_subagent",
         "todo",
-        "clarify",
         "skills_list",
         "skill_view",
-        "search_memory",
-        "session_search",
-        "shibei_search",
-        "shibei_list_sources",
     }
 )
 
@@ -47,22 +45,24 @@ MCP_READ_PREFIXES = ("read_", "list_", "get_")
 
 
 class AgentProfile(StrEnum):
-    """Primary session mode (OpenCode primary agents)."""
+    """Primary session mode."""
 
     BUILD = "build"
+    ASK = "ask"
     PLAN = "plan"
-    ORCHESTRATOR = "orchestrator"
 
 
 PROFILE_LABELS: dict[AgentProfile, str] = {
     AgentProfile.BUILD: "Build · 执行",
+    AgentProfile.ASK: "Ask · 问答",
     AgentProfile.PLAN: "Plan · 规划",
-    AgentProfile.ORCHESTRATOR: "Orchestrator · 编排",
 }
 
 
 def parse_agent_profile(raw: str | None) -> AgentProfile:
     normalized = (raw or AgentProfile.BUILD.value).strip().lower()
+    if normalized == "orchestrator":
+        return AgentProfile.BUILD
     try:
         return AgentProfile(normalized)
     except ValueError:
@@ -70,22 +70,22 @@ def parse_agent_profile(raw: str | None) -> AgentProfile:
 
 
 def profile_system_appendix(profile: AgentProfile) -> str:
+    if profile is AgentProfile.ASK:
+        return (
+            "\n\n## Agent mode: Ask\n"
+            "问答与检索模式：可读文件、搜记忆/Shibei、联网与浏览器只读操作；"
+            "不要修改文件、不要执行 shell、不要委派子 Agent。"
+            "缺信息时用 ask_user 结构化追问。"
+        )
     if profile is AgentProfile.PLAN:
         return (
             "\n\n## Agent mode: Plan\n"
-            "你只读分析、规划与审查；不要修改文件、不要执行 shell、不要委派子 Agent。"
-            "输出结构化计划、风险与建议步骤；需要执行时提示用户切换到 Build 模式。"
-        )
-    if profile is AgentProfile.ORCHESTRATOR:
-        return (
-            "\n\n## Agent mode: Orchestrator\n"
-            "你不直接读改写文件或跑 shell；通过 spawn_subagent 委派 explore / worker / verify，"
-            "或通过 spawn_cli_agent 委派 Codex / Claude CLI 等外进程处理重代码任务。"
-            "可并行 explore（goals 数组，最多 3 路）；整合子 Agent / CLI 摘要后回复用户。"
+            "规划模式：只读分析 + todo/skills；输出结构化计划、风险与步骤；"
+            "不要修改文件、不要 shell、不要委派。需要执行时提示切换到 Build。"
         )
     return (
         "\n\n## Agent mode: Build\n"
-        "默认执行模式：可读写的工具、子 Agent 与 CLI Agent 委派均可用；危险操作需用户确认。"
+        "执行模式：读写、shell、同步连接器、子 Agent 与 CLI 委派均可用；危险操作需用户确认。"
     )
 
 
@@ -117,37 +117,22 @@ def resolve_parent_tools(
     if profile is AgentProfile.BUILD:
         return _append_spawn_tools(list(tools))
 
-    if profile is AgentProfile.PLAN:
-        picked: list[Tool] = []
-        for name in sorted(READ_ONLY_TOOL_NAMES):
-            if name in by_name:
-                picked.append(by_name[name])
-        for tool in tools:
-            if tool.name not in by_name or tool in picked:
-                continue
-            if _is_mcp_read_tool(tool.name):
-                picked.append(tool)
-        return picked
-
-    # Orchestrator: delegate-only primary (OpenCode Agent Orchestrator / Hermes orchestrator).
-    picked = []
-    for name in sorted(ORCHESTRATOR_TOOL_NAMES):
-        if name in {"spawn_subagent", "spawn_cli_agent"}:
-            continue
+    allowed = PLAN_TOOL_NAMES if profile is AgentProfile.PLAN else ASK_TOOL_NAMES
+    picked: list[Tool] = []
+    for name in sorted(allowed):
         if name in by_name:
             picked.append(by_name[name])
-    if spawn_tool is not None:
-        picked.append(spawn_tool)
-    if cli_spawn_tool is not None:
-        picked.append(cli_spawn_tool)
+    for tool in tools:
+        if tool.name in by_name and tool not in picked and _is_mcp_read_tool(tool.name):
+            picked.append(tool)
     return picked
 
 
 def default_max_steps_for_profile(profile: AgentProfile, *, filesystem_turn: bool) -> int:
-    if profile is AgentProfile.ORCHESTRATOR:
-        return 12
-    if profile is AgentProfile.PLAN:
+    if profile is AgentProfile.ASK:
         return 6
+    if profile is AgentProfile.PLAN:
+        return 8
     if filesystem_turn:
         return 8
     return 8

@@ -146,6 +146,43 @@ class BrowserSnapshotTool(_BrowserSessionTool):
         return output
 
 
+class BrowserScreenshotTool(_BrowserSessionTool):
+    name = "browser_screenshot"
+    description = (
+        "Take a screenshot of the current browser page. "
+        "Use after browser_open; supports full-page and annotated element labels."
+    )
+
+    def _parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Optional output path (.png/.jpeg)"},
+                "full_page": {"type": "boolean", "description": "Capture full scrollable page"},
+                "annotate": {
+                    "type": "boolean",
+                    "description": "Overlay numbered labels on interactive elements",
+                },
+            },
+            "required": [],
+        }
+
+    def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        return "浏览器截图"
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        args = ["screenshot"]
+        path = str(arguments.get("path", "")).strip()
+        if path:
+            args.append(path)
+        if arguments.get("full_page"):
+            args.append("--full")
+        if arguments.get("annotate"):
+            args.append("--annotate")
+        ok, output = run_agent_browser(args, session=self._session, timeout=120.0)
+        return output if ok else output
+
+
 class BrowserClickTool(_BrowserSessionTool):
     name = "browser_click"
     description = "Click an element by @ref from browser_snapshot or CSS selector."
@@ -221,6 +258,7 @@ def build_browser_tools(chat_session_id: str) -> list[Tool]:
     return [
         BrowserOpenTool(session),
         BrowserSnapshotTool(session),
+        BrowserScreenshotTool(session),
         BrowserClickTool(session),
         BrowserFillTool(session),
         BrowserCloseTool(session),

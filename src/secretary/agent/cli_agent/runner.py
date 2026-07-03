@@ -7,11 +7,13 @@ import os
 import shutil
 import signal
 import subprocess
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.delegation import delegation_from_cli
 from secretary.agent.progress_events import ProgressEvent
 from secretary.services.cli_agent_config import CliAgentConfigStore, CliProviderConfig
 
@@ -49,6 +51,8 @@ class CliAgentRunner:
         if not goal:
             return "Error: spawn_cli_agent requires a non-empty goal."
 
+        run_id = uuid.uuid4().hex[:10]
+
         if not self._config_store.is_enabled():
             return "Error: 外接 CLI Agent 未启用。请在设置 → CLI Agents 中开启，或继续使用灵犀自有 Agent。"
 
@@ -83,7 +87,8 @@ class CliAgentRunner:
                 iteration=0,
                 tool_name="spawn_cli_agent",
                 archetype=provider,
-                goal=goal[:240],
+                goal=goal[:200],
+                sub_run_id=run_id,
                 detail=f"cwd: {cwd}",
             ),
         )
@@ -97,11 +102,19 @@ class CliAgentRunner:
                     iteration=0,
                     tool_name="spawn_cli_agent",
                     archetype=provider,
+                    sub_run_id=run_id,
                     success=False,
                     message=f"超时（{timeout}s）",
                 ),
             )
-            return f"Error: CLI agent '{provider}' timed out after {timeout}s"
+            return delegation_from_cli(
+                run_id=run_id,
+                provider=provider,
+                goal=goal,
+                summary=f"Error: CLI agent '{provider}' timed out after {timeout}s",
+                success=False,
+                exit_code=-1,
+            ).to_tool_output()
 
         summary = self._summarize(cfg, stdout, stderr)
         self._write_audit(provider, goal, cwd, exit_code, stdout, stderr)
@@ -113,13 +126,20 @@ class CliAgentRunner:
                 iteration=0,
                 tool_name="spawn_cli_agent",
                 archetype=provider,
+                sub_run_id=run_id,
                 success=success,
                 message=summary[:240],
                 detail=f"exit={exit_code}",
             ),
         )
-        status = "成功" if success else f"失败 (exit {exit_code})"
-        return f"[CLI {provider} · {status}]\n\n{summary}"
+        return delegation_from_cli(
+            run_id=run_id,
+            provider=provider,
+            goal=goal,
+            summary=summary,
+            success=success,
+            exit_code=exit_code,
+        ).to_tool_output()
 
     def _validate_cwd(self, cwd: Path) -> str | None:
         try:

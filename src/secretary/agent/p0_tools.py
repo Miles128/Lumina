@@ -1,4 +1,4 @@
-"""Lumina P0 tools: search_files, patch, todo, skills, clarify."""
+"""Lumina P0 tools: search_files, glob_files, patch, todo, skills, clarify, ask_user."""
 
 from __future__ import annotations
 
@@ -13,8 +13,10 @@ from secretary.agent.tools.base import Tool, _resolve_path
 from secretary.services.todo_store import TodoStore
 
 CLARIFY_PREFIX = "CLARIFY_REQUEST"
+ASK_USER_PREFIX = "ASK_USER_REQUEST"
 SEARCH_MAX_MATCHES = 50
 SEARCH_MAX_LINE_CHARS = 300
+GLOB_MAX_RESULTS = 200
 
 
 class SearchFilesTool(Tool):
@@ -105,6 +107,52 @@ class SearchFilesTool(Tool):
         if not output:
             return "No matches found."
         return output
+
+
+class GlobFilesTool(Tool):
+    name = "glob_files"
+    description = (
+        "Find files by glob pattern (e.g. **/*.py, src/**/*.ts). "
+        "Use for locating files by name/path, not content search."
+    )
+    needs_confirmation = False
+    risk_level = "low"
+
+    def _parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern, e.g. **/*.md"},
+                "path": {"type": "string", "description": "Root directory (default: working dir)"},
+            },
+            "required": ["pattern"],
+        }
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        pattern = str(arguments.get("pattern", "")).strip()
+        if not pattern:
+            return "Error: empty pattern"
+        root = _resolve_path(str(arguments.get("path", ".")), working_dir)
+        if not root.exists():
+            return f"Error: path not found: {root}"
+        if not root.is_dir():
+            return f"Error: not a directory: {root}"
+        try:
+            matches = sorted(
+                path for path in root.glob(pattern) if path.is_file()
+            )[:GLOB_MAX_RESULTS]
+        except ValueError as exc:
+            return f"Error: invalid glob pattern ({exc})"
+        if not matches:
+            return "No files matched."
+        lines = []
+        for path in matches:
+            try:
+                lines.append(str(path.relative_to(root)))
+            except ValueError:
+                lines.append(str(path))
+        suffix = f"\n...(truncated at {GLOB_MAX_RESULTS})" if len(lines) >= GLOB_MAX_RESULTS else ""
+        return "\n".join(lines) + suffix
 
 
 class PatchTool(Tool):
@@ -315,5 +363,97 @@ class ClarifyTool(Tool):
         return "\n".join(lines)
 
 
+class AskUserTool(Tool):
+    name = "ask_user"
+    description = (
+        "Ask the user structured questions with optional choices. "
+        "Prefer over clarify when options are known. Stops the loop until the user replies."
+    )
+    needs_confirmation = False
+    risk_level = "low"
+
+    def _parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "description": "1-4 structured questions",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "prompt": {"type": "string"},
+                            "options": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "allow_multiple": {"type": "boolean"},
+                        },
+                        "required": ["prompt"],
+                    },
+                },
+                "context": {"type": "string", "description": "Optional intro shown above questions"},
+            },
+            "required": ["questions"],
+        }
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        raw = arguments.get("questions", [])
+        if not isinstance(raw, list):
+            return "Error: questions must be a list"
+        normalized: list[dict[str, Any]] = []
+        for index, item in enumerate(raw[:4], start=1):
+            if isinstance(item, str):
+                prompt = item.strip()
+                if prompt:
+                    normalized.append({"id": f"q{index}", "prompt": prompt, "options": []})
+                continue
+            if not isinstance(item, dict):
+                continue
+            prompt = str(item.get("prompt", "")).strip()
+            if not prompt:
+                continue
+            question_id = str(item.get("id", f"q{index}")).strip() or f"q{index}"
+            options_raw = item.get("options", [])
+            options = (
+                [str(opt).strip() for opt in options_raw if str(opt).strip()]
+                if isinstance(options_raw, list)
+                else []
+            )
+            normalized.append(
+                {
+                    "id": question_id,
+                    "prompt": prompt,
+                    "options": options[:8],
+                    "allow_multiple": bool(item.get("allow_multiple", False)),
+                }
+            )
+        if not normalized:
+            return "Error: at least one question required"
+        payload = {
+            "version": 1,
+            "context": str(arguments.get("context", "")).strip(),
+            "questions": normalized,
+        }
+        return ASK_USER_PREFIX + "\n" + json.dumps(payload, ensure_ascii=False)
+
+
 def is_clarify_output(text: str) -> bool:
     return text.strip().startswith(CLARIFY_PREFIX)
+
+
+def is_ask_user_output(text: str) -> bool:
+    return text.strip().startswith(ASK_USER_PREFIX)
+
+
+def is_user_input_request(text: str) -> bool:
+    return is_clarify_output(text) or is_ask_user_output(text)
+
+
+def format_user_input_reply(tool_output: str, *, thought: str) -> str:
+    if is_ask_user_output(tool_output):
+        return tool_output.strip()
+    if "\n" in tool_output:
+        return tool_output.split("\n", 1)[1].strip()
+    return thought

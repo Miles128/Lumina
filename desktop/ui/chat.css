@@ -84,25 +84,24 @@ html, body {
 }
 
 .chat-sidebar-head {
+  display: flex;
+  justify-content: flex-start;
   padding: 4px 6px 8px;
 }
-
-.new-thread-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--line);
   background: #fff;
   color: var(--text);
   border-radius: 10px;
-  padding: 8px 12px;
+  padding: 0;
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
-  text-align: left;
-  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  transition: background 0.12s, border-color 0.12s;
 }
 
 .new-thread-btn:hover {
@@ -111,7 +110,7 @@ html, body {
 }
 
 .new-thread-btn:active {
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04) inset;
+  background: var(--bg-subtle);
 }
 
 .new-thread-btn:focus-visible {
@@ -129,7 +128,7 @@ html, body {
 }
 
 .new-thread-label {
-  flex: 1;
+  display: none;
 }
 
 .thread-list {
@@ -732,6 +731,55 @@ html, body {
 
 .message-grounding-meta.is-unverified {
   color: #b42318;
+}
+
+.ask-user-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ask-user-context {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+}
+
+.ask-user-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.ask-user-prompt {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.ask-user-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-user-option {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ask-user-option:hover {
+  border-color: #6366f1;
+  color: #4338ca;
+}
+
+.ask-user-hint {
+  margin: 0;
+  font-size: 12px;
 }
 
 @keyframes pulse {

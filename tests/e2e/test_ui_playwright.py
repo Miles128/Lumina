@@ -86,16 +86,21 @@ def test_ui_sync_button_triggers_api(page: Page) -> None:
     sync_hits: list[str] = []
 
     def track_sync(route, request) -> None:
-        sync_hits.append(request.method)
+        if request.method == "POST" and "/api/sync/" in request.url:
+            sync_hits.append(request.url)
         route.fulfill(
             status=200,
             content_type="application/json",
-            body="[]",
+            body='{"inserted": 0, "message": "ok"}',
         )
 
-    page.route("**/api/sync", track_sync)
+    page.route("**/api/sync/**", track_sync)
     page.goto("/")
-    page.locator("#btn-topbar-menu").click()
-    page.locator("#btn-sync").click()
+    _open_settings(page)
+    platform_btn = page.locator("#settings-nav .settings-nav-group").nth(1).locator(
+        "button.settings-nav-item"
+    ).nth(1)
+    platform_btn.click()
+    page.locator('[data-action="sync"]').click()
     page.wait_for_timeout(800)
-    assert sync_hits, "expected POST /api/sync from sync button"
+    assert sync_hits, "expected POST /api/sync/{source} from settings sync button"

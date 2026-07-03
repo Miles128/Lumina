@@ -468,8 +468,8 @@
             <span>Agent 模式 · Profile</span>
             <select id="agent-profile">
               <option value="build"${agentProfile === "build" ? " selected" : ""}>Build · 执行（默认）</option>
+              <option value="ask"${agentProfile === "ask" || agentProfile === "orchestrator" ? " selected" : ""}>Ask · 问答检索</option>
               <option value="plan"${agentProfile === "plan" ? " selected" : ""}>Plan · 只读规划</option>
-              <option value="orchestrator"${agentProfile === "orchestrator" ? " selected" : ""}>Orchestrator · 只委派</option>
             </select>
           </label>
           <label class="settings-field">
@@ -553,9 +553,6 @@
     const density = uiPreferences.density || "comfortable";
     const width = uiPreferences.messageWidth || "medium";
     const language = uiPreferences.language || "bi";
-    const locationState = window.LuminaLocation?.loadState?.() || { enabled: true, city: "" };
-    const locationEnabled = locationState.enabled !== false;
-    const cachedCity = locationState.city || "";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -586,14 +583,6 @@
               <option value="wide"${width === "wide" ? " selected" : ""}>${escapeHtml(t("appearance.width.wide"))}</option>
             </select>
           </label>
-          <label class="settings-field settings-field-inline">
-            <span>位置权限</span>
-            <input id="ui-location-enabled" type="checkbox"${locationEnabled ? " checked" : ""} />
-          </label>
-          <p class="muted settings-hint">开启后，联网搜索（天气、附近、实时信息等）会自动带上你的位置。${cachedCity ? `当前：${escapeHtml(cachedCity)}` : ""}</p>
-          <div class="platform-actions">
-            <button class="btn-text" type="button" id="btn-refresh-location">刷新位置</button>
-          </div>
         </div>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-appearance">${escapeHtml(t("action.save"))}</button>
@@ -602,38 +591,14 @@
       </div>
     `;
     document.getElementById("btn-save-appearance").addEventListener("click", saveAppearance);
-    document.getElementById("btn-refresh-location")?.addEventListener("click", refreshLocationFromSettings);
-  }
-
-  async function refreshLocationFromSettings() {
-    const feedback = document.getElementById("appearance-feedback");
-    if (!window.LuminaLocation) {
-      showFeedback(feedback, "error", "当前环境不支持位置服务");
-      return;
-    }
-    showFeedback(feedback, "info", "正在获取位置…");
-    try {
-      window.LuminaLocation.setEnabled(true);
-      const pos = await window.LuminaLocation.ensurePosition();
-      const city = pos.city;
-      if (!city) {
-        showFeedback(feedback, "error", "获取位置失败，请检查系统位置权限");
-        return;
-      }
-      showFeedback(feedback, "success", `已更新：${city}`);
-      renderAppearancePane();
-    } catch (error) {
-      showFeedback(feedback, "error", `获取位置失败：${error.message || "未知错误"}`);
-    }
   }
 
   function saveAppearance() {
     const density = document.getElementById("ui-density")?.value || "comfortable";
     const messageWidth = document.getElementById("ui-message-width")?.value || "medium";
     const language = document.getElementById("ui-language")?.value || "bi";
-    const locationEnabled = Boolean(document.getElementById("ui-location-enabled")?.checked);
     if (window.LuminaLocation) {
-      window.LuminaLocation.setEnabled(locationEnabled);
+      window.LuminaLocation.setEnabled(false);
     }
     uiPreferences = { density, messageWidth, language };
     localStorage.setItem("lumina.ui.preferences.v1", JSON.stringify(uiPreferences));
@@ -1060,6 +1025,7 @@
             <span class="platform-status ${escapeAttr(cfg.status || "not_configured")}">${statusLabel(cfg.status || "not_configured")}</span>
           </div>
           <p>直接连接 Shibei 应用的知识库。监控文件夹、搜索引擎等请在 Shibei 项目的 <code>config.yaml</code> 中配置；Lumina 只负责调用。</p>
+          <p class="muted settings-hint">建议在 Shibei <code>config.yaml</code> 的 ignore 中排除 <code>target/</code>、<code>node_modules/</code>、<code>.git/</code>、<code>dist/</code>、<code>build/</code> 等构建目录，避免索引噪音与解析 warning。</p>
         </header>
         <p class="platform-meta">${escapeHtml(cfg.status_message || "")}</p>
         <div class="settings-fields">

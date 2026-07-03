@@ -23,8 +23,9 @@
 
   const AGENT_MODE_LABELS = {
     build: "Build",
+    ask: "Ask",
     plan: "Plan",
-    orchestrator: "Orchestrator",
+    orchestrator: "Build",
   };
   let currentAgentMode = "build";
 
@@ -147,8 +148,9 @@
     try {
       const config = await window.SecretaryAPI.request("GET", "/api/agent/config");
       const profile = String(config?.agent_profile || "build").toLowerCase();
-      if (AGENT_MODE_LABELS[profile]) {
-        currentAgentMode = profile;
+      const normalized = profile === "orchestrator" ? "build" : profile;
+      if (AGENT_MODE_LABELS[normalized]) {
+        currentAgentMode = normalized;
       }
     } catch (_error) {
       // Keep default "build".
@@ -171,6 +173,12 @@
       if (!agentModePicker) return;
       if (agentModePicker.contains(event.target)) return;
       setAgentModeMenuOpen(false);
+    });
+    messagesEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-ask-answer]");
+      if (!button || busy) return;
+      event.preventDefault();
+      void sendMessage(button.dataset.askAnswer || "");
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setAgentModeMenuOpen(false);
@@ -197,7 +205,7 @@
   let cachedIdentityIntro = LUMINA_IDENTITY_INTRO_FALLBACK;
   let cachedAuthorReply = LUMINA_AUTHOR_REPLY_FALLBACK;
 
-  initThreads();
+  void initThreads();
   void prefetchIdentityIntro();
   void prefetchAuthorReply();
 
@@ -296,16 +304,7 @@
       const controller = createActiveController();
       const traceId = createTraceId();
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
-      const chatBody = { message: text, trace_id: traceId };
-      if (window.LuminaLocation?.isWebSearchQuery(text)) {
-        showTyping(true, "正在获取位置…");
-        try {
-          Object.assign(chatBody, await window.LuminaLocation.payloadForWebSearch(text));
-        } catch (error) {
-          console.warn("[Lumina] location for web search failed:", error);
-        }
-        showTyping(true, t("chat.typing.understand"));
-      }
+      const chatBody = { message: text, trace_id: traceId, thread_id: currentThreadId || "" };
       const response = await window.SecretaryAPI.request(
         "POST",
         "/api/chat",
@@ -1201,7 +1200,52 @@
   }
 
   function renderMessageHtml(role, text) {
+    if (role === "bot") {
+      const askHtml = renderAskUserHtml(text);
+      if (askHtml) return askHtml;
+    }
     return renderMarkdown(text);
+  }
+
+  function renderAskUserHtml(text) {
+    const source = String(text || "").trim();
+    if (!source.startsWith("ASK_USER_REQUEST")) return "";
+    const jsonPart = source.slice("ASK_USER_REQUEST".length).trim();
+    let payload;
+    try {
+      payload = JSON.parse(jsonPart);
+    } catch (_error) {
+      return "";
+    }
+    const questions = Array.isArray(payload?.questions) ? payload.questions : [];
+    if (!questions.length) return "";
+
+    const intro = payload.context
+      ? `<p class="ask-user-context">${escapeHtml(payload.context)}</p>`
+      : "";
+    const cards = questions
+      .map((question, index) => {
+        const prompt = escapeHtml(String(question.prompt || `问题 ${index + 1}`));
+        const options = Array.isArray(question.options) ? question.options : [];
+        const optionButtons = options.length
+          ? `<div class="ask-user-options">${options
+              .map(
+                (option) =>
+                  `<button type="button" class="ask-user-option" data-ask-answer="${escapeAttr(String(option))}">${escapeHtml(String(option))}</button>`,
+              )
+              .join("")}</div>`
+          : `<p class="ask-user-hint muted">请在下方输入框回复</p>`;
+        return `<div class="ask-user-card"><div class="ask-user-prompt">${prompt}</div>${optionButtons}</div>`;
+      })
+      .join("");
+    return `<div class="ask-user-panel">${intro}${cards}</div>`;
+  }
+
+  function escapeAttr(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;");
   }
 
   function renderMarkdown(text) {
@@ -1219,9 +1263,7 @@
       .replaceAll(">", "&gt;");
   }
 
-  function initThreads() {
-    threads = sortThreadsByUpdatedAt(loadThreads());
-    currentThreadId = "";
+  async function initThreads() {
     threadListEl.addEventListener("click", (event) => {
       const deleteBtn = event.target.closest("[data-delete-thread-id]");
       if (deleteBtn) {
@@ -1234,6 +1276,28 @@
       if (!button) return;
       switchThread(button.dataset.threadId || "");
     });
+
+    try {
+      const remote = await window.SecretaryAPI.request("GET", "/api/chat/threads", null, {
+        timeoutMs: 8000,
+      });
+      if (Array.isArray(remote?.threads) && remote.threads.length) {
+        threads = sortThreadsByUpdatedAt(remote.threads);
+        const savedThreadId = String(remote.current_id || localStorage.getItem(CURRENT_THREAD_KEY) || "");
+        currentThreadId = threads.some((item) => item.id === savedThreadId)
+          ? savedThreadId
+          : threads[0].id;
+        saveThreadsLocal();
+        renderThreadList();
+        renderCurrentThreadMessages();
+        scrollActiveThreadIntoView();
+        return;
+      }
+    } catch (_error) {
+      // Fall back to localStorage below.
+    }
+
+    threads = sortThreadsByUpdatedAt(loadThreads());
     if (!threads.length) {
       createThread(false);
       return;
@@ -1245,6 +1309,7 @@
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    void pushThreadsToServer();
   }
 
   function createThread(clearBackend = true) {
@@ -1267,9 +1332,6 @@
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
-    if (clearBackend) {
-      resetBackendHistory();
-    }
   }
 
   function deleteThread(threadId) {
@@ -1280,7 +1342,6 @@
     if (currentThreadId === threadId) {
       if (threads.length) {
         currentThreadId = threads[0].id;
-        resetBackendHistory();
       } else {
         createThread(false);
         return;
@@ -1299,7 +1360,6 @@
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
-    resetBackendHistory();
   }
 
   function scrollActiveThreadIntoView() {
@@ -1368,9 +1428,23 @@
     return threads.find((item) => item.id === currentThreadId) || null;
   }
 
-  function saveThreads() {
+  function saveThreadsLocal() {
     localStorage.setItem(THREADS_KEY, JSON.stringify(threads));
     localStorage.setItem(CURRENT_THREAD_KEY, currentThreadId);
+  }
+
+  async function pushThreadsToServer() {
+    await window.SecretaryAPI.request(
+      "PUT",
+      "/api/chat/threads",
+      { current_id: currentThreadId, threads },
+      { timeoutMs: 8000 },
+    );
+  }
+
+  function saveThreads() {
+    saveThreadsLocal();
+    void pushThreadsToServer().catch(() => {});
   }
 
   function loadThreads() {
