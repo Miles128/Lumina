@@ -67,6 +67,47 @@ class ChatThreadStore:
             "path": str(self._path),
         }
 
+    def create_thread(self, *, title: str = "新对话") -> dict[str, Any]:
+        document = self.load_document()
+        threads = [item for item in document["threads"] if isinstance(item, dict)]
+        thread_id = f"t_{uuid.uuid4().hex[:10]}"
+        now = datetime.now(UTC).isoformat()
+        threads.insert(
+            0,
+            {
+                "id": thread_id,
+                "title": (title or "新对话")[:120],
+                "updatedAt": now,
+                "messages": [],
+            },
+        )
+        self.save_document(current_id=thread_id, threads=threads)
+        return self.list_view()
+
+    def set_current(self, thread_id: str) -> dict[str, Any]:
+        document = self.load_document()
+        threads = [item for item in document["threads"] if isinstance(item, dict)]
+        current = thread_id if any(item.get("id") == thread_id for item in threads) else document["current_id"]
+        if not current and threads:
+            current = str(threads[0].get("id") or "")
+        self.save_document(current_id=current, threads=threads)
+        return self.list_view()
+
+    def delete_thread(self, thread_id: str) -> dict[str, Any]:
+        document = self.load_document()
+        threads = [
+            item
+            for item in document["threads"]
+            if isinstance(item, dict) and item.get("id") != thread_id
+        ]
+        current = str(document["current_id"] or "")
+        if current == thread_id:
+            current = str(threads[0].get("id") or "") if threads else ""
+        self.save_document(current_id=current, threads=threads)
+        if not threads:
+            return self.create_thread()
+        return self.list_view()
+
     def replace_all(self, *, current_id: str, threads: list[dict[str, Any]]) -> dict[str, Any]:
         cleaned: list[dict[str, Any]] = []
         for item in threads:

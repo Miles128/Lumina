@@ -30,6 +30,11 @@
     openSource(button.dataset.sourcePath);
   });
   searchResults.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-empty-action]");
+    if (action) {
+      handleEmptyAction(action.dataset.emptyAction || "");
+      return;
+    }
     const button = event.target.closest("[data-source-path]");
     if (!button) return;
     openSource(button.dataset.sourcePath);
@@ -189,7 +194,7 @@
   function renderSearchResults(payload) {
     const results = payload.results || [];
     if (!results.length) {
-      searchResults.innerHTML = `<p class="kb-muted">未找到与「${escapeHtml(payload.query || "")}」相关的内容。</p>`;
+      searchResults.innerHTML = renderEmptySearch(payload);
       return;
     }
     searchResults.innerHTML = results
@@ -208,6 +213,43 @@
           </button>`;
       })
       .join("");
+  }
+
+  function renderEmptySearch(payload) {
+    const state = payload.empty_state || {};
+    const actions = Array.isArray(state.actions) ? state.actions : [];
+    const buttons = actions
+      .map(
+        (action) =>
+          `<button type="button" class="btn ghost" data-empty-action="${escapeAttr(String(action.id || ""))}">${escapeHtml(String(action.label || ""))}</button>`,
+      )
+      .join("");
+    const message = state.message || `未找到与「${payload.query || ""}」相关的内容。`;
+    const reason = state.reason ? `<span class="kb-empty-reason">${escapeHtml(state.reason)}</span>` : "";
+    return `
+      <div class="kb-empty-result">
+        <div>
+          <strong>没有搜索结果</strong>
+          ${reason}
+        </div>
+        <p>${escapeHtml(message)}</p>
+        <div class="kb-empty-actions">${buttons}</div>
+      </div>`;
+  }
+
+  function handleEmptyAction(action) {
+    if (action === "import") {
+      void importNow();
+      return;
+    }
+    if (action === "settings") {
+      window.location.href = "/";
+      return;
+    }
+    if (action === "broaden") {
+      searchInput.focus();
+      searchInput.select();
+    }
   }
 
   async function importNow() {

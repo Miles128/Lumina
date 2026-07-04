@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.delegation import DelegationResult
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, LoopResult
 from secretary.agent.progress_events import ProgressEvent
@@ -28,7 +29,6 @@ from secretary.agent.subagent.registry import (
     resolve_tools,
 )
 from secretary.agent.subagent.resume import SubAgentResumeState
-from secretary.agent.delegation import DelegationResult
 from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory

@@ -8,19 +8,20 @@ from pathlib import Path
 from secretary.agent.agent_profile import AgentProfile, resolve_parent_tools
 from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.llm_config import LlmConfig
+from secretary.agent.permission_guard import guard_tools_for_profile
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
 from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
 from secretary.agent.tools.shell import ShellTool
 from secretary.agent.tools.web import WebFetchTool
-from secretary.services.todo_store import TodoStore
 from secretary.config import Settings
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.shibei_service import ShibeiService, shibei_ready_for_memory_read
+from secretary.services.todo_store import TodoStore
 
 if True:
     from secretary.agent.mcp_manager import McpManager
@@ -112,7 +113,7 @@ class ChatToolRegistry:
                 spawn_tool=None,
                 cli_spawn_tool=None,
             )
-        return tools, spawn_tool
+        return guard_tools_for_profile(profile, tools), spawn_tool
 
     def build_tools(self) -> list[Tool]:
         from secretary.agent.p0_tools import (

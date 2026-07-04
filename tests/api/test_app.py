@@ -32,6 +32,24 @@ def test_chat_endpoint() -> None:
     assert "usage_total_tokens" in payload
 
 
+def test_chat_thread_endpoints() -> None:
+    client = TestClient(app)
+    created = client.post("/api/chat/threads", json={"title": "API thread"})
+    assert created.status_code == 200
+    payload = created.json()
+    thread_id = payload["current_id"]
+    assert thread_id
+    assert any(item["id"] == thread_id for item in payload["threads"])
+
+    switched = client.put("/api/chat/threads/current", json={"thread_id": thread_id})
+    assert switched.status_code == 200
+    assert switched.json()["current_id"] == thread_id
+
+    deleted = client.delete(f"/api/chat/threads/{thread_id}")
+    assert deleted.status_code == 200
+    assert all(item["id"] != thread_id for item in deleted.json()["threads"])
+
+
 def test_graph_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/graph?filter=personal")

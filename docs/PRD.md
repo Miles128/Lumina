@@ -122,7 +122,7 @@
 | Shibei-first 读记忆路由 | Done |
 | 写记忆不被 sync_empty 误拦 | Done |
 | Lumina MEMORY/USER + SQLite 连接器（备选） | Done |
-| Shibei 空结果 UX（自动 import / 引导） | **Planned** |
+| Shibei 空结果 UX（自动 import / 引导） | **Done** |
 
 ### 5.3 Sync & Connectors
 
@@ -253,10 +253,10 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | FR-15 | MCP HTTP/SSE | P2 | Planned |
 | FR-27 | 打包内嵌 Python | P2 | Planned |
 | FR-16 | IM 网关 | P3 | Backlog |
-| FR-36 | Shibei 空结果 UX | P1 | Planned |
+| FR-36 | Shibei 空结果 UX | P1 | Done |
 | FR-37 | Git 只读工具 | P2 | Planned |
-| FR-38 | 前端 Turn 树（消费 schema v2） | P2 | Planned |
-| FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Planned |
+| FR-38 | 前端 Turn 树（消费 schema v2） | P2 | Done |
+| FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Done |
 
 ---
 
@@ -305,7 +305,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | # | 任务 | 为什么现在做 | 验收 |
 |---|------|--------------|------|
 | **N1** | **Shibei 空结果 UX**（FR-36） | 个人 KB 是核心路径；空结果仍易困惑 | 空检索 → 结构化 hint + 可选一键 import |
-| **N2** | **SSE 进度前端全接** | 后端已有 progress；用户仍觉「黑盒」 | 聊天区逐步显示 tool 名/轮次/成败 |
+| **N2** | **SSE 进度前端全接** | Done | Turn 树统一显示 tool / 子 Agent / CLI / 暂停 |
 | **N3** | **CLI provider 端到端**（FR-30d） | Build 委派是重任务主路径 | codex/kimi 各 1 条 manual + mock 单测 |
 | **N4** | **Briefing/Think Shibei 优先** | 定时任务仍偏连接器 | 摘要数据源顺序与 chat 一致 |
 
@@ -317,7 +317,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | **N6** | Explore 便宜模型 | 降 sub-agent 成本 | FR-28 |
 | **N7** | Git 只读工具 | `git_status` / `git_diff` / `git_log` | FR-37 |
 | **N8** | E2E 扩展 | ask_user · sync_source · 模式切换 | FR-21 |
-| **N9** | Turn 树 UI | 消费 `turn_id` / schema v2 | FR-38 |
+| **N9** | Turn 树 UI | Done | FR-38 |
 
 #### Phase 3 — 平台（P2–P3）
 
@@ -325,7 +325,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 |---|------|-----|
 | N10 | MCP HTTP/SSE | FR-15 |
 | N11 | 打包内嵌 Python | FR-27 |
-| N12 | Plan PermissionGuard | FR-39 |
+| N12 | Plan PermissionGuard | Done |
 | N13 | 定时 Agent / cron | Backlog |
 | N14 | IM 网关（飞书 bot） | FR-16 |
 

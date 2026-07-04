@@ -22,10 +22,10 @@ from secretary.agent.mcp_manager import McpManager
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.session_store import SessionStore
-from secretary.agent.turn_orchestrator import TurnOrchestrator
-from secretary.agent.turn_runner import TurnRunner
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
+from secretary.agent.turn_orchestrator import TurnOrchestrator
+from secretary.agent.turn_runner import TurnRunner
 from secretary.config import settings
 from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError, IngestError
@@ -102,6 +102,14 @@ class ChatThreadsPutRequest(BaseModel):
     threads: list[dict[str, object]] = Field(default_factory=list)
 
 
+class ChatThreadCreateRequest(BaseModel):
+    title: str = Field(default="新对话", max_length=120)
+
+
+class ChatThreadCurrentRequest(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=64)
+
+
 class LocationReverseRequest(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
@@ -139,6 +147,7 @@ class ConfirmActionRequest(BaseModel):
     grant_permanent_read: bool = False
     grant_session_write: bool = False
     trace_id: str = Field(default="", max_length=64)
+    thread_id: str = Field(default="", max_length=64)
 
 
 class GraphResponse(BaseModel):
@@ -882,11 +891,12 @@ def chat(request: Request, body: ChatRequest) -> ChatResponse:
 def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse:
     chat_service: ChatService = _svc(request).chat_service
     trace_id = body.trace_id.strip()
+    thread_id = body.thread_id.strip()
     progress = _build_progress_callback(request, trace_id)
     if trace_id and request.app.state.session_store.get_turn(trace_id) is None:
         request.app.state.session_store.start_turn(
             trace_id=trace_id,
-            thread_id="",
+            thread_id=thread_id,
             user_message="confirm",
         )
     keep_turn = False
@@ -897,6 +907,7 @@ def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse
                 grant_permanent_read=body.grant_permanent_read,
                 grant_session_write=body.grant_session_write,
                 progress_callback=progress,
+                thread_id=thread_id or None,
                 trace_id=trace_id or None,
             )
         keep_turn = bool(result.pending_confirmation)
@@ -916,6 +927,24 @@ def clear_chat_history(request: Request) -> dict[str, str]:
 def get_chat_threads(request: Request) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     return chat_service.list_threads()
+
+
+@app.post("/api/chat/threads")
+def create_chat_thread(request: Request, body: ChatThreadCreateRequest) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.create_thread(title=body.title.strip() or "新对话")
+
+
+@app.put("/api/chat/threads/current")
+def set_current_chat_thread(request: Request, body: ChatThreadCurrentRequest) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.set_current_thread(body.thread_id.strip())
+
+
+@app.delete("/api/chat/threads/{thread_id}")
+def delete_chat_thread(request: Request, thread_id: str) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.delete_thread(thread_id.strip())
 
 
 @app.put("/api/chat/threads")

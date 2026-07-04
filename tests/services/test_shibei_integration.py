@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from secretary.services.shibei_config import ShibeiConfigDocument, ShibeiConfigStore
-from secretary.services.shibei_service import ShibeiService, _format_search
+from secretary.services.shibei_service import ShibeiService, _format_search, shibei_empty_state
 
 
 def _write_shibei_project(root: Path, *, sources: list[str] | None = None) -> None:
@@ -61,6 +61,36 @@ def test_shibei_service_search_mock(tmp_path: Path) -> None:
         with patch.dict("sys.modules", {"shibei": MagicMock(Shibei=lambda _p: fake_brain)}):
             output = service.search("test")
     assert "未在 Shibei" in output
+
+
+def test_shibei_search_raw_adds_empty_state(tmp_path: Path) -> None:
+    shibei_root = tmp_path / "shibei"
+    _write_shibei_project(shibei_root)
+    store = ShibeiConfigStore(tmp_path / "shibei.json", data_dir=tmp_path / "data")
+    store.save(ShibeiConfigDocument(install_path=str(shibei_root)))
+    service = ShibeiService(store)
+
+    with patch.object(service, "_call", return_value={"query": "test", "total": 0, "results": []}):
+        with patch.object(
+            service,
+            "status_view",
+            return_value={"status": "ready", "source_count": 0, "sources": ["/tmp/notes"]},
+        ):
+            payload = service.search_raw("test")
+
+    assert payload["empty_state"]["reason"] == "empty_index"
+    assert payload["empty_state"]["query"] == "test"
+    assert payload["empty_state"]["actions"][0]["id"] == "import"
+
+
+def test_shibei_empty_state_reports_no_sources() -> None:
+    payload = shibei_empty_state(
+        "notes",
+        {"status": "ready", "source_count": 1, "sources": []},
+    )
+
+    assert payload["reason"] == "no_sources"
+    assert "sources" in payload["message"]
 
 
 def test_shibei_read_source_within_root(tmp_path: Path) -> None:

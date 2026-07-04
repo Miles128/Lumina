@@ -7,12 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import LoopResult
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.session_store import SessionStore
 from secretary.agent.turn_models import TurnContext
 from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
-from secretary.agent.llm_config import LlmConfig
 
 
 def enrich_progress_event(event: ProgressEvent, turn: TurnContext | None) -> ProgressEvent:

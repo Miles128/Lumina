@@ -36,12 +36,12 @@ from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
 from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
+from secretary.agent.session_store import SessionStore
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
 from secretary.agent.subagent import SpawnSubagentTool
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
-from secretary.agent.session_store import SessionStore
 from secretary.agent.turn_models import TurnContext
 from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
 from secretary.agent.turn_runner import TurnRunner
@@ -383,8 +383,11 @@ class ChatService:
         grant_permanent_read: bool = False,
         grant_session_write: bool = False,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        thread_id: str | None = None,
         trace_id: str | None = None,
     ) -> ChatResult:
+        if thread_id:
+            self._active_thread_id = thread_id.strip()
         self._active_trace_id = trace_id.strip() if trace_id else ""
         sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
@@ -1111,6 +1114,15 @@ class ChatService:
 
     def list_threads(self) -> dict[str, object]:
         return self._thread_store.list_view()
+
+    def create_thread(self, *, title: str = "新对话") -> dict[str, object]:
+        return self._thread_store.create_thread(title=title)
+
+    def set_current_thread(self, thread_id: str) -> dict[str, object]:
+        return self._thread_store.set_current(thread_id)
+
+    def delete_thread(self, thread_id: str) -> dict[str, object]:
+        return self._thread_store.delete_thread(thread_id)
 
     def save_threads(self, *, current_id: str, threads: list[dict[str, object]]) -> dict[str, object]:
         return self._thread_store.replace_all(current_id=current_id, threads=threads)

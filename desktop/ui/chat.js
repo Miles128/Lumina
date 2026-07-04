@@ -41,6 +41,9 @@
   let streamingText = "";
   let progressSession = {
     bufferedItems: [],
+    turnNodes: new Map(),
+    turnRootId: "",
+    hasTurnTree: false,
     maxIteration: 0,
     hasTools: false,
     hasSubagent: false,
@@ -48,8 +51,6 @@
     hasThought: false,
     panelVisible: false,
   };
-  /** @type {Map<string, {archetype: string, goal: string, status: string, tools: string[]}>} */
-  const subagentNodes = new Map();
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
@@ -257,9 +258,11 @@
     void window.SecretaryAPI.request(
       "POST",
       "/api/chat",
-      { message: userText, trace_id: "" },
+      { message: userText, trace_id: "", thread_id: currentThreadId || "" },
       { timeoutMs: 15_000 },
-    ).catch(() => {});
+    )
+      .then(() => syncThreadsFromServer({ render: false }))
+      .catch(() => {});
   }
 
   function sendIdentityIntro(userText) {
@@ -275,11 +278,13 @@
     void window.SecretaryAPI.request(
       "POST",
       "/api/chat",
-      { message: userText, trace_id: "" },
+      { message: userText, trace_id: "", thread_id: currentThreadId || "" },
       { timeoutMs: 15_000 },
-    ).catch(() => {
-      // History sync is best-effort; intro is already on screen.
-    });
+    )
+      .then(() => syncThreadsFromServer({ render: false }))
+      .catch(() => {
+        // History sync is best-effort; intro is already on screen.
+      });
   }
 
   async function sendMessage(text) {
@@ -327,6 +332,7 @@
         appendMessage("bot", response.reply);
         appendGroundingMeta(response);
       }
+      void syncThreadsFromServer({ render: false });
     } catch (error) {
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.reply"));
@@ -369,6 +375,7 @@
           grant_permanent_read: Boolean(options.grantPermanentRead),
           grant_session_write: Boolean(options.grantSessionWrite),
           trace_id: traceId,
+          thread_id: currentThreadId || "",
         },
         {
           signal: controller.signal,
@@ -388,6 +395,7 @@
         appendMessage("bot", response.reply);
         appendGroundingMeta(response);
       }
+      void syncThreadsFromServer({ render: false });
     } catch (error) {
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.action"));
@@ -742,6 +750,9 @@
   function resetProgressLog() {
     progressSession = {
       bufferedItems: [],
+      turnNodes: new Map(),
+      turnRootId: "",
+      hasTurnTree: false,
       maxIteration: 0,
       hasTools: false,
       hasSubagent: false,
@@ -749,12 +760,12 @@
       hasThought: false,
       panelVisible: false,
     };
-    subagentNodes.clear();
     if (subagentTreeEl) {
       subagentTreeEl.hidden = true;
       subagentTreeEl.innerHTML = "";
     }
     if (!progressListEl) return;
+    progressListEl.hidden = false;
     progressListEl.innerHTML = "";
     if (progressEl) {
       progressEl.hidden = true;
@@ -767,114 +778,176 @@
       progressSession.hasTools ||
       progressSession.hasNetwork ||
       progressSession.hasSubagent ||
-      progressSession.hasThought
+      progressSession.hasThought ||
+      progressSession.hasTurnTree
     );
   }
 
-  function subagentStatusLabel(status) {
+  function turnStatusLabel(status) {
     if (status === "paused") return t("chat.subagent.paused");
     if (status === "done") return t("chat.subagent.done");
     if (status === "failed") return t("chat.subagent.failed");
     return t("chat.subagent.running");
   }
 
-  function upsertSubagentNode(event) {
-    const runId = String(event?.sub_run_id || "").trim();
-    if (!runId) return;
+  function normalizeTurnStatus(event) {
     const kind = String(event?.kind || "");
-    const existing = subagentNodes.get(runId) || {
-      archetype: String(event?.archetype || "explore"),
-      goal: String(event?.goal || ""),
-      status: "running",
-      tools: [],
-    };
-    if (event?.archetype) existing.archetype = String(event.archetype);
-    if (event?.goal) existing.goal = String(event.goal);
-    if (event?.subagent_status) existing.status = String(event.subagent_status);
-    if (kind === "subagent_started") existing.status = "running";
-    if (kind === "subagent_paused") existing.status = "paused";
-    if (kind === "subagent_finished") {
-      existing.status = event?.success === false ? "failed" : "done";
+    if (kind === "pause_confirmation" || kind === "subagent_paused") return "paused";
+    if (kind === "turn_completed") return event?.success === false ? "paused" : "done";
+    if (kind.endsWith("_finished") || kind === "tool_finished" || kind === "iteration_completed") {
+      return event?.success === false ? "failed" : "done";
     }
+    if (kind === "stopped") return "failed";
+    return "running";
+  }
+
+  function turnNodeType(event) {
+    const kind = String(event?.kind || "");
+    if (kind.startsWith("turn_")) return "turn";
+    if (kind.startsWith("subagent_")) return "subagent";
+    if (kind.startsWith("cli_agent_")) return "cli";
+    if (kind === "pause_confirmation") return "pause";
+    if (kind.startsWith("tool_")) return "tool";
+    if (kind.startsWith("iteration_")) return "iteration";
+    return "event";
+  }
+
+  function turnNodeId(event) {
+    const kind = String(event?.kind || "");
+    const turnId = String(event?.turn_id || "turn_local").trim();
+    const subRunId = String(event?.sub_run_id || "").trim();
     const toolName = String(event?.tool_name || "").trim();
-    if (
-      toolName &&
-      (kind === "tool_started" || kind === "tool_finished") &&
-      !existing.tools.some((t) => t.name === toolName)
-    ) {
-      const entry = { name: toolName, preview: "" };
-      if (kind === "tool_started" && toolName === "shell") {
-        entry.preview = _extractShellPreview(String(event?.detail || ""));
-      }
-      existing.tools.push(entry);
+    const iteration = Number(event?.iteration) || 0;
+    if (kind.startsWith("turn_")) return turnId;
+    if (kind.startsWith("subagent_")) return `sub:${subRunId || turnId}`;
+    if (kind.startsWith("cli_agent_")) return `cli:${subRunId || turnId}`;
+    if (kind === "pause_confirmation") return `pause:${turnId}:${toolName || "confirm"}`;
+    if (kind.startsWith("tool_")) {
+      const parent = subRunId ? `sub:${subRunId}` : turnId;
+      return `${parent}:tool:${toolName || "tool"}:${iteration}`;
     }
-    subagentNodes.set(runId, existing);
-    renderSubagentTree();
+    if (kind.startsWith("iteration_")) return `${turnId}:iteration:${iteration}`;
+    return String(event?.item_id || `${turnId}:${kind}:${Date.now()}`);
   }
 
-  function _extractShellPreview(detail) {
-    const match = String(detail || "").match(/执行命令[:：]\s*`([^`]+)`/);
-    if (!match) return "";
-    let cmd = match[1].trim().replace(/\s+/g, " ");
-    if (cmd.length > 48) cmd = cmd.slice(0, 47) + "…";
-    return cmd;
+  function turnParentId(event) {
+    const kind = String(event?.kind || "");
+    const turnId = String(event?.turn_id || progressSession.turnRootId || "turn_local").trim();
+    const subRunId = String(event?.sub_run_id || "").trim();
+    if (kind.startsWith("turn_")) return "";
+    if (kind.startsWith("tool_") && subRunId) return `sub:${subRunId}`;
+    if (kind.startsWith("cli_agent_")) return "";
+    if (kind.startsWith("subagent_")) {
+      const parentSubRunId = String(event?.parent_sub_run_id || "").trim();
+      return parentSubRunId ? `sub:${parentSubRunId}` : turnId;
+    }
+    return turnId;
   }
 
-  function renderSubagentTree() {
+  function fallbackTurnNode(parentId) {
+    return {
+      id: parentId,
+      parentId: "",
+      type: "turn",
+      label: t("chat.turn.root"),
+      detail: "",
+      status: "running",
+      children: [],
+      order: progressSession.turnNodes.size,
+    };
+  }
+
+  function upsertTurnTreeNode(event, label) {
+    const kind = String(event?.kind || "");
+    if (kind.startsWith("reply_")) return;
+    const id = turnNodeId(event);
+    const parentId = turnParentId(event);
+    progressSession.hasTurnTree = true;
+    if (kind === "turn_started" || (!progressSession.turnRootId && parentId === "")) {
+      progressSession.turnRootId = id;
+    }
+    if (parentId && !progressSession.turnNodes.has(parentId)) {
+      progressSession.turnNodes.set(parentId, fallbackTurnNode(parentId));
+    }
+    const existing = progressSession.turnNodes.get(id) || {
+      id,
+      parentId,
+      type: turnNodeType(event),
+      label: "",
+      detail: "",
+      status: "running",
+      children: [],
+      order: progressSession.turnNodes.size,
+    };
+    existing.parentId = existing.parentId || parentId;
+    existing.type = turnNodeType(event);
+    existing.label = label || existing.label || kind;
+    existing.status = normalizeTurnStatus(event);
+    if (event?.detail) existing.detail = String(event.detail);
+    if (event?.goal && !existing.detail) existing.detail = String(event.goal);
+    if (event?.message && existing.type === "turn" && !existing.detail) {
+      existing.detail = String(event.message);
+    }
+    progressSession.turnNodes.set(id, existing);
+    if (parentId) {
+      const parent = progressSession.turnNodes.get(parentId) || fallbackTurnNode(parentId);
+      if (!parent.children.includes(id)) {
+        parent.children.push(id);
+      }
+      progressSession.turnNodes.set(parentId, parent);
+    }
+    renderTurnTree();
+  }
+
+  function renderTurnTreeNode(nodeId) {
+    const node = progressSession.turnNodes.get(nodeId);
+    if (!node) return "";
+    const children = node.children
+      .map((childId) => progressSession.turnNodes.get(childId))
+      .filter(Boolean)
+      .sort((a, b) => a.order - b.order)
+      .map((child) => renderTurnTreeNode(child.id))
+      .join("");
+    const detail = node.detail
+      ? `<div class="turn-tree-detail markdown">${renderMarkdown(node.detail)}</div>`
+      : "";
+    const childrenHtml = children ? `<ul>${children}</ul>` : "";
+    return (
+      `<li class="turn-tree-node is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}">` +
+      `<div class="turn-tree-head">` +
+      `<span class="turn-tree-kind">${escapeHtml(turnNodeKindLabel(node.type))}</span>` +
+      `<span class="turn-tree-label">${escapeHtml(node.label)}</span>` +
+      `<span class="turn-tree-status">${escapeHtml(turnStatusLabel(node.status))}</span>` +
+      `</div>` +
+      detail +
+      childrenHtml +
+      `</li>`
+    );
+  }
+
+  function turnNodeKindLabel(type) {
+    if (type === "turn") return t("chat.turn.kind.turn");
+    if (type === "tool") return t("chat.turn.kind.tool");
+    if (type === "subagent") return t("chat.turn.kind.subagent");
+    if (type === "cli") return t("chat.turn.kind.cli");
+    if (type === "pause") return t("chat.turn.kind.pause");
+    if (type === "iteration") return t("chat.turn.kind.iteration");
+    return t("chat.turn.kind.event");
+  }
+
+  function renderTurnTree() {
     if (!subagentTreeEl) return;
-    if (subagentNodes.size === 0) {
+    if (!progressSession.hasTurnTree || progressSession.turnNodes.size === 0) {
       subagentTreeEl.hidden = true;
       subagentTreeEl.innerHTML = "";
       return;
     }
     subagentTreeEl.hidden = false;
-    subagentTreeEl.innerHTML = "";
-    const heading = document.createElement("div");
-    heading.className = "subagent-tree-heading";
-    heading.textContent = t("chat.subagent.tree");
-    subagentTreeEl.appendChild(heading);
-
-    for (const [runId, node] of subagentNodes) {
-      const item = document.createElement("div");
-      item.className = `subagent-tree-node is-${node.status}`;
-      item.dataset.runId = runId;
-
-      const head = document.createElement("div");
-      head.className = "subagent-tree-head";
-      head.innerHTML =
-        `<span class="subagent-tree-archetype">${escapeHtml(node.archetype)}</span>` +
-        `<span class="subagent-tree-status">${escapeHtml(subagentStatusLabel(node.status))}</span>`;
-
-      const goal = document.createElement("div");
-      goal.className = "subagent-tree-goal";
-      goal.textContent = node.goal || runId;
-
-      item.appendChild(head);
-      item.appendChild(goal);
-
-      if (node.tools.length > 0) {
-        const toolsEl = document.createElement("ul");
-        toolsEl.className = "subagent-tree-tools";
-        for (const tool of node.tools) {
-          const li = document.createElement("li");
-          if (tool.preview) {
-            const nameSpan = document.createElement("span");
-            nameSpan.className = "subagent-tool-name";
-            nameSpan.textContent = tool.name;
-            const code = document.createElement("code");
-            code.className = "subagent-tool-preview";
-            code.textContent = tool.preview;
-            li.appendChild(nameSpan);
-            li.appendChild(code);
-          } else {
-            li.textContent = tool.name;
-          }
-          toolsEl.appendChild(li);
-        }
-        item.appendChild(toolsEl);
-      }
-      subagentTreeEl.appendChild(item);
-    }
+    subagentTreeEl.classList.add("turn-tree");
+    const rootId = progressSession.turnRootId || [...progressSession.turnNodes.keys()][0];
+    subagentTreeEl.innerHTML =
+      `<div class="turn-tree-heading">${escapeHtml(t("chat.turn.tree"))}</div>` +
+      `<ul>${renderTurnTreeNode(rootId)}</ul>`;
   }
 
   function isSubagentProgressEvent(event) {
@@ -933,10 +1006,16 @@
     progressSession.panelVisible = true;
     progressEl.hidden = false;
     progressListEl.innerHTML = "";
-    for (const item of progressSession.bufferedItems) {
-      progressListEl.appendChild(item);
+    if (progressSession.hasTurnTree) {
+      renderTurnTree();
+      progressListEl.hidden = true;
+    } else {
+      progressListEl.hidden = false;
+      for (const item of progressSession.bufferedItems) {
+        progressListEl.appendChild(item);
+      }
+      progressListEl.scrollTop = progressListEl.scrollHeight;
     }
-    progressListEl.scrollTop = progressListEl.scrollHeight;
   }
 
   function appendProgressItem(event, label) {
@@ -972,6 +1051,19 @@
     if (kind === "subagent_started" || kind === "subagent_finished" || event?.sub_run_id) {
       progressSession.hasSubagent = true;
     }
+    if (Number(event?.schema_version || 0) >= 2 || event?.turn_id || event?.sub_run_id) {
+      upsertTurnTreeNode(event, label);
+      if (shouldShowProgressPanel()) {
+        if (!progressSession.panelVisible) {
+          flushProgressPanel();
+        } else {
+          progressEl.hidden = false;
+          progressListEl.hidden = true;
+          renderTurnTree();
+        }
+      }
+      return;
+    }
     const item = createProgressListItem(event, label);
     progressSession.bufferedItems.push(item);
     if (shouldShowProgressPanel()) {
@@ -995,14 +1087,6 @@
 
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
-    if (
-      kind === "subagent_started" ||
-      kind === "subagent_paused" ||
-      kind === "subagent_finished" ||
-      event?.sub_run_id
-    ) {
-      upsertSubagentNode(event);
-    }
     if (kind === "reply_start") {
       beginStreamingBubble();
     } else if (kind === "reply_delta" && event?.delta) {
@@ -1263,34 +1347,52 @@
       .replaceAll(">", "&gt;");
   }
 
+  function applyThreadPayload(payload, { render = true } = {}) {
+    if (!Array.isArray(payload?.threads)) return false;
+    threads = sortThreadsByUpdatedAt(payload.threads);
+    const remoteCurrent = String(payload.current_id || "");
+    currentThreadId = threads.some((item) => item.id === remoteCurrent)
+      ? remoteCurrent
+      : (threads[0]?.id || "");
+    saveThreadsLocal();
+    if (render) {
+      renderThreadList();
+      renderCurrentThreadMessages();
+      scrollActiveThreadIntoView();
+    } else {
+      renderThreadList();
+      scrollActiveThreadIntoView();
+    }
+    return true;
+  }
+
+  async function syncThreadsFromServer({ render = true } = {}) {
+    const remote = await window.SecretaryAPI.request("GET", "/api/chat/threads", null, {
+      timeoutMs: 8000,
+    });
+    return applyThreadPayload(remote, { render });
+  }
+
   async function initThreads() {
     threadListEl.addEventListener("click", (event) => {
       const deleteBtn = event.target.closest("[data-delete-thread-id]");
       if (deleteBtn) {
         event.preventDefault();
         event.stopPropagation();
-        deleteThread(deleteBtn.dataset.deleteThreadId || "");
+        void deleteThread(deleteBtn.dataset.deleteThreadId || "");
         return;
       }
       const button = event.target.closest("[data-thread-id]");
       if (!button) return;
-      switchThread(button.dataset.threadId || "");
+      void switchThread(button.dataset.threadId || "");
     });
 
     try {
-      const remote = await window.SecretaryAPI.request("GET", "/api/chat/threads", null, {
-        timeoutMs: 8000,
-      });
-      if (Array.isArray(remote?.threads) && remote.threads.length) {
-        threads = sortThreadsByUpdatedAt(remote.threads);
-        const savedThreadId = String(remote.current_id || localStorage.getItem(CURRENT_THREAD_KEY) || "");
-        currentThreadId = threads.some((item) => item.id === savedThreadId)
-          ? savedThreadId
-          : threads[0].id;
-        saveThreadsLocal();
-        renderThreadList();
-        renderCurrentThreadMessages();
-        scrollActiveThreadIntoView();
+      if (await syncThreadsFromServer()) {
+        if (threads.length) {
+          return;
+        }
+        await createThread(false);
         return;
       }
     } catch (_error) {
@@ -1312,7 +1414,7 @@
     void pushThreadsToServer();
   }
 
-  function createThread(clearBackend = true) {
+  async function createThread(clearBackend = true) {
     if (clearBackend && activeRequestController) {
       activeRequestController.abort();
     }
@@ -1328,13 +1430,24 @@
     };
     threads.unshift(thread);
     currentThreadId = thread.id;
-    saveThreads();
+    saveThreadsLocal();
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "POST",
+        "/api/chat/threads",
+        { title: t("thread.new") },
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: true });
+    } catch (_error) {
+      // Local thread remains usable when the backend is unavailable.
+    }
   }
 
-  function deleteThread(threadId) {
+  async function deleteThread(threadId) {
     if (!threadId) return;
     const index = threads.findIndex((item) => item.id === threadId);
     if (index < 0) return;
@@ -1343,23 +1456,46 @@
       if (threads.length) {
         currentThreadId = threads[0].id;
       } else {
-        createThread(false);
-        return;
+        currentThreadId = "";
       }
     }
-    saveThreads();
+    saveThreadsLocal();
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "DELETE",
+        `/api/chat/threads/${encodeURIComponent(threadId)}`,
+        null,
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: true });
+    } catch (_error) {
+      if (!threads.length) {
+        await createThread(false);
+      }
+    }
   }
 
-  function switchThread(threadId) {
+  async function switchThread(threadId) {
     if (!threadId || threadId === currentThreadId) return;
     currentThreadId = threadId;
-    saveThreads();
+    saveThreadsLocal();
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "PUT",
+        "/api/chat/threads/current",
+        { thread_id: threadId },
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: false });
+    } catch (_error) {
+      // Local switch is enough for offline use.
+    }
   }
 
   function scrollActiveThreadIntoView() {
@@ -1420,7 +1556,7 @@
     }
     thread.updatedAt = new Date().toISOString();
     threads = sortThreadsByUpdatedAt(threads);
-    saveThreads();
+    saveThreadsLocal();
     renderThreadList();
   }
 
@@ -1440,11 +1576,6 @@
       { current_id: currentThreadId, threads },
       { timeoutMs: 8000 },
     );
-  }
-
-  function saveThreads() {
-    saveThreadsLocal();
-    void pushThreadsToServer().catch(() => {});
   }
 
   function loadThreads() {

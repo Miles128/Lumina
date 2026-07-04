@@ -334,6 +334,36 @@ html, body {
   overflow: hidden;
 }
 
+.kb-empty-result {
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.kb-empty-result strong {
+  font-size: 13px;
+}
+
+.kb-empty-result p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.kb-empty-reason {
+  margin-left: 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.kb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .kb-preview {
   flex: 1;
   min-height: 0;

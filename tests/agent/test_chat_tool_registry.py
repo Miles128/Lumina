@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from secretary.agent.agent_profile import AgentProfile
 from secretary.agent.chat_tool_registry import ChatToolRegistry
 from secretary.agent.llm_config import LlmConfig
+from secretary.agent.permission_guard import guard_tools_for_profile
+from secretary.agent.tools.base import Tool
 from secretary.config import Settings
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
@@ -64,3 +67,53 @@ def test_cli_spawn_disabled_by_default(tmp_path: Path) -> None:
         llm_config=llm,
     )
     assert all(tool.name != "spawn_cli_agent" for tool in tools)
+
+
+def test_plan_permission_guard_blocks_dangerous_tools() -> None:
+    class FakeTool(Tool):
+        def __init__(self, name: str, *, needs_confirmation: bool = False) -> None:
+            self.name = name
+            self.needs_confirmation = needs_confirmation
+
+    tools = [
+        FakeTool("file_read"),
+        FakeTool("shell"),
+        FakeTool("file_write"),
+        FakeTool("spawn_cli_agent"),
+        FakeTool("custom_write_records"),
+        FakeTool("mcp_server_read_notes"),
+        FakeTool("mcp_server_update_notes", needs_confirmation=True),
+    ]
+
+    guarded = guard_tools_for_profile(AgentProfile.PLAN, tools)
+    names = {tool.name for tool in guarded}
+
+    assert names == {"file_read", "mcp_server_read_notes"}
+
+
+def test_plan_resolve_tools_excludes_write_shell_and_delegation(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    llm = LlmConfig(
+        api_key="k",
+        base_url="https://example.com/v1",
+        model="m",
+        source="test",
+    )
+
+    tools, _ = registry.resolve_tools(
+        profile=AgentProfile.PLAN,
+        user_message="帮我计划重构",
+        suggested=(),
+        filesystem_turn=True,
+        light_mode=False,
+        llm_config=llm,
+    )
+    names = {tool.name for tool in tools}
+
+    assert "file_read" in names
+    assert "todo" in names
+    assert "shell" not in names
+    assert "file_write" not in names
+    assert "patch" not in names
+    assert "spawn_subagent" not in names
+    assert "spawn_cli_agent" not in names

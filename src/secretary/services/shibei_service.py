@@ -45,9 +45,10 @@ class ShibeiService:
         native = self._try_native_config()
         sources = list(native.sources) if native else []
         extensions = list(native.extensions) if native else []
-        search_engine = native.chroma.search_engine if native else "bm25"
-        collection = native.chroma.collection if native else "knowledge_base"
-        db_path = str(native.chroma_path_expanded) if native else str(Path("~/.shibei/db").expanduser())
+        chroma = getattr(native, "chroma", None)
+        search_engine = str(getattr(chroma, "search_engine", "bm25"))
+        collection = str(getattr(chroma, "collection", "knowledge_base"))
+        db_path = str(getattr(native, "chroma_path_expanded", Path("~/.shibei/db").expanduser()))
         source_count = 0
         status = "not_configured"
         message = "未检测到 Shibei 安装"
@@ -116,8 +117,14 @@ class ShibeiService:
 
     def search_raw(self, query: str, *, limit: int = 10, tag: str | None = None) -> dict[str, Any]:
         if not query.strip():
-            return {"query": "", "total": 0, "results": []}
-        return self._call("search", query=query.strip(), limit=limit, tag=tag)
+            payload: dict[str, Any] = {"query": "", "total": 0, "results": []}
+            payload["empty_state"] = shibei_empty_state("", self.status_view())
+            return payload
+        payload = self._call("search", query=query.strip(), limit=limit, tag=tag)
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            payload["empty_state"] = shibei_empty_state(query.strip(), self.status_view())
+        return payload
 
     def read_source(self, path: str, *, max_chars: int = 120_000) -> dict[str, str]:
         resolved = Path(path).expanduser().resolve()
@@ -239,6 +246,24 @@ SHIBEI_EMPTY_HINT = (
     "3. 打开「知识库」页查看索引是否为空"
 )
 
+SHIBEI_EMPTY_ACTIONS: tuple[dict[str, str], ...] = (
+    {
+        "id": "import",
+        "label": "导入",
+        "description": "增量扫描 Shibei config.yaml 中的 sources。",
+    },
+    {
+        "id": "settings",
+        "label": "检查设置",
+        "description": "确认 Shibei 安装路径、config.yaml 和 sources。",
+    },
+    {
+        "id": "broaden",
+        "label": "换关键词",
+        "description": "减少限定词，尝试标题、项目名或人名。",
+    },
+)
+
 SHIBEI_NOISE_DIR_NAMES = frozenset(
     {"target", "node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv"}
 )
@@ -263,6 +288,30 @@ def shibei_sources_noise_warning(sources: list[str]) -> str:
 def is_shibei_empty_result(text: str) -> bool:
     cleaned = text.strip()
     return cleaned.startswith("未在 Shibei 知识库中找到")
+
+
+def shibei_empty_state(query: str, status: dict[str, Any] | None = None) -> dict[str, Any]:
+    status = status or {}
+    source_count = int(status.get("source_count") or 0)
+    sources = status.get("sources")
+    source_total = len(sources) if isinstance(sources, list) else 0
+    reason = "no_results"
+    message = "没有找到匹配内容。可以先导入索引，或换一组更宽的关键词。"
+    if status.get("status") != "ready":
+        reason = str(status.get("status") or "not_ready")
+        message = str(status.get("status_message") or "Shibei 尚未就绪，请先检查配置。")
+    elif source_count <= 0:
+        reason = "empty_index"
+        message = "Shibei 已连接，但当前索引为空。请先导入监控文件夹。"
+    elif source_total <= 0:
+        reason = "no_sources"
+        message = "Shibei config.yaml 未配置 sources。请先添加监控文件夹。"
+    return {
+        "query": query,
+        "reason": reason,
+        "message": message,
+        "actions": [dict(item) for item in SHIBEI_EMPTY_ACTIONS],
+    }
 
 
 def _format_search(payload: dict[str, Any]) -> str:
