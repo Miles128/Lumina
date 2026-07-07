@@ -467,7 +467,8 @@
           <label class="settings-field">
             <span>Agent 模式 · Profile</span>
             <select id="agent-profile">
-              <option value="build"${agentProfile === "build" ? " selected" : ""}>Build · 执行（默认）</option>
+              <option value="auto"${agentProfile === "auto" ? " selected" : ""}>Auto · 自动（推荐）</option>
+              <option value="build"${agentProfile === "build" ? " selected" : ""}>Build · 执行</option>
               <option value="ask"${agentProfile === "ask" || agentProfile === "orchestrator" ? " selected" : ""}>Ask · 问答检索</option>
               <option value="plan"${agentProfile === "plan" ? " selected" : ""}>Plan · 只读规划</option>
             </select>
@@ -522,7 +523,7 @@
       temperature: Number(document.getElementById("agent-temperature")?.value || 0.7),
       max_history_turns: Number(document.getElementById("agent-history")?.value || 16),
       response_style: document.getElementById("agent-response-style")?.value || "standard",
-      agent_profile: document.getElementById("agent-profile")?.value || "build",
+      agent_profile: document.getElementById("agent-profile")?.value || "auto",
       shell_working_dir: document.getElementById("agent-shell-cwd")?.value || "",
     };
   }

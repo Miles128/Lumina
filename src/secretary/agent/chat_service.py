@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from secretary.agent.agent_profile import (
     AgentProfile,
     default_max_steps_for_profile,
+    effective_profile,
     parse_agent_profile,
     profile_system_appendix,
 )
@@ -36,7 +37,16 @@ from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
 from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
 from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
-from secretary.agent.session_store import SessionStore
+from secretary.agent.session_store import (
+    PauseKind,
+    SessionStore,
+    pause_bundle_confirmation,
+    pause_bundle_parent,
+    pause_bundle_subagent,
+    pause_restore_confirmation,
+    pause_restore_parent,
+    pause_restore_subagent,
+)
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
 from secretary.agent.subagent import SpawnSubagentTool
@@ -178,21 +188,66 @@ class ChatService:
             self._pending_llm_config = None
             return pending, messages, llm_config
 
+    def _persist_pause(self, trace_id: str, kind: PauseKind, data: dict) -> None:
+        if not trace_id or self._session_store.persistence_path is None:
+            return
+        self._session_store.save_pause(trace_id, kind=kind, data=data)
+        self._session_store.update_turn_status(trace_id, status="paused")
+
+    def _clear_persisted_pause(self, trace_id: str) -> None:
+        if trace_id:
+            self._session_store.clear_pause(trace_id)
+
+    def _restore_pause_from_store(self, trace_id: str) -> None:
+        if not trace_id or self._session_store.persistence_path is None:
+            return
+        loaded = self._session_store.load_pause(trace_id)
+        if loaded is None:
+            return
+        kind, data = loaded
+        llm_config = resolve_llm_config(self._settings, self._agent_config_store)
+        if llm_config is None:
+            return
+        try:
+            if kind == "confirmation":
+                pending, messages = pause_restore_confirmation(data)
+                self._set_pending(pending, messages, llm_config, persist=False)
+            elif kind == "subagent":
+                self._handle_subagent_paused(pause_restore_subagent(data, llm_config), persist=False)
+            elif kind == "parent_resume":
+                tools = self._tool_registry.build_tools()
+                self._set_parent_turn_resume(
+                    pause_restore_parent(data, llm_config=llm_config, tools=tools),
+                    persist=False,
+                )
+        except ValueError:
+            return
+
     def _set_pending(
         self,
         pending: PendingConfirmation,
         messages: list[dict[str, str]],
         llm_config: LlmConfig,
+        *,
+        persist: bool = True,
     ) -> None:
         """Atomically set the pending confirmation state."""
         with self._pending_lock:
             self._pending = pending
             self._pending_messages = messages
             self._pending_llm_config = llm_config
+        if persist:
+            self._persist_pause(
+                self._active_trace_id,
+                "confirmation",
+                pause_bundle_confirmation(pending=pending, messages=messages),
+            )
 
-    def _handle_subagent_paused(self, state: SubAgentResumeState) -> None:
+    def _handle_subagent_paused(self, state: SubAgentResumeState, *, persist: bool = True) -> None:
         with self._pending_lock:
             self._subagent_pending = state
+        if persist:
+            self._persist_pause(self._active_trace_id, "subagent", pause_bundle_subagent(state))
 
     def _take_subagent_pending(self) -> SubAgentResumeState | None:
         with self._pending_lock:
@@ -200,9 +255,11 @@ class ChatService:
             self._subagent_pending = None
             return state
 
-    def _set_parent_turn_resume(self, state: ParentTurnResumeState) -> None:
+    def _set_parent_turn_resume(self, state: ParentTurnResumeState, *, persist: bool = True) -> None:
         with self._pending_lock:
             self._parent_turn_resume = state
+        if persist:
+            self._persist_pause(self._active_trace_id, "parent_resume", pause_bundle_parent(state))
 
     def _take_parent_turn_resume(self) -> ParentTurnResumeState | None:
         with self._pending_lock:
@@ -389,6 +446,7 @@ class ChatService:
         if thread_id:
             self._active_thread_id = thread_id.strip()
         self._active_trace_id = trace_id.strip() if trace_id else ""
+        self._restore_pause_from_store(self._active_trace_id)
         sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
         spawn_tool = self._active_spawn_tool
@@ -396,6 +454,7 @@ class ChatService:
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
             self._append_history("system", reply)
+            self._clear_persisted_pause(self._active_trace_id)
             return ChatResult(
                 reply=reply,
                 profile_excerpt="",
@@ -435,6 +494,9 @@ class ChatService:
                 messages + [{"role": "assistant", "content": result.reply}],
                 llm_config,
             )
+
+        if result.pending_confirmation is None:
+            self._clear_persisted_pause(self._active_trace_id)
 
         safe_reply, _, _ = self._prepare_user_reply(
             result.reply,
@@ -847,7 +909,17 @@ class ChatService:
         decision: GateDecision,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
-        profile = self._current_agent_profile()
+        configured = self._current_agent_profile()
+        light_mode = decision.action == GateAction.LIGHT
+        from secretary.agent.grounding import is_filesystem_question
+
+        filesystem_turn = is_filesystem_question(cleaned)
+        profile = effective_profile(
+            configured,
+            cleaned,
+            light_mode=light_mode,
+            filesystem_turn=filesystem_turn,
+        )
         system_prompt = (
             self._build_system_prompt(profile_markdown, hits) + profile_system_appendix(profile)
         )
@@ -894,9 +966,6 @@ class ChatService:
             )
 
         light_mode = decision.action == GateAction.LIGHT
-        from secretary.agent.grounding import is_filesystem_question
-
-        filesystem_turn = is_filesystem_question(cleaned)
         suggested = decision.intent.suggested_tools if decision.intent else ()
         tools, spawn_tool = self._tool_registry.resolve_tools(
             profile=profile,
@@ -1129,7 +1198,7 @@ class ChatService:
 
     def _current_agent_profile(self) -> AgentProfile:
         if self._agent_config_store is None:
-            return AgentProfile.BUILD
+            return AgentProfile.AUTO
         return parse_agent_profile(self._agent_config_store.load().agent_profile)
 
     def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:

@@ -294,7 +294,7 @@ class AgentConfigResponse(BaseModel):
     temperature: float
     max_history_turns: int
     response_style: str
-    agent_profile: str = "build"
+    agent_profile: str = "auto"
     shell_working_dir: str = ""
     status: str
     status_message: str
@@ -423,7 +423,7 @@ def _init_services() -> dict[str, object]:
         if mcp_config_store.ensure_filesystem_server(preferred_root):
             mcp_manager.reload()
     progress_hub = ProgressHub()
-    session_store = SessionStore()
+    session_store = SessionStore(persistence_path=settings.resolved_data_dir() / "turns.json")
     turn_runner = TurnRunner(TurnOrchestrator(file_auth), session_store)
     chat_service = ChatService(
         settings,
@@ -1110,7 +1110,7 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["max_history_turns"] = body.max_history_turns
     if body.response_style in {"standard", "brief"}:
         payload["response_style"] = body.response_style.strip()
-    if body.agent_profile in {"build", "ask", "plan"}:
+    if body.agent_profile in {"auto", "build", "ask", "plan"}:
         payload["agent_profile"] = body.agent_profile.strip()
     if body.shell_working_dir is not None:
         payload["shell_working_dir"] = body.shell_working_dir.strip()

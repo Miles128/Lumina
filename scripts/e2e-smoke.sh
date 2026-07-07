@@ -19,11 +19,16 @@ export no_proxy="${no_proxy:-$NO_PROXY}"
 echo "LUMINA_DATA_DIR=$LUMINA_DATA_DIR"
 echo "LUMINA_E2E_PORT=$LUMINA_E2E_PORT"
 
-if python3 -c "import playwright" 2>/dev/null; then
-  python3 -m playwright install chromium 2>/dev/null || true
+RUN=(python3)
+if command -v uv >/dev/null 2>&1; then
+  RUN=(uv run python)
+fi
+
+if "${RUN[@]}" -c "import playwright" 2>/dev/null; then
+  "${RUN[@]}" -m playwright install chromium 2>/dev/null || true
   PYTEST_PLAYWRIGHT="--browser chromium"
 else
-  echo "playwright not installed — skipping UI tests (pip install -e '.[e2e]' && playwright install chromium)"
+  echo "playwright not installed — skipping UI tests (uv sync --all-extras && uv run playwright install chromium)"
   PYTEST_PLAYWRIGHT=""
 fi
 
@@ -34,4 +39,8 @@ else
   ARGS+=(-m "e2e and not ui")
 fi
 
-python3 -m pytest tests/e2e/ "${ARGS[@]}" "$@"
+if command -v uv >/dev/null 2>&1; then
+  uv run pytest tests/e2e/ "${ARGS[@]}" "$@"
+else
+  python3 -m pytest tests/e2e/ "${ARGS[@]}" "$@"
+fi

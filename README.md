@@ -66,13 +66,18 @@
 
 ### 1. 安装
 
+需要 [uv](https://docs.astral.sh/uv/)（推荐）或 pip。
+
 ```bash
 cd Lumina
-pip install -e ".[dev]"
+uv sync --extra dev          # 推荐：可复现，见 uv.lock
+# 或: pip install -e ".[dev]"
 
 ./scripts/install-electron.sh   # 国内镜像可选
 cd desktop && npm install
 ```
+
+E2E / Playwright：`uv sync --all-extras && uv run playwright install chromium`
 
 ### 2. 大模型
 

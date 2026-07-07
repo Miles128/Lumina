@@ -2,8 +2,8 @@
 
 **Version:** 0.2.0  
 **Author:** 四海 (myx28@qq.com)  
-**Last updated:** 2026-05-30  
-**Status:** Active development · v0.1.x shipped · v0.2 in progress
+**Last updated:** 2026-07-08  
+**Status:** Active development · v0.2 harness focus
 
 <p align="center">
   <img src="assets/logo.png" alt="Lumina logo" width="96" />
@@ -49,13 +49,20 @@
 
 | Profile | 中文 | 用途 | 工具边界 |
 |---------|------|------|----------|
-| **build** | 执行 | 默认；读写、同步、委派 | 全工具 + `spawn_subagent` + `spawn_cli_agent` |
+| **auto** | 自动 | **默认**；系统按问题类型选 Ask/Plan/Build | 运行时解析为 ask/plan/build 之一 |
+| **build** | 执行 | 读写、同步、委派 | 全工具 + `spawn_subagent` + `spawn_cli_agent` |
 | **ask** | 问答 | 检索与只读分析 | 只读：FS/记忆/Shibei/联网/浏览器/连接器状态/`ask_user` |
 | **plan** | 规划 | 出方案、拆步骤 | Ask 全套 + `todo` / `skills_*`；仍不写盘、不 shell |
 
+**Auto 路由（规则优先，无额外 LLM）：**
+
+- 闲聊/记忆检索/light 路由 → 等效 **Ask**
+- 含「规划/方案/步骤/架构」且无写操作语义 → **Plan**
+- 含写/改/删/shell/同步/委派或 filesystem 问题 → **Build**
+
 **迁移：** 旧配置 `orchestrator` 自动映射为 `build`。
 
-配置：`~/.lumina/agent.json` → `"agent_profile": "build|ask|plan"`，或聊天输入框旁模式切换。
+配置：`~/.lumina/agent.json` → `"agent_profile": "auto|build|ask|plan"`，或聊天输入框旁模式切换。
 
 ---
 
@@ -104,6 +111,9 @@
 |------|------|
 | AgentLoop（8 步 full / 3 步 light） | Done |
 | **Build / Ask / Plan** profiles | **Done** |
+| **Auto profile**（规则路由 ask/plan/build） | **Done** |
+| **Turn 持久化**（`turns.json` + pause bundle） | **Done** |
+| **Context compaction**（长 turn 内历史压缩） | **Done** |
 | PromptGate（规则优先，可选 LLM） | Done |
 | Grounding + Verified/Unverified | Done |
 | SSE 流式 + 工具进度 | Done |
@@ -131,7 +141,7 @@
 | 飞书 / 读书 / 小红书 / 邮箱 / 云盘 / 本地文档 | Done |
 | 设置页手动同步 | Done |
 | **Agent 工具 `sync_source` / `list_connectors`** | **Done** |
-| Briefing / Think 优先 Shibei | Planned |
+| Briefing / Think 优先 Shibei | **Paused**（先完善 harness） |
 
 ### 5.4 Browser · 浏览器
 
@@ -242,34 +252,39 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | FR-24 | Sub-agent pause/resume + 树 UI | P1 | Done |
 | FR-25 | KB workspace UI | P1 | Done |
 | FR-26 | Chat Markdown | P1 | Done |
-| FR-30 | CLI Agent 委派 | P1 | Core Done |
+| FR-30 | CLI Agent 委派 | P1 | **Frozen**（不做 provider 集成；保留核心代码） |
 | **FR-31** | **Build / Ask / Plan profiles** | P1 | **Done** |
+| **FR-40** | **Auto profile**（规则路由） | P1 | **Done** |
+| **FR-41** | **Turn 持久化** | P1 | **Done** |
+| **FR-42** | **Context compaction** | P1 | **Done** |
 | **FR-32** | **连接器 Agent 工具**（list/status/sync） | P1 | **Done** |
 | **FR-33** | **`glob_files` + `ask_user`** | P1 | **Done** |
 | **FR-34** | **Harness P0**（Turn/SessionStore/SSE v2） | P1 | **Done** |
 | **FR-35** | **Browser screenshot + Ask 路由** | P2 | **Done** |
-| FR-28 | Explore 便宜模型路由 | P2 | Planned |
-| FR-29 | Web search API（Brave/Tavily） | P2 | Planned |
+| FR-28 | Explore 便宜模型路由 | P2 | **Pending** |
+| FR-29 | Web search API（Brave/Tavily） | P2 | **Next round** |
 | FR-15 | MCP HTTP/SSE | P2 | Planned |
 | FR-27 | 打包内嵌 Python | P2 | Planned |
 | FR-16 | IM 网关 | P3 | Backlog |
 | FR-36 | Shibei 空结果 UX | P1 | Done |
-| FR-37 | Git 只读工具 | P2 | Planned |
+| FR-37 | Git 只读工具 | P3 | Backlog（非常靠后） |
 | FR-38 | 前端 Turn 树（消费 schema v2） | P2 | Done |
 | FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Done |
 
 ---
 
-## 9. CLI Agent Delegation · 外接 CLI（FR-30）
+## 9. CLI Agent Delegation · 外接 CLI（FR-30 · Frozen）
+
+> **决策（2026-07）：不做 CLI provider 端到端集成。** 优先自研 harness（Turn 持久化、compaction、Auto profile）。`spawn_cli_agent` 核心代码保留，默认关闭，不设近期 roadmap 项。
 
 | Profile | `spawn_cli_agent` |
 |---------|-------------------|
 | **build** | 可用（确认后） |
-| **ask** / **plan** | 禁用 |
+| **ask** / **plan** / **auto→ask/plan** | 禁用 |
 
 原则：父 Agent 只见 CLI **摘要 + 退出码**；stdout 全量落盘 `~/.lumina/logs/cli-agent/`。
 
-**待完成：** `codex exec` / `claude -p` / `kimi` 端到端集成测试与 prompt 调优。
+**明确不做：** codex/kimi/claude CLI provider 端到端测试与 prompt 调优（FR-30d 取消）。
 
 ---
 
@@ -298,34 +313,34 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 
 ---
 
-### Next · 推荐开发顺序
+### Next · Harness 优先（2026-07 决策）
 
-#### Phase 1 — 体验闭环（P1，约 1 周）
+#### Now · 自研 Harness（P1）
 
-| # | 任务 | 为什么现在做 | 验收 |
-|---|------|--------------|------|
-| **N1** | **Shibei 空结果 UX**（FR-36） | 个人 KB 是核心路径；空结果仍易困惑 | 空检索 → 结构化 hint + 可选一键 import |
-| **N2** | **SSE 进度前端全接** | Done | Turn 树统一显示 tool / 子 Agent / CLI / 暂停 |
-| **N3** | **CLI provider 端到端**（FR-30d） | Build 委派是重任务主路径 | codex/kimi 各 1 条 manual + mock 单测 |
-| **N4** | **Briefing/Think Shibei 优先** | 定时任务仍偏连接器 | 摘要数据源顺序与 chat 一致 |
-
-#### Phase 2 — 质量与成本（P2，约 2 周）
-
-| # | 任务 | 说明 | FR |
+| # | 任务 | 状态 | FR |
 |---|------|------|-----|
-| **N5** | Web search API | 替代 HTML scrape，稳定性 | FR-29 |
-| **N6** | Explore 便宜模型 | 降 sub-agent 成本 | FR-28 |
-| **N7** | Git 只读工具 | `git_status` / `git_diff` / `git_log` | FR-37 |
-| **N8** | E2E 扩展 | ask_user · sync_source · 模式切换 | FR-21 |
-| **N9** | Turn 树 UI | Done | FR-38 |
+| **H1** | Turn 持久化（`turns.json` + pause/resume bundle） | **Done** | FR-41 |
+| **H2** | Context compaction（长 turn 历史压缩） | **Done** | FR-42 |
+| **H3** | **Auto profile**（规则路由 ask/plan/build） | **Done** | FR-40 |
 
-#### Phase 3 — 平台（P2–P3）
+#### Paused / Deferred
+
+| # | 任务 | 决策 |
+|---|------|------|
+| — | CLI provider 端到端（FR-30d） | **不做**；先自研 harness |
+| — | Briefing/Think Shibei 优先 | **暂停** |
+| — | `mode: primary` 自定义主 Agent | **不做**；用 Auto 替代 |
+| — | FR-28 Explore 便宜模型 | **Pending** |
+| — | FR-29 Web search API | **下一轮** |
+| — | FR-37 Git 只读工具 | **非常靠后** |
+| — | E2E 扩展 | Backlog |
+
+#### Later · 平台（P2–P3）
 
 | # | 任务 | FR |
 |---|------|-----|
 | N10 | MCP HTTP/SSE | FR-15 |
 | N11 | 打包内嵌 Python | FR-27 |
-| N12 | Plan PermissionGuard | Done |
 | N13 | 定时 Agent / cron | Backlog |
 | N14 | IM 网关（飞书 bot） | FR-16 |
 
@@ -334,6 +349,8 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 - LangGraph 迁移
 - Pi / Hermes runtime 嵌入
 - Orchestrator 第三种 Profile 回归
+- CLI provider 集成（codex/kimi/claude 端到端）
+- `~/.lumina/subagents/*.md` 的 `mode: primary` 第四种主 Agent
 - 恢复桌面定位（改由 MCP/定时任务覆盖）
 
 ---
@@ -349,6 +366,9 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | Connector tools | `src/secretary/agent/tools/connector_tools.py` |
 | Browser | `src/secretary/agent/browser_tools.py` |
 | Harness P0 | `turn_runner.py` · `session_store.py` · `turn_models.py` |
+| Turn 持久化 | `session_store.py`（`turns.json` + pause bundle） |
+| Context compaction | `context_compaction.py` |
+| Auto profile | `agent_profile.py` · `effective_profile()` |
 | Chat UI | `desktop/ui/chat.js` · `chat.css` |
 | Harness 设计 | [harness-design.md](harness-design.md) |
 
@@ -356,12 +376,14 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 
 ## 13. Open Decisions · 待决
 
-| 话题 | 建议 |
+| 话题 | 决策 |
 |------|------|
 | 读记忆默认 | Shibei first；miss 再 `search_memory` |
 | Sync 定位 | 可选；Agent 用 `sync_source`，UI 同步保留 |
-| CLI vs sub-agent | 轻量 explore → 内层；重代码 → CLI |
-| Web search | v0.2 切 API（Brave/Tavily） |
+| CLI vs sub-agent | **CLI provider 不做**；轻量 explore → 内层 sub-agent |
+| 主 Agent 扩展 | **Auto** 替代 `mode: primary` 自定义 md |
+| Web search | 下一轮切 API（Brave/Tavily） |
+| Briefing/Think | 暂停；先 harness |
 | 打包 Python | v0.2 spike：sidecar venv |
 
 ---

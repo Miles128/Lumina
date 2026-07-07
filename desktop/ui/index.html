@@ -105,12 +105,16 @@
             <form id="chat-form" class="composer">
               <div class="agent-mode-picker" id="agent-mode-picker">
                 <button type="button" class="agent-mode-btn" id="agent-mode-btn" aria-haspopup="listbox" aria-expanded="false" title="Agent 模式">
-                  <span class="agent-mode-label" id="agent-mode-label">Build</span>
+                  <span class="agent-mode-label" id="agent-mode-label">Auto</span>
                   <svg class="agent-mode-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
                     <path d="M6 9l6 6 6-6"/>
                   </svg>
                 </button>
                 <ul class="agent-mode-menu" id="agent-mode-menu" role="listbox" hidden>
+                  <li role="option" data-mode="auto">
+                    <strong>Auto · 自动</strong>
+                    <span>系统按问题类型选择 Ask / Plan / Build</span>
+                  </li>
                   <li role="option" data-mode="build">
                     <strong>Build · 执行</strong>
                     <span>可读写工具 + 子 Agent 委派</span>

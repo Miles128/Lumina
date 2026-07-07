@@ -38,10 +38,11 @@ Harness（灵犀专有）
 | Profile | 工具 | 用途 |
 |---------|------|------|
 | **build** | 全工具 + `spawn_subagent` + `spawn_cli_agent` | 默认执行（读写、shell、委派） |
+| **auto** | 运行时解析为 build/ask/plan | **默认**；按问题类型自动选模式 |
 | **ask** | 只读 + Shibei/记忆/联网/浏览器/连接器状态/`ask_user` | 问答检索，不改环境 |
 | **plan** | ask 子集 + todo/skills | 分析/规划，不改文件 |
 
-配置：`~/.lumina/agent.json` → `"agent_profile": "build|ask|plan"`，或聊天输入框旁模式切换。
+配置：`~/.lumina/agent.json` → `"agent_profile": "auto|build|ask|plan"`，或聊天输入框旁模式切换。
 
 ---
 
@@ -74,14 +75,18 @@ Harness（灵犀专有）
 - [x] UI 子 Agent 树（OpenCode session tree）
 - [x] 子 Agent 确认后父 loop 续跑（Codex turn stack，一层）
 - [x] Harness P0：`TurnContext` + `SessionStore`；SSE schema v2；`TurnRunner`；`DelegationResult`
+- [x] **Turn 持久化**：`SessionStore`（`~/.lumina/turns.json`）+ pause bundle 跨重启恢复
+- [x] **Context compaction**：长 turn 内消息历史压缩（Codex compaction 语义）
+- [x] **Auto profile**：规则路由 ask/plan/build，替代 `mode: primary` 自定义主 Agent
 - [x] `SpawnContext.depth + 1` 硬限一层
 - [x] Shibei-first 读记忆路由（sync 备选）
 - [x] **Hermes runtime 解耦**：移除运行期对 `~/.hermes` 的主动依赖（mcp 自动合并、agent 回退、soul 回退、skills 扫描根）；仅保留「设置 → 一键从 Hermes 导入」入口（LLM/SOUL/Memory/MCP 串行导入），`HermesMemory` 重命名为 `LuminaMemory`
 - [x] Shibei 空结果 → 自动 import 或 UI 引导（v0.2 B1）
 - [x] **`spawn_cli_agent` 核心**（FR-30 30a）：config store、subprocess 摘要、确认流、SSE 进度
 - [x] CLI Agents 设置 UI（FR-30 30b）：默认关闭、Codex + Kimi provider
-- [ ] Explore 便宜模型路由（Cursor 做法）
-- [ ] `~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent
+- [ ] Explore 便宜模型路由（Cursor 做法）— **Pending**
+- [x] ~~`~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent~~ → **不做**；用 **Auto profile** 替代
+- [ ] CLI provider 端到端 — **Frozen**（先自研 harness）
 
 ---
 

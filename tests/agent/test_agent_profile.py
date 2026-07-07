@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from secretary.agent.agent_profile import (
     AgentProfile,
+    effective_profile,
     parse_agent_profile,
+    resolve_auto_profile,
     resolve_parent_tools,
 )
 from secretary.agent.p0_tools import AskUserTool, ClarifyTool, SkillsListTool, TodoTool
@@ -22,11 +24,22 @@ class _CliSpawnStub:
     name = "spawn_cli_agent"
 
 
-def test_parse_agent_profile_defaults_to_build() -> None:
-    assert parse_agent_profile(None) is AgentProfile.BUILD
-    assert parse_agent_profile("unknown") is AgentProfile.BUILD
+def test_parse_agent_profile_defaults_to_auto() -> None:
+    assert parse_agent_profile(None) is AgentProfile.AUTO
+    assert parse_agent_profile("unknown") is AgentProfile.AUTO
     assert parse_agent_profile("ask") is AgentProfile.ASK
+    assert parse_agent_profile("auto") is AgentProfile.AUTO
     assert parse_agent_profile("orchestrator") is AgentProfile.BUILD
+
+
+def test_resolve_auto_profile_picks_plan_and_build() -> None:
+    assert resolve_auto_profile("帮我规划一下重构步骤") is AgentProfile.PLAN
+    assert resolve_auto_profile("把 README 改一下并运行测试") is AgentProfile.BUILD
+    assert resolve_auto_profile("读取记忆：面试") is AgentProfile.ASK
+
+
+def test_effective_profile_passthrough_non_auto() -> None:
+    assert effective_profile(AgentProfile.PLAN, "写文件") is AgentProfile.PLAN
 
 
 def test_ask_profile_filters_to_read_only_tools(tmp_path) -> None:

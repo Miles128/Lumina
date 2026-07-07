@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.context_compaction import compact_messages_if_needed
 from secretary.agent.grounding import (
     GROUNDING_RETRY_USER,
     collect_command_evidence,
@@ -258,6 +259,7 @@ class AgentLoop:
                     message=f"第 {iteration}/{self._max_steps} 轮思考",
                 )
             )
+            current_messages = compact_messages_if_needed(current_messages, self._llm_config)
             tool_schemas = [t.schema() for t in self._tools.values()]
             payload = self._build_payload(current_messages, tool_schemas, native=self._native_tools_enabled)
             force_read = requires_forced_read_tool(turn_user_message, used_tools)

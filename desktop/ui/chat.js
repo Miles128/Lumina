@@ -22,12 +22,13 @@
   const agentModeMenu = document.getElementById("agent-mode-menu");
 
   const AGENT_MODE_LABELS = {
+    auto: "Auto",
     build: "Build",
     ask: "Ask",
     plan: "Plan",
     orchestrator: "Build",
   };
-  let currentAgentMode = "build";
+  let currentAgentMode = "auto";
 
   let busy = false;
   let pendingActionId = null;
@@ -148,13 +149,13 @@
     if (!agentModeBtn) return;
     try {
       const config = await window.SecretaryAPI.request("GET", "/api/agent/config");
-      const profile = String(config?.agent_profile || "build").toLowerCase();
+      const profile = String(config?.agent_profile || "auto").toLowerCase();
       const normalized = profile === "orchestrator" ? "build" : profile;
       if (AGENT_MODE_LABELS[normalized]) {
         currentAgentMode = normalized;
       }
     } catch (_error) {
-      // Keep default "build".
+      // Keep default "auto".
     }
     renderAgentModeLabel();
   }
