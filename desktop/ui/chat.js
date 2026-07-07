@@ -783,13 +783,6 @@
     );
   }
 
-  function turnStatusLabel(status) {
-    if (status === "paused") return t("chat.subagent.paused");
-    if (status === "done") return t("chat.subagent.done");
-    if (status === "failed") return t("chat.subagent.failed");
-    return t("chat.subagent.running");
-  }
-
   function normalizeTurnStatus(event) {
     const kind = String(event?.kind || "");
     if (kind === "pause_confirmation" || kind === "subagent_paused") return "paused";
@@ -899,40 +892,26 @@
     renderTurnTree();
   }
 
-  function renderTurnTreeNode(nodeId) {
+  function renderTurnTreeNode(nodeId, depth = 0) {
     const node = progressSession.turnNodes.get(nodeId);
     if (!node) return "";
     const children = node.children
       .map((childId) => progressSession.turnNodes.get(childId))
       .filter(Boolean)
       .sort((a, b) => a.order - b.order)
-      .map((child) => renderTurnTreeNode(child.id))
+      .map((child) => renderTurnTreeNode(child.id, depth + 1))
       .join("");
     const detail = node.detail
       ? `<div class="turn-tree-detail markdown">${renderMarkdown(node.detail)}</div>`
       : "";
-    const childrenHtml = children ? `<ul>${children}</ul>` : "";
+    const childrenHtml = children ? `<ul class="turn-tree-children">${children}</ul>` : "";
     return (
-      `<li class="turn-tree-node is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}">` +
-      `<div class="turn-tree-head">` +
-      `<span class="turn-tree-kind">${escapeHtml(turnNodeKindLabel(node.type))}</span>` +
-      `<span class="turn-tree-label">${escapeHtml(node.label)}</span>` +
-      `<span class="turn-tree-status">${escapeHtml(turnStatusLabel(node.status))}</span>` +
-      `</div>` +
+      `<li class="turn-tree-node depth-${depth} is-${escapeAttr(node.status)}">` +
+      `<div class="turn-tree-line">${escapeHtml(node.label)}</div>` +
       detail +
       childrenHtml +
       `</li>`
     );
-  }
-
-  function turnNodeKindLabel(type) {
-    if (type === "turn") return t("chat.turn.kind.turn");
-    if (type === "tool") return t("chat.turn.kind.tool");
-    if (type === "subagent") return t("chat.turn.kind.subagent");
-    if (type === "cli") return t("chat.turn.kind.cli");
-    if (type === "pause") return t("chat.turn.kind.pause");
-    if (type === "iteration") return t("chat.turn.kind.iteration");
-    return t("chat.turn.kind.event");
   }
 
   function renderTurnTree() {
@@ -945,9 +924,7 @@
     subagentTreeEl.hidden = false;
     subagentTreeEl.classList.add("turn-tree");
     const rootId = progressSession.turnRootId || [...progressSession.turnNodes.keys()][0];
-    subagentTreeEl.innerHTML =
-      `<div class="turn-tree-heading">${escapeHtml(t("chat.turn.tree"))}</div>` +
-      `<ul>${renderTurnTreeNode(rootId)}</ul>`;
+    subagentTreeEl.innerHTML = `<ul class="turn-tree-root">${renderTurnTreeNode(rootId, 0)}</ul>`;
   }
 
   function isSubagentProgressEvent(event) {
