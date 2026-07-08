@@ -7,22 +7,26 @@ import threading
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from secretary.agent.llm_config import LlmConfig
-from secretary.agent.loop import PendingConfirmation, StepResult, ToolCall
+from secretary.agent.loop import PendingConfirmation, StepResult
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolCall
 from secretary.agent.turn_models import TurnContext, TurnStatus
 
 PauseKind = Literal["confirmation", "subagent", "parent_resume"]
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _pending_from_dict(raw: dict[str, Any]) -> PendingConfirmation:
     return PendingConfirmation(
         action_id=str(raw.get("action_id") or ""),
         tool_name=str(raw.get("tool_name") or ""),
-        arguments=raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {},
+        arguments=_dict_or_empty(raw.get("arguments")),
         description=str(raw.get("description") or ""),
         risk_level=str(raw.get("risk_level") or "medium"),
         confirmation_kind=str(raw.get("confirmation_kind") or "action"),
@@ -37,7 +41,7 @@ def _step_from_dict(raw: Any) -> StepResult | None:
     if isinstance(tool_raw, dict):
         tool_call = ToolCall(
             name=str(tool_raw.get("name") or ""),
-            arguments=tool_raw.get("arguments") if isinstance(tool_raw.get("arguments"), dict) else {},
+            arguments=_dict_or_empty(tool_raw.get("arguments")),
             id=str(tool_raw.get("id") or ""),
         )
     return StepResult(
@@ -185,9 +189,10 @@ def _turn_from_dict(raw: dict[str, Any]) -> TurnContext | None:
     turn_id = str(raw.get("turn_id") or "").strip()
     if not trace_id or not turn_id:
         return None
-    status = raw.get("status", "running")
-    if status not in {"running", "paused", "completed", "failed"}:
-        status = "running"
+    status_raw = str(raw.get("status") or "running")
+    status: TurnStatus = "running"
+    if status_raw in {"running", "paused", "completed", "failed"}:
+        status = cast(TurnStatus, status_raw)
     return TurnContext(
         turn_id=turn_id,
         trace_id=trace_id,
@@ -195,7 +200,7 @@ def _turn_from_dict(raw: dict[str, Any]) -> TurnContext | None:
         user_message=str(raw.get("user_message") or "")[:4000],
         parent_turn_id=str(raw.get("parent_turn_id") or ""),
         child_id=str(raw.get("child_id") or ""),
-        status=status,  # type: ignore[arg-type]
+        status=status,
         started_at=str(raw.get("started_at") or datetime.now(UTC).isoformat()),
         _item_seq=int(raw.get("item_seq") or 0),
     )

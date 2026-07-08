@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from secretary.agent.agent_profile import (
     AgentProfile,
@@ -188,7 +188,7 @@ class ChatService:
             self._pending_llm_config = None
             return pending, messages, llm_config
 
-    def _persist_pause(self, trace_id: str, kind: PauseKind, data: dict) -> None:
+    def _persist_pause(self, trace_id: str, kind: PauseKind, data: dict[str, Any]) -> None:
         if not trace_id or self._session_store.persistence_path is None:
             return
         self._session_store.save_pause(trace_id, kind=kind, data=data)

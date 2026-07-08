@@ -26,11 +26,11 @@ from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
 from secretary.agent.turn_orchestrator import TurnOrchestrator
 from secretary.agent.turn_runner import TurnRunner
+from secretary.api.legacy_workspace import router as legacy_workspace_router
 from secretary.config import settings
 from secretary.core.types import SourceKind
-from secretary.exceptions import AgentError, IngestError
+from secretary.exceptions import AgentError
 from secretary.memory.db import MemoryStore
-from secretary.memory.graph import GraphBuilder
 from secretary.memory.kb import KnowledgeWorkspace
 from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
@@ -148,29 +148,6 @@ class ConfirmActionRequest(BaseModel):
     grant_session_write: bool = False
     trace_id: str = Field(default="", max_length=64)
     thread_id: str = Field(default="", max_length=64)
-
-
-class GraphResponse(BaseModel):
-    nodes: list[dict[str, object]]
-    edges: list[dict[str, str]]
-    layout: str
-    legacy_workspace: bool = False
-
-
-class NoteListResponse(BaseModel):
-    notes: list[dict[str, str]]
-    legacy_workspace: bool = False
-
-
-class NoteDetailResponse(BaseModel):
-    path: str
-    content: str
-    legacy_workspace: bool = False
-
-
-class NoteUpdateRequest(BaseModel):
-    path: str = Field(min_length=1)
-    content: str = Field(max_length=500_000)
 
 
 class BriefingResponse(BaseModel):
@@ -531,6 +508,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(legacy_workspace_router)
 
 
 def _svc(request: Request) -> Any:
@@ -1379,56 +1358,6 @@ def read_installed_skill(name: str, request: Request) -> dict[str, str]:
     return {"name": name, "markdown": body}
 
 
-@app.get("/api/kb/tree")
-def kb_tree(request: Request) -> dict[str, object]:
-    workspace: KnowledgeWorkspace = _svc(request).workspace
-    return {
-        "topics": workspace.topic_tree(),
-        "legacy_workspace": True,
-        "message": "Legacy Lumina workspace; Shibei is the primary knowledge path.",
-    }
-
-
-@app.get("/api/kb/notes")
-def kb_notes(request: Request) -> NoteListResponse:
-    workspace: KnowledgeWorkspace = _svc(request).workspace
-    notes = workspace.list_notes()
-    return NoteListResponse(
-        notes=[
-            {
-                "chunk_id": note.chunk_id,
-                "path": note.path,
-                "title": note.title,
-                "topic": note.topic,
-                "source": note.source,
-                "updated_at": note.updated_at,
-            }
-            for note in notes
-        ],
-        legacy_workspace=True,
-    )
-
-
-@app.get("/api/kb/note")
-def kb_note(path: str, request: Request) -> NoteDetailResponse:
-    workspace: KnowledgeWorkspace = _svc(request).workspace
-    try:
-        content = workspace.read_note(path)
-    except IngestError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    return NoteDetailResponse(path=path, content=content, legacy_workspace=True)
-
-
-@app.put("/api/kb/note")
-def kb_note_update(body: NoteUpdateRequest, request: Request) -> NoteDetailResponse:
-    workspace: KnowledgeWorkspace = _svc(request).workspace
-    try:
-        workspace.write_note(body.path, body.content)
-    except IngestError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return NoteDetailResponse(path=body.path, content=body.content, legacy_workspace=True)
-
-
 @app.get("/api/briefing/latest")
 def briefing_latest() -> BriefingResponse:
     payload = BackgroundScheduler.load_latest_briefing(settings.resolved_data_dir())
@@ -1438,37 +1367,6 @@ def briefing_latest() -> BriefingResponse:
         markdown=payload["markdown"],
         generated_at=payload["generated_at"],
     )
-
-
-@app.get("/api/graph")
-def graph_data(request: Request, filter: str = "all") -> GraphResponse:
-    workspace: KnowledgeWorkspace = _svc(request).workspace
-    store: MemoryStore = _svc(request).store
-    graph = GraphBuilder(workspace, store).build(filter_mode=filter)
-    return GraphResponse(
-        nodes=[
-            {
-                "id": node.id,
-                "name": node.name,
-                "type": node.node_type,
-                **node.meta,
-            }
-            for node in graph.nodes
-        ],
-        edges=[
-            {"source": edge.source, "target": edge.target, "relation": edge.relation}
-            for edge in graph.edges
-        ],
-        layout=graph.layout,
-        legacy_workspace=True,
-    )
-
-
-@app.post("/api/kb/rebuild")
-async def kb_rebuild(request: Request) -> dict[str, object]:
-    sync_service: SyncService = _svc(request).sync_service
-    count = await asyncio.to_thread(sync_service.export_kb_from_memory)
-    return {"exported": count, "legacy_workspace": True}
 
 
 def _platform_field_values(source: SourceKind, request: Request) -> dict[str, object]:
