@@ -53,6 +53,11 @@
     panelVisible: false,
   };
 
+  // Conversation tree branching state
+  let pendingParentId = ""; // when forking, the parent message id for the next send
+  let currentTreeData = null; // cached tree view from /tree endpoint
+  let showArchived = false; // whether to render archived (soft-deleted) nodes
+
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
 
@@ -259,7 +264,7 @@
     void window.SecretaryAPI.request(
       "POST",
       "/api/chat",
-      { message: userText, trace_id: "", thread_id: currentThreadId || "" },
+      { message: userText, trace_id: "", thread_id: currentThreadId || "", parent_message_id: "" },
       { timeoutMs: 15_000 },
     )
       .then(() => syncThreadsFromServer({ render: false }))
@@ -279,7 +284,7 @@
     void window.SecretaryAPI.request(
       "POST",
       "/api/chat",
-      { message: userText, trace_id: "", thread_id: currentThreadId || "" },
+      { message: userText, trace_id: "", thread_id: currentThreadId || "", parent_message_id: "" },
       { timeoutMs: 15_000 },
     )
       .then(() => syncThreadsFromServer({ render: false }))
@@ -310,7 +315,18 @@
       const controller = createActiveController();
       const traceId = createTraceId();
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
-      const chatBody = { message: text, trace_id: traceId, thread_id: currentThreadId || "" };
+      const isForkSend = Boolean(pendingParentId);
+      const chatBody = {
+        message: text,
+        trace_id: traceId,
+        thread_id: currentThreadId || "",
+        parent_message_id: pendingParentId || "",
+      };
+      // Fork intent is consumed once the request is sent.
+      if (pendingParentId) {
+        pendingParentId = "";
+        updateForkBanner();
+      }
       const response = await window.SecretaryAPI.request(
         "POST",
         "/api/chat",
@@ -322,18 +338,31 @@
       );
       showTyping(false);
 
+      // After a fork, the active path changes (old branch is replaced).
+      // render:true re-renders from server state so stale off-path messages
+      // are removed. For normal sends, render:false keeps the optimistic DOM
+      // and reconcileMessageIds() updates data-msg-id to server ids.
+      const syncRender = isForkSend;
       if (response.needs_confirmation) {
         clearStreamingBubble();
         pendingActionId = response.confirmation_action_id;
         appendConfirmation(response);
+        void syncThreadsFromServer({ render: syncRender });
       } else if (streamingBubbleEl) {
         finalizeStreamingMessage(response.reply);
         appendGroundingMeta(response);
+        void syncThreadsFromServer({ render: syncRender }).then(() => {
+          appendGroundingMeta(response);
+          void fetchTreeData(currentThreadId);
+        });
       } else {
         appendMessage("bot", response.reply);
         appendGroundingMeta(response);
+        void syncThreadsFromServer({ render: syncRender }).then(() => {
+          appendGroundingMeta(response);
+          void fetchTreeData(currentThreadId);
+        });
       }
-      void syncThreadsFromServer({ render: false });
     } catch (error) {
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.reply"));
@@ -389,14 +418,22 @@
         clearStreamingBubble();
         pendingActionId = response.confirmation_action_id;
         appendConfirmation(response);
+        void syncThreadsFromServer({ render: false });
       } else if (streamingBubbleEl) {
         finalizeStreamingMessage(response.reply);
         appendGroundingMeta(response);
+        void syncThreadsFromServer({ render: false }).then(() => {
+          appendGroundingMeta(response);
+          void fetchTreeData(currentThreadId);
+        });
       } else {
         appendMessage("bot", response.reply);
         appendGroundingMeta(response);
+        void syncThreadsFromServer({ render: false }).then(() => {
+          appendGroundingMeta(response);
+          void fetchTreeData(currentThreadId);
+        });
       }
-      void syncThreadsFromServer({ render: false });
     } catch (error) {
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.action"));
@@ -525,23 +562,74 @@
     return RUNTIME_SUMMARY_RE.test(source);
   }
 
-  function appendMessageInternal(role, text, persist) {
+  function appendMessageInternal(role, text, persist, msgMeta = null) {
     if (isRuntimeSummaryMessage(text)) {
       return;
     }
+    let msgId = msgMeta?.id || "";
+    let archived = Boolean(msgMeta?.archived);
+    if (persist) {
+      const created = persistMessage(role, text);
+      if (!created) return;
+      msgId = created.id;
+      archived = created.archived;
+    }
+    const thread = getCurrentThread();
+    const isActiveLeaf = Boolean(msgId) && Boolean(thread) && msgId === (thread.active_leaf_id || "");
     const row = document.createElement("div");
-    row.className = `message ${role}`;
+    row.className = `message ${role}${archived ? " archived" : ""}${isActiveLeaf ? " is-active-leaf" : ""}`;
+    if (msgId) row.dataset.msgId = msgId;
     const avatarSrc = role === "bot" ? BOT_AVATAR_SRC : "/assets/avatar-user.svg";
     const bubbleClass = "bubble markdown";
     row.innerHTML =
       `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
       `<img src="${avatarSrc}" alt="" aria-hidden="true" /></div>` +
       `<div class="${bubbleClass}">${renderMessageHtml(role, text)}</div>`;
+    if (msgId) {
+      row.appendChild(buildMsgActionsEl(msgId, role, archived, thread));
+    }
     messagesEl.appendChild(row);
     scrollChatToBottom();
-    if (persist) {
-      persistMessage(role, text);
+  }
+
+  function buildMsgActionsEl(msgId, role, archived, thread) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg-actions";
+    // A turn = user question + assistant reply. Forking makes sense only at
+    // the end of a turn (the assistant reply); forking from a bare user
+    // question would just regenerate the answer, which is rarely useful.
+    const canFork = role === "bot";
+    if (archived) {
+      const restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "msg-action-btn";
+      restoreBtn.textContent = "恢复";
+      restoreBtn.dataset.action = "restore";
+      restoreBtn.dataset.msgId = msgId;
+      wrap.appendChild(restoreBtn);
+    } else {
+      if (canFork) {
+        const forkBtn = document.createElement("button");
+        forkBtn.type = "button";
+        forkBtn.className = "msg-action-btn";
+        forkBtn.textContent = "分叉";
+        forkBtn.title = "从此新开分支";
+        forkBtn.dataset.action = "fork";
+        forkBtn.dataset.msgId = msgId;
+        wrap.appendChild(forkBtn);
+      }
+      const rollbackBtn = document.createElement("button");
+      rollbackBtn.type = "button";
+      rollbackBtn.className = "msg-action-btn";
+      rollbackBtn.textContent = "回退";
+      rollbackBtn.title = "回退到此";
+      rollbackBtn.dataset.action = "rollback";
+      rollbackBtn.dataset.msgId = msgId;
+      wrap.appendChild(rollbackBtn);
     }
+    const switcher = buildSiblingSwitcherEl(thread, msgId);
+    if (switcher) wrap.appendChild(switcher);
+    return wrap;
   }
 
   function appendConfirmation(response) {
@@ -1131,11 +1219,21 @@
       appendMessage("bot", finalText);
       return;
     }
-    streamingBubbleEl.innerHTML = renderMarkdown(finalText);
-    persistMessage("bot", finalText);
+    const row = streamingBubbleEl.closest(".message");
+    streamingBubbleEl.innerHTML = renderMessageHtml("bot", finalText);
+    const msg = persistMessage("bot", finalText);
     streamingBubbleEl = null;
     streamingText = "";
     scrollChatToBottom();
+    if (row && msg) {
+      row.classList.remove("streaming");
+      row.dataset.msgId = msg.id;
+      const thread = getCurrentThread();
+      if (thread && msg.id === (thread.active_leaf_id || "")) {
+        row.classList.add("is-active-leaf");
+      }
+      row.appendChild(buildMsgActionsEl(msg.id, "bot", false, thread));
+    }
   }
 
   function flushStreamingToProgress() {
@@ -1271,8 +1369,14 @@
 
   function renderAskUserHtml(text) {
     const source = String(text || "").trim();
-    if (!source.startsWith("ASK_USER_REQUEST")) return "";
-    const jsonPart = source.slice("ASK_USER_REQUEST".length).trim();
+    const idx = source.indexOf("ASK_USER_REQUEST");
+    if (idx === -1) return "";
+    let jsonPart = source.slice(idx + "ASK_USER_REQUEST".length).trim();
+    jsonPart = jsonPart.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    if (!jsonPart.startsWith("{")) {
+      const match = jsonPart.match(/\{[\s\S]*\}/);
+      if (match) jsonPart = match[0].trim();
+    }
     let payload;
     try {
       payload = JSON.parse(jsonPart);
@@ -1325,9 +1429,40 @@
       .replaceAll(">", "&gt;");
   }
 
+  function reconcileMessageIds() {
+    // After syncThreadsFromServer({ render: false }), the internal threads
+    // state carries server-assigned message ids, but the DOM still holds
+    // locally-generated ids from optimistic rendering. Update data-msg-id
+    // on each row (and its action buttons) so fork/rollback/restore send
+    // the correct server id to the backend.
+    const thread = getCurrentThread();
+    if (!thread || !Array.isArray(thread.messages)) return;
+    const path = computeActivePath(thread);
+    const rows = Array.from(messagesEl.querySelectorAll(".message"));
+    // Safety: only reconcile when DOM row count matches the active path.
+    // A mismatch means the DOM is stale (thread switch, archived toggle,
+    // etc.) and a full re-render is needed instead.
+    if (rows.length !== path.length) return;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const newId = path[i].id;
+      if (!newId || row.dataset.msgId === newId) continue;
+      row.dataset.msgId = newId;
+      row.querySelectorAll("[data-msg-id]").forEach((btn) => {
+        btn.dataset.msgId = newId;
+      });
+    }
+  }
+
   function applyThreadPayload(payload, { render = true } = {}) {
     if (!Array.isArray(payload?.threads)) return false;
-    threads = sortThreadsByUpdatedAt(payload.threads);
+    threads = sortThreadsByUpdatedAt(
+      payload.threads.map((item) => {
+        const t = migrateThreadMessages({ ...item });
+        delete t._migrated;
+        return t;
+      }),
+    );
     const remoteCurrent = String(payload.current_id || "");
     currentThreadId = threads.some((item) => item.id === remoteCurrent)
       ? remoteCurrent
@@ -1339,6 +1474,7 @@
       scrollActiveThreadIntoView();
     } else {
       renderThreadList();
+      reconcileMessageIds();
       scrollActiveThreadIntoView();
     }
     return true;
@@ -1503,39 +1639,157 @@
   function renderCurrentThreadMessages() {
     resetTransientUI();
     messagesEl.innerHTML = "";
+    ensureChatToolbar();
     const thread = getCurrentThread();
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       welcome.classList.remove("hidden");
       return;
     }
     welcome.classList.add("hidden");
-    for (const item of thread.messages) {
-      appendMessageInternal(item.role, item.text, false);
+    const path = computeActivePath(thread);
+    for (const item of path) {
+      appendMessageInternal(item.role, item.text, false, { id: item.id, archived: item.archived });
     }
     scrollChatToBottom();
+    void fetchTreeData(currentThreadId);
+  }
+
+  // Walk parent_id chain from active_leaf_id back to root, then reverse.
+  // Filters archived nodes unless showArchived is on (archived appended at end).
+  function computeActivePath(thread) {
+    if (!thread || !Array.isArray(thread.messages)) return [];
+    const byId = new Map();
+    for (const m of thread.messages) {
+      if (m && m.id) byId.set(m.id, m);
+    }
+    if (!thread.active_leaf_id) {
+      // Legacy fallback: render all messages in storage order.
+      return thread.messages.filter((m) => !m.archived || showArchived);
+    }
+    const activePath = [];
+    const seen = new Set();
+    let cur = thread.active_leaf_id;
+    let guard = 0;
+    while (cur && byId.has(cur) && !seen.has(cur) && guard < 1000) {
+      seen.add(cur);
+      activePath.push(byId.get(cur));
+      cur = byId.get(cur).parent_id || "";
+      guard++;
+    }
+    activePath.reverse();
+    if (!showArchived) {
+      return activePath.filter((m) => !m.archived);
+    }
+    // showArchived: active path (non-archived) + archived nodes appended.
+    const activeIds = new Set(activePath.map((m) => m.id));
+    const archivedExtra = thread.messages.filter(
+      (m) => m.archived && !activeIds.has(m.id),
+    );
+    return [...activePath.filter((m) => !m.archived), ...archivedExtra];
+  }
+
+  function computeSiblings(thread, msgId) {
+    if (!thread || !Array.isArray(thread.messages) || !msgId) return [];
+    const msg = thread.messages.find((m) => m.id === msgId);
+    if (!msg) return [];
+    const parentId = msg.parent_id || "";
+    return thread.messages.filter((m) => (m.parent_id || "") === parentId);
+  }
+
+  // Find the deepest leaf in a subtree rooted at rootId by following first
+  // non-archived child chain (falls back to first child if all archived).
+  function findDeepestLeaf(thread, rootId) {
+    if (!thread || !Array.isArray(thread.messages) || !rootId) return rootId;
+    const childrenMap = new Map();
+    for (const m of thread.messages) {
+      const pid = m.parent_id || "";
+      if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+      childrenMap.get(pid).push(m);
+    }
+    let leaf = rootId;
+    const guardSeen = new Set();
+    let guard = 0;
+    while (childrenMap.has(leaf) && !guardSeen.has(leaf) && guard < 1000) {
+      guardSeen.add(leaf);
+      const children = childrenMap.get(leaf);
+      const next = children.find((m) => !m.archived) || children[0];
+      if (!next) break;
+      leaf = next.id;
+      guard++;
+    }
+    return leaf;
+  }
+
+  function buildSiblingSwitcherEl(thread, msgId) {
+    if (!thread || !msgId) return null;
+    const siblings = computeSiblings(thread, msgId);
+    if (siblings.length <= 1) return null;
+    const idx = siblings.findIndex((s) => s.id === msgId);
+    if (idx < 0) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "sibling-switcher";
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "sibling-nav";
+    prev.textContent = "‹";
+    prev.dataset.action = "sibling-prev";
+    prev.dataset.msgId = msgId;
+    prev.disabled = idx === 0;
+    const count = document.createElement("span");
+    count.className = "sibling-count";
+    count.textContent = `${idx + 1}/${siblings.length}`;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "sibling-nav";
+    next.textContent = "›";
+    next.dataset.action = "sibling-next";
+    next.dataset.msgId = msgId;
+    next.disabled = idx === siblings.length - 1;
+    wrap.appendChild(prev);
+    wrap.appendChild(count);
+    wrap.appendChild(next);
+    return wrap;
+  }
+
+  function generateMessageId() {
+    let hex = "";
+    if (window.crypto?.getRandomValues) {
+      const arr = new Uint8Array(4);
+      window.crypto.getRandomValues(arr);
+      hex = Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+    } else {
+      hex = Math.random().toString(16).slice(2, 10).padStart(8, "0");
+    }
+    return `m_${hex}`;
   }
 
   function persistMessage(role, text) {
     if (isRuntimeSummaryMessage(text)) {
-      return;
+      return null;
     }
     const thread = getCurrentThread();
-    if (!thread) return;
-    thread.messages.push({
+    if (!thread) return null;
+    const msg = {
+      id: generateMessageId(),
+      parent_id: thread.active_leaf_id || "",
       role,
       text: String(text || ""),
       timestamp: new Date().toISOString(),
-    });
+      archived: false,
+    };
+    thread.messages.push(msg);
+    thread.active_leaf_id = msg.id;
     if (thread.messages.length > 400) {
       thread.messages = thread.messages.slice(-400);
     }
-    if (role === "user" && (thread.title === t("thread.new") || thread.title === "新对话" || !thread.title)) {
+    if (role === "user") {
       thread.title = buildThreadTitle(text);
     }
     thread.updatedAt = new Date().toISOString();
     threads = sortThreadsByUpdatedAt(threads);
     saveThreadsLocal();
     renderThreadList();
+    return msg;
   }
 
   function getCurrentThread() {
@@ -1570,7 +1824,12 @@
           if (messages.length !== item.messages.length) {
             changed = true;
           }
-          return { ...item, messages };
+          const migrated = migrateThreadMessages({ ...item, messages });
+          if (migrated._migrated) {
+            changed = true;
+            delete migrated._migrated;
+          }
+          return migrated;
         });
       if (changed) {
         localStorage.setItem(THREADS_KEY, JSON.stringify(valid));
@@ -1579,6 +1838,36 @@
     } catch (_error) {
       return [];
     }
+  }
+
+  // Migrate legacy flat messages (no id/parent_id/active_leaf_id/archived)
+  // into tree nodes with chained parent_id and active_leaf_id at the last message.
+  function migrateThreadMessages(thread) {
+    if (!thread || !Array.isArray(thread.messages)) return thread;
+    let prevId = "";
+    for (const msg of thread.messages) {
+      if (!msg || typeof msg !== "object") continue;
+      if (!msg.id) {
+        msg.id = generateMessageId();
+        thread._migrated = true;
+      }
+      if (msg.parent_id === undefined || msg.parent_id === null) {
+        msg.parent_id = prevId;
+        thread._migrated = true;
+      }
+      if (msg.archived === undefined || msg.archived === null) {
+        msg.archived = false;
+        thread._migrated = true;
+      }
+      prevId = msg.id;
+    }
+    if (!thread.active_leaf_id) {
+      thread.active_leaf_id = thread.messages.length
+        ? thread.messages[thread.messages.length - 1].id
+        : "";
+      thread._migrated = true;
+    }
+    return thread;
   }
 
   function buildThreadTitle(text) {
@@ -1600,7 +1889,8 @@
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       return t("thread.empty");
     }
-    const last = thread.messages[thread.messages.length - 1];
+    const path = computeActivePath(thread).filter((m) => !m.archived);
+    const last = path.length ? path[path.length - 1] : thread.messages[thread.messages.length - 1];
     const text = String(last?.text || "").replace(/\s+/g, " ").trim();
     if (!text) return t("thread.empty");
     return text.length > 24 ? `${text.slice(0, 24)}…` : text;
@@ -1621,4 +1911,210 @@
       // Ignore reset errors, local thread UI remains usable.
     }
   }
+
+  // ---- Conversation tree: fork / rollback / restore / sibling navigation ----
+
+  async function fetchTreeData(threadId) {
+    if (!threadId) {
+      currentTreeData = null;
+      return;
+    }
+    try {
+      currentTreeData = await window.SecretaryAPI.request(
+        "GET",
+        `/api/chat/threads/${encodeURIComponent(threadId)}/tree`,
+        null,
+        { timeoutMs: 5000 },
+      );
+    } catch (_error) {
+      currentTreeData = null;
+    }
+  }
+
+  function setForkParent(msgId) {
+    pendingParentId = msgId || "";
+    updateForkBanner();
+    if (pendingParentId) {
+      chatInput.focus();
+    }
+  }
+
+  function cancelFork() {
+    pendingParentId = "";
+    updateForkBanner();
+    chatInput.focus();
+  }
+
+  function updateForkBanner() {
+    let banner = document.getElementById("fork-banner");
+    if (pendingParentId) {
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "fork-banner";
+        banner.className = "fork-banner";
+        const composerWrap = document.querySelector(".composer-wrap");
+        if (composerWrap && composerWrap.parentElement) {
+          composerWrap.parentElement.insertBefore(banner, composerWrap);
+        }
+      }
+      banner.innerHTML = "";
+      const label = document.createElement("span");
+      label.className = "fork-banner-label";
+      label.textContent = "将从这条消息分叉新对话";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "fork-banner-cancel";
+      cancelBtn.textContent = "取消";
+      cancelBtn.addEventListener("click", cancelFork);
+      banner.appendChild(label);
+      banner.appendChild(cancelBtn);
+      chatInput.classList.add("fork-pending");
+    } else {
+      if (banner) banner.remove();
+      chatInput.classList.remove("fork-pending");
+    }
+  }
+
+  async function rollbackToMessage(msgId) {
+    if (!msgId || !currentThreadId || busy) return;
+    if (!window.confirm("确定回退到此节点？之后的消息将被归档。")) return;
+    setBusy(true);
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "POST",
+        `/api/chat/threads/${encodeURIComponent(currentThreadId)}/rollback`,
+        { to_message_id: msgId },
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: true });
+      void fetchTreeData(currentThreadId);
+    } catch (error) {
+      appendMessage("bot", `回退失败: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreMessage(msgId) {
+    if (!msgId || !currentThreadId || busy) return;
+    setBusy(true);
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "POST",
+        `/api/chat/threads/${encodeURIComponent(currentThreadId)}/restore`,
+        { message_id: msgId },
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: true });
+      void fetchTreeData(currentThreadId);
+    } catch (error) {
+      appendMessage("bot", `恢复失败: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function switchSibling(msgId, direction) {
+    if (!msgId || !currentThreadId || busy) return;
+    const thread = getCurrentThread();
+    if (!thread) return;
+    const siblings = computeSiblings(thread, msgId);
+    if (siblings.length <= 1) return;
+    const idx = siblings.findIndex((s) => s.id === msgId);
+    if (idx < 0) return;
+    const nextIdx = direction === "next" ? idx + 1 : idx - 1;
+    if (nextIdx < 0 || nextIdx >= siblings.length) return;
+    const leafId = findDeepestLeaf(thread, siblings[nextIdx].id);
+    setBusy(true);
+    try {
+      const remote = await window.SecretaryAPI.request(
+        "PUT",
+        `/api/chat/threads/${encodeURIComponent(currentThreadId)}/active-leaf`,
+        { leaf_id: leafId },
+        { timeoutMs: 8000 },
+      );
+      applyThreadPayload(remote, { render: true });
+      void fetchTreeData(currentThreadId);
+    } catch (error) {
+      appendMessage("bot", `切换分支失败: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function ensureChatToolbar() {
+    let toolbar = document.getElementById("chat-toolbar");
+    if (!toolbar) {
+      toolbar = document.createElement("div");
+      toolbar.id = "chat-toolbar";
+      toolbar.className = "chat-toolbar";
+      const label = document.createElement("label");
+      label.className = "archived-toggle";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.id = "show-archived-toggle";
+      checkbox.checked = showArchived;
+      checkbox.addEventListener("change", () => {
+        showArchived = checkbox.checked;
+        renderCurrentThreadMessages();
+      });
+      const text = document.createElement("span");
+      text.textContent = "显示已归档";
+      label.appendChild(checkbox);
+      label.appendChild(text);
+      toolbar.appendChild(label);
+      const mapBtn = document.createElement("button");
+      mapBtn.type = "button";
+      mapBtn.id = "btn-map-toggle";
+      mapBtn.className = "map-toggle-btn js-map-toggle";
+      mapBtn.textContent = "地图";
+      mapBtn.title = "对话地图";
+      toolbar.appendChild(mapBtn);
+      if (messagesEl.parentElement) {
+        messagesEl.parentElement.insertBefore(toolbar, messagesEl);
+      }
+    }
+    const checkbox = toolbar.querySelector("#show-archived-toggle");
+    if (checkbox) checkbox.checked = showArchived;
+  }
+
+  // Event delegation for message action buttons.
+  messagesEl.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const msgId = btn.dataset.msgId;
+    if (!action) return;
+    if (action === "fork") {
+      setForkParent(msgId);
+    } else if (action === "rollback") {
+      void rollbackToMessage(msgId);
+    } else if (action === "restore") {
+      void restoreMessage(msgId);
+    } else if (action === "sibling-prev") {
+      void switchSibling(msgId, "prev");
+    } else if (action === "sibling-next") {
+      void switchSibling(msgId, "next");
+    } else if (action === "cancel-fork") {
+      cancelFork();
+    }
+  });
+
+  // Esc cancels fork mode.
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && pendingParentId) {
+      cancelFork();
+    }
+  });
+
+  // Expose minimal entry points for cross-module communication (e.g. conversation map).
+  window.ChatModule = {
+    getCurrentThreadId: () => currentThreadId,
+    refresh: () => syncThreadsFromServer({ render: true }),
+  };
+
+  // Refresh current thread when conversation map switches active leaf.
+  document.addEventListener("conversation:active-leaf-changed", () => {
+    void syncThreadsFromServer({ render: true });
+  });
 })();

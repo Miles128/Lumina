@@ -1,4 +1,10 @@
-"""Persistent chat threads (multi-session UI + agent history per thread)."""
+"""Persistent chat threads (multi-session UI + agent history per thread).
+
+Messages are modeled as tree nodes: each carries a stable ``id``
+(``m_<uuid8>``), a ``parent_id`` (root is ``""``), and an ``archived`` flag.
+The thread records the currently displayed path via ``active_leaf_id``;
+``active_path`` walks from that leaf back to the root.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +27,114 @@ class ChatThread:
     messages: list[dict[str, str]] = field(default_factory=list)
 
 
+def _new_message_id() -> str:
+    return f"m_{uuid.uuid4().hex[:8]}"
+
+
+def _migrate_thread(thread: dict[str, Any]) -> bool:
+    """Backfill id/parent_id/archived on messages and active_leaf_id on thread.
+
+    Returns True if any field was backfilled so the caller can persist.
+    """
+    changed = False
+    messages = thread.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+        thread["messages"] = messages
+        changed = True
+    prev_id = ""
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        mid = msg.get("id")
+        if not isinstance(mid, str) or not mid:
+            mid = _new_message_id()
+            msg["id"] = mid
+            changed = True
+        parent_id = msg.get("parent_id")
+        if not isinstance(parent_id, str):
+            msg["parent_id"] = prev_id
+            changed = True
+        archived = msg.get("archived")
+        if not isinstance(archived, bool):
+            msg["archived"] = False
+            changed = True
+        prev_id = mid
+    active_leaf_id = thread.get("active_leaf_id")
+    if not isinstance(active_leaf_id, str):
+        last_id = ""
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and isinstance(msg.get("id"), str) and msg["id"]:
+                last_id = msg["id"]
+                break
+        thread["active_leaf_id"] = last_id
+        changed = True
+    return changed
+
+
+def _message_id_set(thread: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    messages = thread.get("messages")
+    if not isinstance(messages, list):
+        return ids
+    for msg in messages:
+        if isinstance(msg, dict) and isinstance(msg.get("id"), str) and msg["id"]:
+            ids.add(msg["id"])
+    return ids
+
+
+def _structural_path(thread: dict[str, Any]) -> list[dict[str, Any]]:
+    """Root→active_leaf path, including archived nodes (cycle-safe)."""
+    messages = thread.get("messages")
+    if not isinstance(messages, list):
+        return []
+    by_id: dict[str, dict[str, Any]] = {}
+    for msg in messages:
+        if isinstance(msg, dict) and isinstance(msg.get("id"), str) and msg["id"]:
+            by_id[msg["id"]] = msg
+    leaf_id = thread.get("active_leaf_id")
+    if not isinstance(leaf_id, str) or not leaf_id or leaf_id not in by_id:
+        return []
+    path: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    current = leaf_id
+    while current and current in by_id and current not in seen:
+        node = by_id[current]
+        path.append(node)
+        seen.add(current)
+        parent = node.get("parent_id")
+        current = parent if isinstance(parent, str) else ""
+    path.reverse()
+    return path
+
+
+def _active_path(thread: dict[str, Any]) -> list[dict[str, Any]]:
+    """Root→active_leaf path with archived nodes filtered out."""
+    return [m for m in _structural_path(thread) if not m.get("archived")]
+
+
+def _descendant_ids(thread: dict[str, Any], root_id: str) -> list[str]:
+    """All descendant ids of ``root_id`` (excluding itself), via parent_id links."""
+    messages = thread.get("messages")
+    if not isinstance(messages, list):
+        return []
+    children: dict[str, list[str]] = {}
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        parent = msg.get("parent_id")
+        mid = msg.get("id")
+        if isinstance(parent, str) and parent and isinstance(mid, str) and mid:
+            children.setdefault(parent, []).append(mid)
+    result: list[str] = []
+    stack = list(children.get(root_id, []))
+    while stack:
+        cid = stack.pop()
+        result.append(cid)
+        stack.extend(children.get(cid, []))
+    return result
+
+
 class ChatThreadStore:
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -38,10 +152,15 @@ class ChatThreadStore:
         threads = payload.get("threads")
         if not isinstance(threads, list):
             threads = []
-        return {
-            "current_id": str(payload.get("current_id") or ""),
-            "threads": threads,
-        }
+        threads = [item for item in threads if isinstance(item, dict)]
+        migrated = False
+        for thread in threads:
+            if _migrate_thread(thread):
+                migrated = True
+        current_id = str(payload.get("current_id") or "")
+        if migrated:
+            self.save_document(current_id=current_id, threads=threads)
+        return {"current_id": current_id, "threads": threads}
 
     def save_document(self, *, current_id: str, threads: list[dict[str, Any]]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +198,7 @@ class ChatThreadStore:
                 "title": (title or "新对话")[:120],
                 "updatedAt": now,
                 "messages": [],
+                "active_leaf_id": "",
             },
         )
         self.save_document(current_id=thread_id, threads=threads)
@@ -116,51 +236,85 @@ class ChatThreadStore:
             thread_id = str(item.get("id") or "").strip()
             if not thread_id:
                 thread_id = f"t_{uuid.uuid4().hex[:10]}"
-            messages = item.get("messages")
-            if not isinstance(messages, list):
-                messages = []
-            normalized_messages: list[dict[str, str]] = []
-            for message in messages[-MAX_THREAD_MESSAGES:]:
+            raw_messages = item.get("messages")
+            if not isinstance(raw_messages, list):
+                raw_messages = []
+            normalized_messages: list[dict[str, Any]] = []
+            prev_id = ""
+            for message in raw_messages:
                 if not isinstance(message, dict):
                     continue
                 role = message.get("role")
                 text = message.get("text") or message.get("content")
-                if role in {"user", "assistant", "bot"} and isinstance(text, str) and text.strip():
-                    normalized_role = "assistant" if role == "bot" else role
-                    normalized_messages.append({"role": normalized_role, "text": text.strip()})
+                if role not in {"user", "assistant", "bot"} or not isinstance(text, str) or not text.strip():
+                    continue
+                normalized_role = "assistant" if role == "bot" else role
+                mid = message.get("id")
+                if not isinstance(mid, str) or not mid:
+                    mid = _new_message_id()
+                parent_id = message.get("parent_id")
+                if not isinstance(parent_id, str) or not parent_id:
+                    parent_id = prev_id
+                archived = message.get("archived")
+                if not isinstance(archived, bool):
+                    archived = False
+                node: dict[str, Any] = {
+                    "id": mid,
+                    "parent_id": parent_id,
+                    "role": normalized_role,
+                    "text": text.strip(),
+                    "archived": archived,
+                }
+                ts = message.get("timestamp")
+                if isinstance(ts, str) and ts:
+                    node["timestamp"] = ts
+                normalized_messages.append(node)
+                prev_id = mid
+            if len(normalized_messages) > MAX_THREAD_MESSAGES:
+                normalized_messages = normalized_messages[-MAX_THREAD_MESSAGES:]
+            retained_ids = {m["id"] for m in normalized_messages}
+            active_leaf_id = item.get("active_leaf_id")
+            if not isinstance(active_leaf_id, str) or active_leaf_id not in retained_ids:
+                active_leaf_id = normalized_messages[-1]["id"] if normalized_messages else ""
             cleaned.append(
                 {
                     "id": thread_id,
                     "title": str(item.get("title") or "新对话")[:120],
                     "updatedAt": str(item.get("updatedAt") or item.get("updated_at") or datetime.now(UTC).isoformat()),
                     "messages": normalized_messages,
+                    "active_leaf_id": active_leaf_id,
                 }
             )
         current = current_id if any(t["id"] == current_id for t in cleaned) else (cleaned[0]["id"] if cleaned else "")
         self.save_document(current_id=current, threads=cleaned)
         return self.list_view()
 
-    def agent_history(self, thread_id: str) -> list[dict[str, str]]:
+    def active_path(self, thread_id: str) -> list[dict[str, Any]]:
         document = self.load_document()
         for item in document["threads"]:
             if not isinstance(item, dict) or item.get("id") != thread_id:
                 continue
-            messages = item.get("messages")
-            if not isinstance(messages, list):
-                return []
-            history: list[dict[str, str]] = []
-            for message in messages[-MAX_HISTORY_MESSAGES:]:
-                if not isinstance(message, dict):
-                    continue
-                role = message.get("role")
-                text = message.get("text") or message.get("content")
-                if role in {"user", "assistant", "bot"} and isinstance(text, str) and text.strip():
-                    normalized = "assistant" if role == "bot" else str(role)
-                    history.append({"role": normalized, "content": text.strip()})
-            return history
+            return _active_path(item)
         return []
 
-    def append_turn(self, thread_id: str, user_message: str, assistant_message: str) -> None:
+    def agent_history(self, thread_id: str) -> list[dict[str, str]]:
+        path = self.active_path(thread_id)
+        history: list[dict[str, str]] = []
+        for message in path[-MAX_HISTORY_MESSAGES:]:
+            role = message.get("role")
+            text = message.get("text") or message.get("content")
+            if role in {"user", "assistant", "bot"} and isinstance(text, str) and text.strip():
+                normalized = "assistant" if role == "bot" else str(role)
+                history.append({"role": normalized, "content": text.strip()})
+        return history
+
+    def append_turn(
+        self,
+        thread_id: str,
+        user_message: str,
+        assistant_message: str,
+        parent_message_id: str = "",
+    ) -> None:
         document = self.load_document()
         threads = document["threads"]
         target: dict[str, Any] | None = None
@@ -174,15 +328,193 @@ class ChatThreadStore:
                 "title": "新对话",
                 "updatedAt": datetime.now(UTC).isoformat(),
                 "messages": [],
+                "active_leaf_id": "",
             }
             threads.insert(0, target)
         messages = target.get("messages")
         if not isinstance(messages, list):
             messages = []
-        messages.append({"role": "user", "text": user_message.strip()})
-        messages.append({"role": "assistant", "text": assistant_message.strip()})
-        target["messages"] = messages[-MAX_THREAD_MESSAGES:]
-        target["updatedAt"] = datetime.now(UTC).isoformat()
-        if target.get("title") in {"", "新对话", "New chat"} and user_message.strip():
+        parent_id = parent_message_id or (target.get("active_leaf_id") or "")
+        now = datetime.now(UTC).isoformat()
+        user_node: dict[str, Any] = {
+            "id": _new_message_id(),
+            "parent_id": parent_id,
+            "role": "user",
+            "text": user_message.strip(),
+            "archived": False,
+        }
+        assistant_node: dict[str, Any] = {
+            "id": _new_message_id(),
+            "parent_id": user_node["id"],
+            "role": "assistant",
+            "text": assistant_message.strip(),
+            "archived": False,
+        }
+        messages.append(user_node)
+        messages.append(assistant_node)
+        new_leaf_id = assistant_node["id"]
+        if len(messages) > MAX_THREAD_MESSAGES:
+            messages = messages[-MAX_THREAD_MESSAGES:]
+            retained_ids = {m["id"] for m in messages if isinstance(m, dict) and m.get("id")}
+            if new_leaf_id not in retained_ids:
+                for m in reversed(messages):
+                    if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]:
+                        new_leaf_id = m["id"]
+                        break
+        target["messages"] = messages
+        target["active_leaf_id"] = new_leaf_id
+        target["updatedAt"] = now
+        if user_message.strip():
             target["title"] = user_message.strip()[:48]
         self.save_document(current_id=thread_id, threads=threads)
+
+    def set_active_leaf(self, thread_id: str, leaf_id: str) -> dict[str, Any]:
+        document = self.load_document()
+        threads = document["threads"]
+        for item in threads:
+            if not isinstance(item, dict) or item.get("id") != thread_id:
+                continue
+            if leaf_id in _message_id_set(item):
+                item["active_leaf_id"] = leaf_id
+                self.save_document(current_id=document["current_id"], threads=threads)
+            break
+        return self.list_view()
+
+    def thread_tree_view(self, thread_id: str) -> dict[str, Any]:
+        """Return the conversation tree as *turn* nodes.
+
+        A turn pairs a user message with its assistant reply (one round of
+        Q&A). The turn id is the assistant message id when a reply exists,
+        otherwise the user message id. ``parent_id`` is resolved through a
+        message→turn map so the turn tree stays connected even when an older
+        branch forked from a user message directly.
+        """
+        document = self.load_document()
+        for item in document["threads"]:
+            if not isinstance(item, dict) or item.get("id") != thread_id:
+                continue
+            messages = item.get("messages")
+            if not isinstance(messages, list):
+                messages = []
+            active_ids = {
+                m["id"]
+                for m in _structural_path(item)
+                if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]
+            }
+            by_id: dict[str, dict[str, Any]] = {}
+            for msg in messages:
+                if isinstance(msg, dict) and isinstance(msg.get("id"), str) and msg["id"]:
+                    by_id[msg["id"]] = msg
+            # user_id -> its assistant child (role=assistant, parent_id=user_id)
+            assistant_of_user: dict[str, dict[str, Any]] = {}
+            for msg in messages:
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                pid = msg.get("parent_id")
+                if (
+                    isinstance(pid, str)
+                    and pid
+                    and pid in by_id
+                    and by_id[pid].get("role") == "user"
+                ):
+                    assistant_of_user[pid] = msg
+            # message_id -> turn_id, so a turn's parent_id always resolves to
+            # the parent turn's representative id (keeps the turn tree linked).
+            msg_to_turn: dict[str, str] = {}
+            for msg in messages:
+                if not isinstance(msg, dict) or msg.get("role") != "user":
+                    continue
+                mid = msg.get("id")
+                if not isinstance(mid, str) or not mid:
+                    continue
+                assistant = assistant_of_user.get(mid)
+                turn_id = assistant["id"] if assistant else mid
+                msg_to_turn[mid] = turn_id
+                if assistant:
+                    msg_to_turn[assistant["id"]] = turn_id
+            nodes: list[dict[str, Any]] = []
+            root_id = ""
+            for msg in messages:
+                if not isinstance(msg, dict) or msg.get("role") != "user":
+                    continue
+                mid = msg.get("id")
+                if not isinstance(mid, str) or not mid:
+                    continue
+                assistant = assistant_of_user.get(mid)
+                turn_id = msg_to_turn.get(mid, mid)
+                raw_parent = msg.get("parent_id")
+                parent_id = (
+                    msg_to_turn.get(raw_parent, "") if isinstance(raw_parent, str) else ""
+                )
+                if not parent_id and not root_id:
+                    root_id = turn_id
+                user_text = msg.get("text")
+                user_preview = user_text[:80] if isinstance(user_text, str) else ""
+                assistant_text = assistant.get("text") if assistant else ""
+                assistant_preview = (
+                    assistant_text[:80] if isinstance(assistant_text, str) else ""
+                )
+                archived = bool(msg.get("archived", False)) or (
+                    bool(assistant.get("archived", False)) if assistant else False
+                )
+                nodes.append(
+                    {
+                        "id": turn_id,
+                        "parent_id": parent_id,
+                        "user_preview": user_preview,
+                        "assistant_preview": assistant_preview,
+                        "has_assistant": assistant is not None,
+                        "archived": archived,
+                        "active": turn_id in active_ids,
+                    }
+                )
+            return {
+                "nodes": nodes,
+                "root_id": root_id,
+                "active_leaf_id": str(item.get("active_leaf_id") or ""),
+            }
+        return {"nodes": [], "root_id": "", "active_leaf_id": ""}
+
+    def rollback_to(self, thread_id: str, to_message_id: str) -> dict[str, Any]:
+        document = self.load_document()
+        threads = document["threads"]
+        for item in threads:
+            if not isinstance(item, dict) or item.get("id") != thread_id:
+                continue
+            messages = item.get("messages")
+            if not isinstance(messages, list):
+                break
+            if not any(isinstance(m, dict) and m.get("id") == to_message_id for m in messages):
+                break
+            desc_ids = set(_descendant_ids(item, to_message_id))
+            for m in messages:
+                if not isinstance(m, dict):
+                    continue
+                mid = m.get("id")
+                if mid == to_message_id:
+                    m["archived"] = False
+                elif mid in desc_ids:
+                    m["archived"] = True
+            item["active_leaf_id"] = to_message_id
+            self.save_document(current_id=document["current_id"], threads=threads)
+            break
+        return self.list_view()
+
+    def restore_archived(self, thread_id: str, message_id: str) -> dict[str, Any]:
+        document = self.load_document()
+        threads = document["threads"]
+        for item in threads:
+            if not isinstance(item, dict) or item.get("id") != thread_id:
+                continue
+            messages = item.get("messages")
+            if not isinstance(messages, list):
+                break
+            if not any(isinstance(m, dict) and m.get("id") == message_id for m in messages):
+                break
+            restore_ids = {message_id} | set(_descendant_ids(item, message_id))
+            for m in messages:
+                if isinstance(m, dict) and m.get("id") in restore_ids:
+                    m["archived"] = False
+            self.save_document(current_id=document["current_id"], threads=threads)
+            break
+        return self.list_view()

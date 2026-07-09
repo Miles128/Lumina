@@ -6,7 +6,7 @@
     <title>灵犀 · Lumina</title>
     <link rel="icon" type="image/png" href="/assets/logo.png?v=3" />
     <link rel="stylesheet" href="/assets/tokens.css?v=2" />
-    <link rel="stylesheet" href="/assets/chat.css?v=37" />
+    <link rel="stylesheet" href="/assets/chat.css?v=41" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=5" />
   </head>
   <body>
@@ -64,17 +64,28 @@
       <div class="workspace">
         <aside class="chat-sidebar">
           <div class="chat-sidebar-head">
-            <button id="btn-new-thread" type="button" class="new-thread-btn" title="新对话 (Ctrl+N)" data-i18n-title="chat.newThread" data-i18n-aria="chat.newThread">
+            <button id="btn-new-thread" type="button" class="new-thread-btn sidebar-icon-btn" title="新对话 (Ctrl+N)" data-i18n-title="chat.newThread" data-i18n-aria="chat.newThread">
               <svg class="new-thread-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
                 <path d="M12 5v14M5 12h14"/>
               </svg>
               <span class="new-thread-label sr-only" data-i18n="chat.newThread">新对话</span>
+            </button>
+            <button id="btn-map-sidebar" type="button" class="map-sidebar-btn sidebar-icon-btn js-map-toggle" title="对话地图" aria-label="对话地图">
+              <svg class="map-toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="6" cy="6" r="2"/>
+                <circle cx="6" cy="18" r="2"/>
+                <circle cx="18" cy="12" r="2"/>
+                <path d="M6 8v8"/>
+                <path d="M8 6h4a4 4 0 0 1 4 4"/>
+                <path d="M8 18h4a4 4 0 0 0 4-4"/>
+              </svg>
             </button>
           </div>
           <nav id="thread-list" class="thread-list"></nav>
         </aside>
 
         <section class="chat-column">
+          <div id="conversation-map-view" class="conversation-map-view" hidden></div>
           <main class="main">
             <div class="main-inner">
               <section id="welcome" class="hero">
@@ -189,9 +200,11 @@
     <script src="/assets/topbar.js?v=4"></script>
     <script src="/assets/settings.js?v=10"></script>
     <script src="/assets/skills.js?v=5"></script>
-    <script src="/assets/chat.js?v=44"></script>
+    <script src="/assets/chat.js?v=49"></script>
+    <script src="/assets/conversation_map.js?v=3"></script>
     <script>
       window.LuminaI18n?.applyDocument();
+      window.ConversationMapModule?.init();
     </script>
   </body>
 </html>

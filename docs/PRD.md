@@ -268,7 +268,8 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | FR-16 | IM 网关 | P3 | Backlog |
 | FR-36 | Shibei 空结果 UX | P1 | Done |
 | FR-37 | Git 只读工具 | P3 | Backlog（非常靠后） |
-| FR-38 | 前端 Turn 树（消费 schema v2） | P2 | Done |
+| FR-38 | 前端 Turn 树 / 分支地图（紧凑节点 + 动态路径） | P2 | Done |
+| **FR-43** | **对话标题自动跟随最新提问** | **P2** | **Done** |
 | FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Done |
 
 ---
@@ -309,7 +310,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 - **Build / Ask / Plan**（移除 Orchestrator）
 - **P0 工具**：`glob_files` · 连接器工具 · `ask_user`
 - **Browser**：`browser_screenshot` · Ask/Plan 调研路由
-- 多线程 API + UI、`spawn_cli_agent` 核心、Markdown 聊天
+- 多线程 API + UI、**分支地图**、动态标题、`spawn_cli_agent` 核心、Markdown 聊天
 
 ---
 

@@ -139,3 +139,50 @@
 | **A. 自研轻量树（本 spec 既有方案）** | ✅ 推荐 | ~200 行代码，无新依赖，契合"轻量 + 移除 LLM 组件"硬约束 |
 | B. 引入 LangGraph | ❌ 不推荐 | 违背用户硬约束（移除 LLM 组件），依赖膨胀，与现有 turn 树/subagent 机制重叠 |
 | C. 仅用 LangGraph Checkpoint（不引 StateGraph） | ⚠️ 不推荐 | 仍带 langchain-core 依赖，且只用 checkpoint 等于只用了"parent_id 链"——这点自研即可 |
+
+---
+
+## 补充：节点回退（Backtrack）能力
+
+> 用户反馈：「如果是工作执行任务，把从某一节点回退也加入」。
+> 适用场景：agent 执行多步工作类任务（写代码 / 调研 / 操作文件）走错方向时，用户需回退到走错前的节点重新指令，而非另开分支把错误路径一直留着。
+
+### 与现有操作的区别
+
+| 操作 | 语义 | 对后续节点 |
+| --- | --- | --- |
+| fork（分叉） | 从 N 长新分支，N 之后内容仍是某条活跃路径的一部分 | 保留、可见 |
+| 切换分支 | 跳到另一条已存在分支的叶子 | 不变 |
+| **rollback（回退）** | 退回 N，N 之后"不算了" | 软删除（`archived=true`），默认隐藏、可恢复 |
+
+### 设计要点
+- `MessageNode` 增加字段 `archived: bool = false`
+- 回退走软删除而非物理删除：保留可恢复性，符合"不丢数据"原则
+- 新 API `POST /api/chat/threads/{tid}/rollback` body `{to_message_id}`：
+  - 校验 `to_message_id` 属于该 thread
+  - 把 `to_message_id` 的所有后代（沿 `children_ids` 递归）置 `archived=true`
+  - `active_leaf_id = to_message_id`
+  - 前端默认只渲染 root→active_leaf 路径上 `archived=false` 的节点
+- 回退后从 active leaf 发新消息：新节点 `archived=false`，自然成为新活跃路径；原被 archived 的后代保持隐藏
+- 可恢复：提供"显示已归档节点"开关，archived 节点以置灰样式显示，可重新设为活跃
+
+## ADDED Requirements（追加）
+
+### Requirement: 节点回退（工作执行任务场景）
+系统 SHALL 允许用户回退到 thread 内任意历史节点：该节点之后的所有后代标记为 `archived`（软删除），`active_leaf_id` 更新为该节点，UI 默认隐藏 archived 节点。
+
+#### Scenario: 回退到历史节点
+- **WHEN** 用户在节点 N 点击「回退到此」
+- **THEN** N 的所有后代 `archived=true`，`active_leaf_id=N.id`，消息列表重新渲染为 root→N 路径且不含 archived 节点
+
+#### Scenario: 回退后继续对话
+- **WHEN** 用户在回退后的 active leaf N 发新消息
+- **THEN** 新消息 `parent_id=N.id`、`archived=false`，成为新 `active_leaf`；原 archived 后代保持隐藏
+
+#### Scenario: 恢复已归档节点
+- **WHEN** 用户开启「显示已归档」或对归档节点点击「恢复」
+- **THEN** archived 节点以置灰样式显示；恢复操作把该路径上 `archived` 翻回 `false` 并可重新设为 active leaf
+
+#### Scenario: 回退不影响 LLM 上下文
+- **WHEN** 回退后调用 `agent_history_path(active_leaf_id)`
+- **THEN** 返回 root→active_leaf 路径，archived 后代不进入 LLM 上下文

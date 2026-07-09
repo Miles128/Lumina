@@ -33,6 +33,7 @@ from secretary.agent.identity import (
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig, resolve_llm_config
 from secretary.agent.loop import LoopResult, PendingConfirmation
+from secretary.agent.p0_tools import is_user_input_request
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
 from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
@@ -149,6 +150,7 @@ class ChatService:
         self._thread_store = ChatThreadStore(settings.resolved_data_dir() / "chat_threads.json")
         self._active_thread_id = ""
         self._active_trace_id = ""
+        self._active_parent_message_id = ""
         self._tool_registry = ChatToolRegistry(
             settings=settings,
             store=store,
@@ -303,10 +305,12 @@ class ChatService:
         location_city: str | None = None,
         location_lat: float | None = None,
         location_lng: float | None = None,
+        parent_message_id: str | None = None,
     ) -> ChatResult:
         cleaned = message.strip()
         self._active_thread_id = thread_id.strip() if thread_id else ""
         self._active_trace_id = trace_id.strip() if trace_id else ""
+        self._active_parent_message_id = parent_message_id or ""
         history = self._load_history()
         if is_author_request(cleaned):
             return self._handle_author_gate(cleaned)
@@ -446,6 +450,7 @@ class ChatService:
         if thread_id:
             self._active_thread_id = thread_id.strip()
         self._active_trace_id = trace_id.strip() if trace_id else ""
+        self._active_parent_message_id = ""
         self._restore_pause_from_store(self._active_trace_id)
         sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
@@ -1147,6 +1152,9 @@ class ChatService:
     ) -> tuple[str, bool, str]:
         from secretary.agent.grounding import enforce_grounded_reply
 
+        if is_user_input_request(raw_reply):
+            return raw_reply, grounding_verified, grounding_note
+
         rewritten = rewrite_if_forbidden_label(raw_reply, user_message, llm_config)
         sanitized = sanitize_user_facing_reply(rewritten, user_message)
         return enforce_grounded_reply(
@@ -1195,6 +1203,18 @@ class ChatService:
 
     def save_threads(self, *, current_id: str, threads: list[dict[str, object]]) -> dict[str, object]:
         return self._thread_store.replace_all(current_id=current_id, threads=threads)
+
+    def set_thread_active_leaf(self, thread_id: str, leaf_id: str) -> dict[str, object]:
+        return self._thread_store.set_active_leaf(thread_id, leaf_id)
+
+    def thread_tree(self, thread_id: str) -> dict[str, object]:
+        return self._thread_store.thread_tree_view(thread_id)
+
+    def rollback_thread(self, thread_id: str, to_message_id: str) -> dict[str, object]:
+        return self._thread_store.rollback_to(thread_id, to_message_id)
+
+    def restore_thread(self, thread_id: str, message_id: str) -> dict[str, object]:
+        return self._thread_store.restore_archived(thread_id, message_id)
 
     def _current_agent_profile(self) -> AgentProfile:
         if self._agent_config_store is None:
@@ -1376,6 +1396,7 @@ class ChatService:
                 self._active_thread_id,
                 user_message,
                 assistant_message,
+                parent_message_id=self._active_parent_message_id,
             )
             return
         history = self._load_history()

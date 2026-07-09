@@ -348,3 +348,134 @@ def test_chat_forces_shell_confirmation_from_bash_block(tmp_path: Path) -> None:
     assert result.pending_confirmation is not None
     assert result.pending_confirmation.tool_name == "shell"
     assert result.pending_confirmation.arguments["command"] == "pwd"
+
+
+def test_chat_reply_with_parent_message_id_forks_thread(tmp_path: Path) -> None:
+    """Task 3: reply(parent_message_id=...) should fork from the given ancestor."""
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.chat_service.chat_completion",
+            return_value="好的。",
+        ):
+            service = _build_chat_service(tmp_path, api_key="test-key")
+            view = service._thread_store.create_thread(title="T")
+            thread_id = view["current_id"]
+
+            # first turn: u1 -> a1 (active leaf becomes a1)
+            service.reply("你好", thread_id=thread_id)
+            view = service._thread_store.list_view()
+            msgs = view["threads"][0]["messages"]
+            assert len(msgs) == 2
+            u1_id = msgs[0]["id"]
+            a1_id = msgs[1]["id"]
+            assert msgs[0]["parent_id"] == ""
+            assert msgs[1]["parent_id"] == u1_id
+            assert view["threads"][0]["active_leaf_id"] == a1_id
+
+            # fork from u1 (an ancestor, not the active leaf a1)
+            service.reply(
+                "换个方向",
+                thread_id=thread_id,
+                parent_message_id=u1_id,
+            )
+            view = service._thread_store.list_view()
+            msgs = view["threads"][0]["messages"]
+            assert len(msgs) == 4
+            u2 = msgs[2]
+            a2 = msgs[3]
+            # the new user message parents to the fork point u1, not a1
+            assert u2["parent_id"] == u1_id
+            assert a2["parent_id"] == u2["id"]
+            # active leaf updated to the new assistant message
+            assert view["threads"][0]["active_leaf_id"] == a2["id"]
+
+            # active path follows the fork: u1 -> u2 -> a2 (not u1 -> a1)
+            path = service._thread_store.active_path(thread_id)
+            assert [m["id"] for m in path] == [u1_id, u2["id"], a2["id"]]
+
+
+def test_chat_reply_default_parent_chains_to_active_leaf(tmp_path: Path) -> None:
+    """Without parent_message_id, new turn chains to the current active leaf."""
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    with patch("secretary.agent.chat_service.resolve_llm_config", return_value=config):
+        with patch(
+            "secretary.agent.chat_service.chat_completion",
+            return_value="好的。",
+        ):
+            service = _build_chat_service(tmp_path, api_key="test-key")
+            view = service._thread_store.create_thread(title="T")
+            thread_id = view["current_id"]
+
+            service.reply("你好", thread_id=thread_id)
+            view = service._thread_store.list_view()
+            a1_id = view["threads"][0]["messages"][1]["id"]
+
+            # second turn without parent_message_id → chains to a1 (active leaf)
+            service.reply("继续", thread_id=thread_id)
+            view = service._thread_store.list_view()
+            msgs = view["threads"][0]["messages"]
+            u2 = msgs[2]
+            assert u2["parent_id"] == a1_id
+
+
+def test_chat_service_thread_wrappers(tmp_path: Path) -> None:
+    """Task 4 wrappers: set_thread_active_leaf / thread_tree / rollback_thread / restore_thread."""
+    service = _build_chat_service(tmp_path)
+    store = service._thread_store
+
+    # --- forked thread for tree + active-leaf ---
+    view = store.create_thread(title="T")
+    thread_id = view["current_id"]
+    store.append_turn(thread_id, "q1", "a1")
+    view = store.list_view()
+    u1_id = view["threads"][0]["messages"][0]["id"]
+    # fork from u1
+    store.append_turn(thread_id, "q2", "a2", parent_message_id=u1_id)
+    view = store.list_view()
+    msgs = view["threads"][0]["messages"]
+    a1_id = msgs[1]["id"]
+    a2_id = msgs[3]["id"]
+
+    # thread_tree (turns pair user+assistant: root is the first turn, repr by a1)
+    tree = service.thread_tree(thread_id)
+    assert tree["root_id"] == a1_id
+    assert tree["active_leaf_id"] == a2_id
+    assert len(tree["nodes"]) == 2
+
+    # set_thread_active_leaf → switch to original branch
+    switched = service.set_thread_active_leaf(thread_id, a1_id)
+    assert switched["threads"][0]["active_leaf_id"] == a1_id
+
+    # --- linear thread for rollback/restore (needs real descendants) ---
+    linear_view = store.create_thread(title="Linear")
+    linear_id = linear_view["current_id"]
+    store.append_turn(linear_id, "q1", "a1")
+    store.append_turn(linear_id, "q2", "a2")  # u2 parents to a1 (active leaf)
+    lview = store.list_view()
+    linear_thread = next(t for t in lview["threads"] if t["id"] == linear_id)
+    lmsgs = linear_thread["messages"]
+    _lu1_id, la1_id, lu2_id, la2_id = [m["id"] for m in lmsgs]
+
+    # rollback_thread to a1 archives its descendants (u2, a2)
+    rolled = service.rollback_thread(linear_id, la1_id)
+    by_id = {m["id"]: m for m in rolled["threads"][0]["messages"]}
+    assert by_id[la1_id]["archived"] is False
+    assert by_id[lu2_id]["archived"] is True
+    assert by_id[la2_id]["archived"] is True
+    assert rolled["threads"][0]["active_leaf_id"] == la1_id
+
+    # restore_thread un-archives the subtree
+    restored = service.restore_thread(linear_id, la1_id)
+    for m in restored["threads"][0]["messages"]:
+        assert m["archived"] is False

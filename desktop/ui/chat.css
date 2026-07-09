@@ -86,8 +86,13 @@ html, body {
 .chat-sidebar-head {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
   padding: 4px 6px 8px;
 }
+
+/* Shared icon-button style for sidebar head (new thread + map toggle) */
+.sidebar-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -95,36 +100,44 @@ html, body {
   width: 36px;
   height: 36px;
   border: 1px solid var(--line);
-  background: #fff;
-  color: var(--text);
-  border-radius: 10px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border-radius: 12px;
   padding: 0;
   font: inherit;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.new-thread-btn:hover {
-  background: var(--bg-subtle);
-  border-color: var(--line-strong);
+.sidebar-icon-btn:hover {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
-.new-thread-btn:active {
-  background: var(--bg-subtle);
+.sidebar-icon-btn:active {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
-.new-thread-btn:focus-visible {
+.sidebar-icon-btn:focus-visible {
   outline: 2px solid var(--accent, #2563eb);
   outline-offset: 1px;
 }
 
-.new-thread-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
+.sidebar-icon-btn.is-active {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
 }
 
-.new-thread-btn:hover .new-thread-icon {
-  color: var(--text);
+.new-thread-icon,
+.map-toggle-icon {
+  flex-shrink: 0;
+  color: inherit;
 }
 
 .new-thread-label {
@@ -2054,3 +2067,364 @@ body.ui-width-wide {
   .settings-nav-item { width: auto; white-space: nowrap; flex-shrink: 0; }
   .sheet-main { padding: 24px 20px; }
 }
+
+/* ---- Conversation tree branching UI ---- */
+
+/* Toolbar above messages: show-archived toggle */
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 8px;
+  min-height: 0;
+}
+
+.archived-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.archived-toggle input {
+  width: auto;
+  accent-color: var(--text);
+  cursor: pointer;
+}
+
+.archived-toggle:hover {
+  color: var(--text-secondary);
+}
+
+/* Message action buttons (fork / rollback / restore) — show on hover */
+.message {
+  position: relative;
+}
+
+.msg-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+  align-self: center;
+}
+
+.message.user .msg-actions {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+.message:hover .msg-actions,
+.message:focus-within .msg-actions {
+  display: flex;
+}
+
+.msg-action-btn {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.msg-action-btn:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--bg-subtle);
+}
+
+/* Sibling branch switcher */
+.sibling-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.sibling-nav {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.sibling-nav:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-subtle);
+}
+
+.sibling-nav:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.sibling-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 28px;
+  text-align: center;
+  user-select: none;
+}
+
+/* Active leaf highlight (current end of conversation path) */
+.message.is-active-leaf .bubble {
+  box-shadow: none;
+}
+
+/* Archived (soft-deleted) message styling */
+.message.archived {
+  opacity: 0.5;
+}
+
+.message.archived .bubble {
+  background: var(--bg-subtle);
+  border-radius: var(--radius, 8px);
+  padding: 6px 10px;
+}
+
+.message.archived .msg-action-btn {
+  border-color: var(--line);
+}
+
+/* Fork-pending state on composer input */
+.composer textarea.fork-pending {
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+/* Fork banner above composer */
+.fork-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 16px;
+  margin-bottom: 6px;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--radius, 8px);
+  font-size: 12px;
+  color: var(--accent, #2563eb);
+}
+
+.fork-banner-label {
+  flex: 1;
+  text-align: center;
+}
+
+.fork-banner-cancel {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 6px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.fork-banner-cancel:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+/* ---- Conversation map view ---- */
+
+/* Map toggle button in chat toolbar */
+.map-toggle-btn {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.map-toggle-btn:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--bg-subtle);
+}
+
+.map-toggle-btn.is-active {
+  background: var(--text);
+  color: #fff;
+  border-color: var(--text);
+}
+
+/* Full-area map view replaces main + composer when open */
+.conversation-map-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+}
+
+body.map-view-open .chat-column > .main,
+body.map-view-open .chat-column > .composer-wrap,
+body.map-view-open .chat-column > .fork-banner {
+  display: none !important;
+}
+
+.map-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.map-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.map-hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.map-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.map-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+.map-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.map-status {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.map-svg {
+  display: block;
+}
+
+/* Edges */
+.map-edge {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.map-edge.is-active {
+  stroke: var(--accent, #2563eb);
+  stroke-width: 1.5;
+}
+
+/* Nodes (each node = one Q&A turn) */
+.map-node rect {
+  fill: var(--bg);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  cursor: pointer;
+  transition: fill 0.12s, stroke 0.12s;
+}
+
+.map-node.is-active rect {
+  stroke: var(--accent, #2563eb);
+  stroke-width: 1.5;
+}
+
+.map-node.is-leaf rect {
+  stroke-width: 1.5;
+}
+
+.map-node.is-archived rect {
+  opacity: 0.45;
+  stroke-dasharray: 3 3;
+}
+
+.map-node:hover rect {
+  fill: var(--bg-subtle);
+  stroke: var(--text);
+}
+
+.map-node-q-label,
+.map-node-a-label {
+  font-size: 9px;
+  font-weight: 700;
+  fill: var(--text-tertiary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.map-node-a-label {
+  fill: var(--accent, #2563eb);
+}
+
+.map-node-q-text,
+.map-node-a-text {
+  font-size: 10px;
+  fill: var(--text-secondary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.map-node.is-archived .map-node-q-text,
+.map-node.is-archived .map-node-a-text {
+  fill: var(--text-tertiary);
+}
+
+.map-node.is-active .map-node-q-text,
+.map-node.is-active .map-node-a-text {
+  fill: var(--text);
+}
+
+.map-node-badge {
+  fill: var(--accent, #2563eb);
+  pointer-events: none;
+}
+

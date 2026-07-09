@@ -30,14 +30,15 @@
 | 能力 | 说明 |
 |------|------|
 | **Agent 模式** | **Build** 执行 · **Ask** 只读问答 · **Plan** 只读规划（设置或输入框旁切换） |
-| **工具集** | FS · `glob_files` · 记忆/Shibei · 联网 · MCP · 连接器 · 浏览器 · `ask_user` |
+| **工具集** | FS · `glob_files` · 记忆/Shibei · 联网 · MCP · 连接器 · 浏览器 · `ask_user`（选项按钮）|
 | **Shibei 知识库** | 直连 Shibei 索引；**读个人文档无需先同步** |
 | **连接器** | 飞书/读书等 → SQLite；Agent 可 `list_connectors` / `sync_source`（Build） |
 | **Sub-agent** | explore/worker/verify/plan；暂停/恢复；进度树 |
 | **CLI Agent** | `spawn_cli_agent` 外接 codex/kimi 等（Build，需确认） |
 | **Harness P0** | TurnRunner · SessionStore · SSE schema v2 |
 | **Grounding** | 文件/记忆回答需工具佐证；Verified / Unverified |
-| **多线程** | `/api/chat/threads` 持久化 + 侧边栏切换 |
+| **多线程** | `/api/chat/threads` 持久化 + 侧边栏切换；标题自动跟随最新提问 |
+| **分支地图** | 对话节点化、fork/rollback/restore、紧凑节点视图 |
 | **Chat Markdown** | markdown-it + DOMPurify |
 
 ### 读记忆 vs 同步

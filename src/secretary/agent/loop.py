@@ -619,7 +619,7 @@ class AgentLoop:
 
             if is_user_input_request(tool_output):
                 clarify_reply = format_user_input_reply(tool_output, thought=thought)
-                reply = self._sanitize_reply(clarify_reply or thought, snapshot)
+                reply = clarify_reply or thought
                 self._emit_progress(
                     ProgressEvent(
                         kind="iteration_completed",

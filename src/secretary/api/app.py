@@ -95,6 +95,19 @@ class ChatRequest(BaseModel):
     location_city: str = Field(default="", max_length=64)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
+    parent_message_id: str = Field(default="", max_length=64)
+
+
+class ChatThreadActiveLeafRequest(BaseModel):
+    leaf_id: str = Field(min_length=1, max_length=64)
+
+
+class ChatThreadRollbackRequest(BaseModel):
+    to_message_id: str = Field(min_length=1, max_length=64)
+
+
+class ChatThreadRestoreRequest(BaseModel):
+    message_id: str = Field(min_length=1, max_length=64)
 
 
 class ChatThreadsPutRequest(BaseModel):
@@ -859,6 +872,7 @@ def chat(request: Request, body: ChatRequest) -> ChatResponse:
                 progress_callback=progress,
                 thread_id=thread_id or None,
                 trace_id=trace_id or None,
+                parent_message_id=body.parent_message_id or None,
             )
         keep_turn = bool(result.pending_confirmation)
         return _to_chat_response(result, usage)
@@ -930,6 +944,42 @@ def delete_chat_thread(request: Request, thread_id: str) -> dict[str, object]:
 def put_chat_threads(request: Request, body: ChatThreadsPutRequest) -> dict[str, object]:
     chat_service: ChatService = _svc(request).chat_service
     return chat_service.save_threads(current_id=body.current_id, threads=body.threads)
+
+
+@app.put("/api/chat/threads/{thread_id}/active-leaf")
+def set_chat_thread_active_leaf(
+    request: Request,
+    thread_id: str,
+    body: ChatThreadActiveLeafRequest,
+) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.set_thread_active_leaf(thread_id.strip(), body.leaf_id.strip())
+
+
+@app.get("/api/chat/threads/{thread_id}/tree")
+def get_chat_thread_tree(request: Request, thread_id: str) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.thread_tree(thread_id.strip())
+
+
+@app.post("/api/chat/threads/{thread_id}/rollback")
+def rollback_chat_thread(
+    request: Request,
+    thread_id: str,
+    body: ChatThreadRollbackRequest,
+) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.rollback_thread(thread_id.strip(), body.to_message_id.strip())
+
+
+@app.post("/api/chat/threads/{thread_id}/restore")
+def restore_chat_thread(
+    request: Request,
+    thread_id: str,
+    body: ChatThreadRestoreRequest,
+) -> dict[str, object]:
+    chat_service: ChatService = _svc(request).chat_service
+    return chat_service.restore_thread(thread_id.strip(), body.message_id.strip())
 
 
 @app.get("/api/memory/durable")
