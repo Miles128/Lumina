@@ -134,7 +134,7 @@ class ShellTool(Tool):
         command = str(arguments.get("command", "")).strip()
         timeout = min(int(arguments.get("timeout", 30) or 30), 120)
         if not command:
-            return "Error: empty command"
+            return "Error: empty command (model did not provide a command)"
         cwd = working_dir if working_dir.is_dir() else Path.home()
         env = os.environ.copy()
 

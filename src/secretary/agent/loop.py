@@ -869,6 +869,8 @@ class AgentLoop:
 
         if tool.name == "shell":
             command = str(arguments.get("command", "")).strip()
+            if not command:
+                return False, ""  # empty command → skip confirmation, let execute return error
             if _is_read_only_shell_command(command):
                 return False, ""
             return True, "shell"

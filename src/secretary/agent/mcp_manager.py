@@ -37,6 +37,12 @@ except ImportError:  # pragma: no cover - optional dependency
 
 _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_]+")
 
+_SKIP_SERVERS = frozenset({"filesystem"})
+
+
+def _should_skip_server(server_name: str) -> bool:
+    return server_name in _SKIP_SERVERS
+
 
 @dataclass(frozen=True)
 class _RegisteredMcpTool:
@@ -139,7 +145,10 @@ class McpManager:
         except Exception as exc:
             logger.warning("MCP get_tools degraded: %s", exc)
             self._record_error(f"get_tools: {exc}")
-        return list(self._bridge_tools)
+        return [
+            tool for tool in self._bridge_tools
+            if not _should_skip_server(tool._spec.server_name)
+        ]
 
     def reload(self, *, force: bool = True) -> None:
         with self._lock:

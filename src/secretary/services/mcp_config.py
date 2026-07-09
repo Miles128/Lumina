@@ -133,7 +133,7 @@ class McpConfigStore:
         candidates: list[Path] = []
         if preferred_root is not None:
             candidates.append(preferred_root.expanduser())
-        candidates.extend([Path.home() / "Documents", Path.home()])
+        candidates.extend([Path.home(), Path.home() / "Documents"])
         seen: set[str] = set()
         for candidate in candidates:
             key = str(candidate)
