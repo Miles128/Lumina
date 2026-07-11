@@ -10,6 +10,14 @@
   const aboutBackdrop = document.getElementById("about-backdrop");
   const closeAboutBtn = document.getElementById("btn-close-about");
 
+  // 月相按钮独立于 topbar 主体 — 即使缺少 menu/token/model 元素也要初始化,
+  // 否则在某些布局下月相按钮永远不会被绑定。函数声明会被提升,可在此处调用。
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initMoonButton);
+  } else {
+    initMoonButton();
+  }
+
   if (!menuBtn || !menuPanel || !tokenValueEl || !modelEl) {
     return;
   }
@@ -191,18 +199,20 @@
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
-      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
       const parsed = JSON.parse(raw);
       const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
+      const theme = ["light", "dark", "paper"].includes(parsed?.theme) ? parsed.theme : "light";
       return {
         density: parsed?.density === "compact" ? "compact" : "comfortable",
         messageWidth: ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
           ? parsed.messageWidth
           : "medium",
         language,
+        theme,
       };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
     }
   }
 
@@ -211,9 +221,64 @@
     const width = ["narrow", "medium", "wide"].includes(prefs?.messageWidth)
       ? prefs.messageWidth
       : "medium";
+    const theme = ["light", "dark", "paper"].includes(prefs?.theme) ? prefs.theme : "light";
     document.body.classList.toggle("ui-density-compact", density === "compact");
     document.body.classList.toggle("ui-width-narrow", width === "narrow");
     document.body.classList.toggle("ui-width-medium", width === "medium");
     document.body.classList.toggle("ui-width-wide", width === "wide");
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+
+  /* ===== 月相按钮 + 顶部信息条 ===== */
+  function renderMoonButton() {
+    const btn = document.getElementById("btn-moon");
+    if (!btn || !window.LuminaLunar) return;
+    const now = new Date();
+    btn.innerHTML = window.LuminaLunar.moonSVG(now, 22);
+  }
+
+  function renderMoonInfoBar() {
+    const bar = document.getElementById("moon-info-bar");
+    if (!bar || !window.LuminaLunar) return;
+    const now = new Date();
+    const name = window.LuminaLunar.moonPhaseName(now);
+    const lunarDay = window.LuminaLunar.lunarDayLabel(now);
+    const term = window.LuminaLunar.getSolarTerm(now);
+    const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+    const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
+    const week = `周${weekDays[now.getDay()]}`;
+    const parts = [dateStr, week, lunarDay, name];
+    if (term) parts.push(term);
+    bar.textContent = parts.join(" · ");
+  }
+
+  let moonInfoBarTimer = null;
+
+  function toggleMoonInfoBar() {
+    const btn = document.getElementById("btn-moon");
+    const bar = document.getElementById("moon-info-bar");
+    if (!btn || !bar) return;
+    if (!bar.hidden) {
+      bar.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      if (moonInfoBarTimer) {
+        clearInterval(moonInfoBarTimer);
+        moonInfoBarTimer = null;
+      }
+    } else {
+      renderMoonInfoBar();
+      bar.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      // Refresh once per minute so the date / week / lunar label stays
+      // current while the bar is expanded. Cleared on collapse.
+      if (moonInfoBarTimer) clearInterval(moonInfoBarTimer);
+      moonInfoBarTimer = setInterval(renderMoonInfoBar, 60_000);
+    }
+  }
+
+  function initMoonButton() {
+    renderMoonButton();
+    const btn = document.getElementById("btn-moon");
+    if (btn) btn.addEventListener("click", toggleMoonInfoBar);
   }
 })();

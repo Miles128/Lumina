@@ -45,6 +45,18 @@ class ProgressEvent:
     thread_id: str = ""
     item_id: str = ""
     parent_turn_id: str = ""
+    latency_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    error_type: str = ""
+
+
+_ARCHETYPE_LABELS: dict[str, str] = {
+    "explore": "探索助理",
+    "worker": "执行助理",
+    "verify": "审核助理",
+    "plan": "规划助理",
+}
 
 
 _TOOL_LABELS: dict[str, str] = {
@@ -94,15 +106,15 @@ def progress_event_label(event: ProgressEvent) -> str:
     if event.kind == "pause_confirmation":
         return event.message.strip() or "等待确认"
     if event.kind == "iteration_started":
-        return prefix + f"第 {event.iteration} 轮思考"
+        return prefix + f"第 {event.iteration} 步思考"
     if event.kind == "iteration_completed":
-        return prefix + (event.message.strip() or "核实通过，准备输出")
+        return prefix + (event.message.strip() or "检查完毕，准备回答")
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"
         if event.tool_name == "spawn_cli_agent":
-            provider = event.archetype or "CLI"
-            return prefix + f"正在运行 {provider} CLI Agent"
+            provider = event.archetype or "命令行"
+            return prefix + f"正在运行 {provider} 命令行助手"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -116,8 +128,8 @@ def progress_event_label(event: ProgressEvent) -> str:
         if event.tool_name == "spawn_subagent":
             return prefix + f"子 Agent 委派{status}"
         if event.tool_name == "spawn_cli_agent":
-            provider = event.archetype or "CLI"
-            return prefix + f"{provider} CLI Agent {status}"
+            provider = event.archetype or "命令行"
+            return prefix + f"{provider} 命令行助手 {status}"
         if event.tool_name.startswith("browser_") or event.tool_name in {
             "web_search",
             "web_fetch",
@@ -127,24 +139,24 @@ def progress_event_label(event: ProgressEvent) -> str:
         name = _tool_display_name(event.tool_name)
         return prefix + f"{name} {status}"
     if event.kind == "subagent_started":
-        archetype = event.archetype or "explore"
+        archetype = _archetype_display_name(event.archetype or "explore")
         return f"正在派生子 Agent ({archetype})"
     if event.kind == "subagent_paused":
-        archetype = event.archetype or "explore"
+        archetype = _archetype_display_name(event.archetype or "explore")
         return f"子 Agent ({archetype}) 等待确认"
     if event.kind == "subagent_finished":
-        prefix = f"[{event.archetype}] " if event.archetype else ""
+        prefix = f"[{_archetype_display_name(event.archetype)}] " if event.archetype else ""
         status = "完成" if event.success else "失败"
         detail = event.message[:80] if event.message else f"子任务{status}"
         return prefix + detail
     if event.kind == "cli_agent_started":
-        provider = event.archetype or "CLI"
-        return f"正在运行 {provider} CLI Agent"
+        provider = event.archetype or "命令行"
+        return f"正在运行 {provider} 命令行助手"
     if event.kind == "cli_agent_finished":
-        provider = event.archetype or "CLI"
+        provider = event.archetype or "命令行"
         status = "完成" if event.success else "失败"
         detail = event.message[:80] if event.message else status
-        return f"{provider} CLI Agent {status}: {detail}"
+        return f"{provider} 命令行助手 {status}: {detail}"
     if event.kind == "final_reply":
         return prefix + "整理回复"
     if event.kind == "stopped":
@@ -154,8 +166,12 @@ def progress_event_label(event: ProgressEvent) -> str:
 
 def _subagent_prefix(event: ProgressEvent) -> str:
     if event.archetype and event.sub_run_id:
-        return f"[子Agent·{event.archetype}] "
+        return f"[子Agent·{_archetype_display_name(event.archetype)}] "
     return ""
+
+
+def _archetype_display_name(archetype: str) -> str:
+    return _ARCHETYPE_LABELS.get(archetype.lower(), archetype)
 
 
 def _tool_display_name(name: str) -> str:
@@ -202,5 +218,13 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["item_id"] = event.item_id.strip()
     if event.parent_turn_id.strip():
         payload["parent_turn_id"] = event.parent_turn_id.strip()
+    if event.latency_ms > 0:
+        payload["latency_ms"] = event.latency_ms
+    if event.prompt_tokens > 0:
+        payload["prompt_tokens"] = event.prompt_tokens
+    if event.completion_tokens > 0:
+        payload["completion_tokens"] = event.completion_tokens
+    if event.error_type.strip():
+        payload["error_type"] = event.error_type.strip()
     return payload
 

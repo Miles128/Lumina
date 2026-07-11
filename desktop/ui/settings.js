@@ -17,7 +17,7 @@
   let agentSoulPath = "";
   let durableMemoryMd = "";
   let durableUserMd = "";
-  let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi" };
+  let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
   let mcpStatus = null;
   let cliAgentStatus = null;
   let shibeiConfig = null;
@@ -554,6 +554,7 @@
     const density = uiPreferences.density || "comfortable";
     const width = uiPreferences.messageWidth || "medium";
     const language = uiPreferences.language || "bi";
+    const theme = uiPreferences.theme || "light";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -561,6 +562,14 @@
           <p>${escapeHtml(t("appearance.desc"))}</p>
         </header>
         <div class="settings-fields">
+          <label class="settings-field">
+            <span>${escapeHtml(t("appearance.theme"))}</span>
+            <select id="ui-theme">
+              <option value="light"${theme === "light" ? " selected" : ""}>${escapeHtml(t("appearance.theme.light"))}</option>
+              <option value="dark"${theme === "dark" ? " selected" : ""}>${escapeHtml(t("appearance.theme.dark"))}</option>
+              <option value="paper"${theme === "paper" ? " selected" : ""}>${escapeHtml(t("appearance.theme.paper"))}</option>
+            </select>
+          </label>
           <label class="settings-field">
             <span>${escapeHtml(t("appearance.language"))}</span>
             <select id="ui-language">
@@ -598,10 +607,11 @@
     const density = document.getElementById("ui-density")?.value || "comfortable";
     const messageWidth = document.getElementById("ui-message-width")?.value || "medium";
     const language = document.getElementById("ui-language")?.value || "bi";
+    const theme = document.getElementById("ui-theme")?.value || "light";
     if (window.LuminaLocation) {
       window.LuminaLocation.setEnabled(false);
     }
-    uiPreferences = { density, messageWidth, language };
+    uiPreferences = { density, messageWidth, language, theme };
     localStorage.setItem("lumina.ui.preferences.v1", JSON.stringify(uiPreferences));
     window.dispatchEvent(new CustomEvent("lumina:ui-preferences", { detail: uiPreferences }));
     window.dispatchEvent(new CustomEvent("lumina:language"));
@@ -614,16 +624,17 @@
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem("lumina.ui.preferences.v1");
-      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
       const parsed = JSON.parse(raw);
       const density = parsed?.density === "compact" ? "compact" : "comfortable";
       const messageWidth = ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
         ? parsed.messageWidth
         : "medium";
       const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
-      return { density, messageWidth, language };
+      const theme = ["light", "dark", "paper"].includes(parsed?.theme) ? parsed.theme : "light";
+      return { density, messageWidth, language, theme };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
     }
   }
 

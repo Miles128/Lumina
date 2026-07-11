@@ -1,22 +1,101 @@
+/* ===== Lumina 设计令牌 · 三主题(白/黑/纸) ===== */
+
+/* 字体栈 */
 :root {
-  --bg: #ffffff;
-  --bg-subtle: #fafafa;
-  --text: #0a0a0a;
-  --text-secondary: #666666;
-  --text-tertiary: #999999;
-  --line: #ebebeb;
-  --line-strong: #d4d4d4;
-  --radius: 10px;
-  --radius-lg: 16px;
+  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  --font-serif: "Fraunces", "Songti SC", Georgia, serif;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+
+  /* 圆角分层:容器大、输入中、标签小 */
+  --radius: 6px;
+  --radius-lg: 12px;
+  --r-badge: 4px;
+
+  /* 缓动:重于线性,有物理感 */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
   --max: 680px;
-  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.04);
-  --overlay: rgba(0, 0, 0, 0.18);
   --bar-h: 48px;
   --bar-px: 20px;
 }
 
+/* —— 白(默认):暖灰底,非纯白纯黑 —— */
+:root,
+[data-theme="light"] {
+  --bg: #faf9f7;
+  --bg-subtle: #f3f1ed;
+  --bg-elevated: #ffffff;
+  --text: #1a1714;
+  --text-secondary: #5c544d;
+  --text-tertiary: #9a9088;
+  --line: #e8e4dd;
+  --line-strong: #d4cec3;
+  --accent: #2d4a3e;
+  --accent-2: #4a6b5c;
+  --accent-soft: rgba(45, 74, 62, 0.08);
+  --danger: #8b3a2e;
+  --success: #3a6b52;
+  --warning: #8a6a2e;
+  --shadow-sm: 0 1px 2px rgba(26, 23, 20, 0.04);
+  --shadow-md: 0 4px 24px rgba(26, 23, 20, 0.06);
+  --overlay: rgba(26, 23, 20, 0.18);
+}
+
+/* —— 黑:暖黑底,非冷蓝黑 —— */
+[data-theme="dark"] {
+  --bg: #1a1714;
+  --bg-subtle: #242019;
+  --bg-elevated: #2a2520;
+  --text: #ede8e0;
+  --text-secondary: #a89e92;
+  --text-tertiary: #6b6359;
+  --line: #3a342c;
+  --line-strong: #4a4238;
+  --accent: #7ba892;
+  --accent-2: #5a8a74;
+  --accent-soft: rgba(123, 168, 146, 0.12);
+  --danger: #c47a6e;
+  --success: #7ba892;
+  --warning: #c4a86e;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --overlay: rgba(0, 0, 0, 0.5);
+}
+
+/* —— 纸:更暖更厚,如陈纸;赭石 accent —— */
+[data-theme="paper"] {
+  --bg: #f5f0e6;
+  --bg-subtle: #ebe5d8;
+  --bg-elevated: #faf6ec;
+  --text: #2d2620;
+  --text-secondary: #6b5f52;
+  --text-tertiary: #9a8d7a;
+  --line: #ddd5c5;
+  --line-strong: #c9bfa8;
+  --accent: #5a4a2e;
+  --accent-2: #7a6850;
+  --accent-soft: rgba(90, 74, 46, 0.08);
+  --danger: #8b3a2e;
+  --success: #4a6b3e;
+  --warning: #8a6a2e;
+  --shadow-sm: 0 1px 2px rgba(90, 74, 46, 0.06);
+  --shadow-md: 0 4px 24px rgba(90, 74, 46, 0.08);
+  --overlay: rgba(45, 38, 32, 0.2);
+}
+
+/* 极轻微噪点,打破数字平面感 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.018;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 共享 bar 行样式 */
 .bar-row,
 .topbar,
 .sheet-head,

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.ui]
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _chat_reply(reply: str) -> dict[str, object]:
@@ -283,6 +283,8 @@ class _MockChatBackend:
                 {
                     "id": turn_id,
                     "parent_id": parent_id,
+                    "user_message_id": mid,
+                    "assistant_message_id": assistant.get("id") if assistant else "",  # type: ignore[union-attr]
                     "user_preview": user_text[:80],
                     "assistant_preview": assistant_text[:80],
                     "has_assistant": assistant is not None,
@@ -532,7 +534,7 @@ def test_rollback_archive_and_restore(chat_page: tuple[Page, _MockChatBackend]) 
     expect(page.locator("#messages .message.archived")).to_have_count(0)
 
     # 5. Turn on "show archived".
-    page.locator("#show-archived-toggle").check()
+    page.locator(".sidebar-archive-btn").click()
 
     # 6. Archived messages reappear, greyed (user2 + bot2).
     expect(page.locator("#messages .message")).to_have_count(4)

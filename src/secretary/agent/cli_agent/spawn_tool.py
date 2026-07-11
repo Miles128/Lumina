@@ -8,7 +8,7 @@ from typing import Any
 
 from secretary.agent.cli_agent.runner import CliAgentRunner
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult, _coerce_to_tool_result
 
 
 class SpawnCliAgentTool(Tool):
@@ -20,6 +20,7 @@ class SpawnCliAgentTool(Tool):
     )
     needs_confirmation = True
     risk_level = "high"
+    read_only = False
 
     def __init__(self, runner: CliAgentRunner, *, default_cwd: Path) -> None:
         self._runner = runner
@@ -57,12 +58,15 @@ class SpawnCliAgentTool(Tool):
             "required": ["goal"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         cwd = self._default_cwd if self._default_cwd.is_dir() else working_dir
-        return self._runner.run_from_tool(
-            arguments,
-            cwd,
-            progress_callback=self._progress_callback,
+        return _coerce_to_tool_result(
+            self._runner.run_from_tool(
+                arguments,
+                cwd,
+                progress_callback=self._progress_callback,
+            ),
+            tool_name=self.name,
         )
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:

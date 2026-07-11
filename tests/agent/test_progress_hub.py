@@ -27,7 +27,7 @@ async def test_progress_hub_streams_events() -> None:
     async for chunk in hub.stream("trace-1"):
         chunks.append(chunk)
 
-    assert any("第 1 轮思考" in chunk for chunk in chunks)
+    assert any("第 1 步思考" in chunk for chunk in chunks)
     assert any("执行命令" in chunk for chunk in chunks)
     assert any('"kind": "done"' in chunk for chunk in chunks)
 

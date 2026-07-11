@@ -34,6 +34,15 @@
       tokens[idx].attrSet("rel", "noopener noreferrer");
       return defaultLinkOpen(tokens, idx, options, env, self);
     };
+    // fence: 提取语言到 pre[data-lang]，跳过 text/空，不改代码内容
+    md.renderer.rules.fence = (tokens, idx) => {
+      const token = tokens[idx];
+      const lang = (token.info || "").trim().split(/\s+/)[0];
+      const code = md.utils.escapeHtml(token.content);
+      const langAttr =
+        lang && lang !== "text" ? ` data-lang="${md.utils.escapeHtml(lang)}"` : "";
+      return `<pre${langAttr}><code>${code}</code></pre>`;
+    };
     return md;
   }
 
@@ -46,7 +55,7 @@
       const engine = initEngine();
       const raw = engine.render(source);
       const clean = window.DOMPurify.sanitize(raw, {
-        ADD_ATTR: ["target", "rel", "class"],
+        ADD_ATTR: ["target", "rel", "class", "data-lang"],
       });
       return clean || `<p>${escapeHtml(source)}</p>`;
     } catch (error) {

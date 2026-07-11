@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from secretary.agent.agent_profile import AgentProfile, resolve_parent_tools
 from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
@@ -23,7 +24,7 @@ from secretary.services.file_auth import FileAuthService
 from secretary.services.shibei_service import ShibeiService, shibei_ready_for_memory_read
 from secretary.services.todo_store import TodoStore
 
-if True:
+if TYPE_CHECKING:
     from secretary.agent.mcp_manager import McpManager
     from secretary.agent.skills import SkillManager
     from secretary.services.sync import SyncService
@@ -58,6 +59,16 @@ class ChatToolRegistry:
         self._get_session_id = get_session_id
         self._shell_working_dir = shell_working_dir
         self._temperature = temperature
+        self._stateless_tool_cache: dict[str, Tool] = {}
+
+    def _get_or_create_tool(self, key: str, factory: Callable[[], Tool]) -> Tool:
+        """Return a cached stateless tool instance, creating it on first use."""
+        cached = self._stateless_tool_cache.get(key)
+        if cached is not None:
+            return cached
+        tool = factory()
+        self._stateless_tool_cache[key] = tool
+        return tool
 
     def resolve_tools(
         self,
@@ -120,6 +131,7 @@ class ChatToolRegistry:
             AskUserTool,
             ClarifyTool,
             GlobFilesTool,
+            NotesTool,
             PatchTool,
             SearchFilesTool,
             SkillsListTool,
@@ -130,26 +142,28 @@ class ChatToolRegistry:
 
         session_id = self._get_session_id()
         todo_path = self._settings.resolved_data_dir() / "todos" / f"{session_id}.json"
+        notes_path = self._settings.resolved_data_dir() / "NOTES.md"
 
         tools: list[Tool] = [
-            ListDirTool(),
-            FileReadTool(),
-            SearchFilesTool(),
-            GlobFilesTool(),
-            SearchMemoryTool(self._store),
-            WebSearchTool(),
-            WebFetchTool(),
-            MemoryTool(self._memory),
-            SessionSearchTool(self._memory),
-            FileWriteTool(),
-            PatchTool(),
-            FileDeleteTool(),
-            ShellTool(),
+            self._get_or_create_tool("list_dir", ListDirTool),
+            self._get_or_create_tool("file_read", FileReadTool),
+            self._get_or_create_tool("search_files", SearchFilesTool),
+            self._get_or_create_tool("glob_files", GlobFilesTool),
+            self._get_or_create_tool("search_memory", lambda: SearchMemoryTool(self._store)),
+            self._get_or_create_tool("web_search", WebSearchTool),
+            self._get_or_create_tool("web_fetch", WebFetchTool),
+            self._get_or_create_tool("memory", lambda: MemoryTool(self._memory)),
+            self._get_or_create_tool("session_search", lambda: SessionSearchTool(self._memory)),
+            self._get_or_create_tool("file_write", FileWriteTool),
+            self._get_or_create_tool("patch", PatchTool),
+            self._get_or_create_tool("file_delete", FileDeleteTool),
+            self._get_or_create_tool("shell", ShellTool),
             TodoTool(TodoStore(todo_path)),
-            SkillsListTool(self._skills),
-            SkillViewTool(self._skills),
-            ClarifyTool(),
-            AskUserTool(),
+            self._get_or_create_tool("notes", lambda: NotesTool(notes_path)),
+            self._get_or_create_tool("skills_list", lambda: SkillsListTool(self._skills)),
+            self._get_or_create_tool("skill_view", lambda: SkillViewTool(self._skills)),
+            self._get_or_create_tool("clarify", ClarifyTool),
+            self._get_or_create_tool("ask_user", AskUserTool),
         ]
         if self._sync_service is not None:
             from secretary.agent.tools.connector_tools import (

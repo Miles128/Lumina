@@ -10,6 +10,7 @@
   const subagentTreeEl = document.getElementById("subagent-tree");
   const pauseBtn = document.getElementById("btn-pause");
   const newThreadBtn = document.getElementById("btn-new-thread");
+  const toggleSidebarBtn = document.getElementById("btn-toggle-sidebar");
   const threadListEl = document.getElementById("thread-list");
   const chatForm = document.getElementById("chat-form");
   const chatInput = document.getElementById("chat-input");
@@ -30,16 +31,20 @@
   };
   let currentAgentMode = "auto";
 
-  let busy = false;
-  let pendingActionId = null;
+  let busy = false; // 保留用于当前线程快捷检查
   let activeRequestController = null;
   let typingTicker = null;
   let typingStartAt = 0;
   let slowNoticeSent = false;
+
+  // Per-thread concurrent request state:支持多线程同时对话
+  // threadId -> { controller, traceId, streamingText, pendingActionId, typingLabel, progressItems }
+  const threadState = new Map();
   let threads = [];
   let currentThreadId = "";
   let streamingBubbleEl = null;
   let streamingText = "";
+  let streamingRenderPending = false;
   let progressSession = {
     bufferedItems: [],
     turnNodes: new Map(),
@@ -57,6 +62,14 @@
   let pendingParentId = ""; // when forking, the parent message id for the next send
   let currentTreeData = null; // cached tree view from /tree endpoint
   let showArchived = false; // whether to render archived (soft-deleted) nodes
+
+  // ---- Skill picker (slash command) ----
+  const skillPickerEl = document.getElementById("skill-picker");
+  let skillCache = null; // cached list of installed skills
+  let skillCacheTime = 0;
+  let pickerOpen = false;
+  let pickerSelectedIndex = -1;
+  let pickerItems = []; // current filtered list
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
@@ -96,17 +109,63 @@
   });
 
   chatInput.addEventListener("keydown", (event) => {
+    if (pickerOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        movePickerSelection(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        movePickerSelection(-1);
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        confirmPickerSelection();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSkillPicker();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        confirmPickerSelection();
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       chatForm.requestSubmit();
     }
   });
 
-  chatInput.addEventListener("input", autoResize);
+  chatInput.addEventListener("input", () => {
+    autoResize();
+    handleSlashInput();
+    updateSendBtnState();
+  });
   pauseBtn.addEventListener("click", pauseCurrentRequest);
   newThreadBtn.addEventListener("click", () => {
     createThread();
   });
+
+  // 侧栏收缩/展开,状态持久化
+  if (toggleSidebarBtn) {
+    try {
+      if (localStorage.getItem("lumina.sidebar.collapsed") === "1") {
+        document.body.classList.add("sidebar-collapsed");
+      }
+    } catch (_e) { /* ignore */ }
+    toggleSidebarBtn.addEventListener("click", () => {
+      const collapsed = document.body.classList.toggle("sidebar-collapsed");
+      try {
+        localStorage.setItem("lumina.sidebar.collapsed", collapsed ? "1" : "0");
+      } catch (_e) { /* ignore */ }
+    });
+  }
 
   // Shortcut: Ctrl/Cmd+N to start a new thread (prevent browser default new window).
   window.addEventListener("keydown", (event) => {
@@ -220,10 +279,172 @@
     window.secretary?.openKnowledge();
   }
 
+  let autoResizePending = false;
   function autoResize() {
-    chatInput.style.height = "auto";
-    chatInput.style.height = `${Math.min(chatInput.scrollHeight, 160)}px`;
+    if (autoResizePending) return;
+    autoResizePending = true;
+    requestAnimationFrame(() => {
+      autoResizePending = false;
+      chatInput.style.height = "auto";
+      chatInput.style.height = `${Math.min(chatInput.scrollHeight, 160)}px`;
+    });
   }
+
+  // 发送按钮呼吸感:有内容时高亮+轻微放大
+  function updateSendBtnState() {
+    const hasContent = chatInput.value.trim().length > 0;
+    sendBtn.classList.toggle("has-content", hasContent && !busy);
+  }
+
+  // ---- Skill picker implementation ----
+
+  async function fetchInstalledSkills() {
+    // Cache for 60 seconds
+    if (skillCache && Date.now() - skillCacheTime < 60000) return skillCache;
+    try {
+      const data = await window.SecretaryAPI.request("GET", "/api/skills/installed", null, {
+        timeoutMs: 5000,
+      });
+      skillCache = Array.isArray(data) ? data : [];
+      skillCacheTime = Date.now();
+      return skillCache;
+    } catch (_e) {
+      return skillCache || [];
+    }
+  }
+
+  function handleSlashInput() {
+    const value = chatInput.value;
+    // Trigger only when "/" is the first character
+    if (value.startsWith("/")) {
+      const query = value.slice(1).toLowerCase();
+      openSkillPicker(query);
+    } else {
+      closeSkillPicker();
+    }
+  }
+
+  async function openSkillPicker(query) {
+    const skills = await fetchInstalledSkills();
+    if (!skills.length) {
+      closeSkillPicker();
+      return;
+    }
+
+    pickerItems = query
+      ? skills.filter((s) => (s.name || "").toLowerCase().includes(query))
+      : skills;
+
+    if (!pickerItems.length) {
+      renderSkillPicker([]);
+      return;
+    }
+
+    pickerSelectedIndex = 0;
+    renderSkillPicker(pickerItems);
+    pickerOpen = true;
+    skillPickerEl.hidden = false;
+  }
+
+  function closeSkillPicker() {
+    pickerOpen = false;
+    pickerSelectedIndex = -1;
+    pickerItems = [];
+    skillPickerEl.hidden = true;
+    skillPickerEl.innerHTML = "";
+  }
+
+  function renderSkillPicker(items) {
+    skillPickerEl.innerHTML = "";
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "skill-picker-empty";
+      empty.textContent = "没有匹配的技能";
+      skillPickerEl.appendChild(empty);
+      skillPickerEl.hidden = false;
+      pickerOpen = true;
+      return;
+    }
+
+    const header = document.createElement("div");
+    header.className = "skill-picker-header";
+    header.textContent = `技能列表 (${items.length})`;
+    skillPickerEl.appendChild(header);
+
+    items.forEach((skill, index) => {
+      const item = document.createElement("div");
+      item.className = `skill-picker-item${index === pickerSelectedIndex ? " is-selected" : ""}`;
+      item.dataset.index = String(index);
+
+      const name = document.createElement("span");
+      name.className = "skill-picker-item-name";
+      name.textContent = skill.name || "(未命名)";
+
+      const desc = document.createElement("span");
+      desc.className = "skill-picker-item-desc";
+      desc.textContent = skill.description || "";
+
+      item.appendChild(name);
+      item.appendChild(desc);
+
+      item.addEventListener("click", () => {
+        pickerSelectedIndex = index;
+        confirmPickerSelection();
+      });
+      item.addEventListener("mouseenter", () => {
+        pickerSelectedIndex = index;
+        updatePickerSelection();
+      });
+
+      skillPickerEl.appendChild(item);
+    });
+
+    skillPickerEl.hidden = false;
+  }
+
+  function updatePickerSelection() {
+    const els = skillPickerEl.querySelectorAll(".skill-picker-item");
+    els.forEach((el, i) => {
+      el.classList.toggle("is-selected", i === pickerSelectedIndex);
+    });
+    // Scroll selected item into view
+    const selected = skillPickerEl.querySelector(".skill-picker-item.is-selected");
+    if (selected) {
+      selected.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function movePickerSelection(delta) {
+    if (!pickerItems.length) return;
+    pickerSelectedIndex = (pickerSelectedIndex + delta + pickerItems.length) % pickerItems.length;
+    updatePickerSelection();
+  }
+
+  function confirmPickerSelection() {
+    if (!pickerOpen || pickerSelectedIndex < 0 || !pickerItems[pickerSelectedIndex]) {
+      closeSkillPicker();
+      return;
+    }
+    const skill = pickerItems[pickerSelectedIndex];
+    const skillName = skill.name || "";
+    // Replace "/query" with skill name + space
+    chatInput.value = skillName + " ";
+    closeSkillPicker();
+    autoResize();
+    chatInput.focus();
+    // Place cursor at end
+    const len = chatInput.value.length;
+    chatInput.setSelectionRange(len, len);
+  }
+
+  // Click outside to close
+  document.addEventListener("click", (event) => {
+    if (!pickerOpen) return;
+    if (!skillPickerEl.contains(event.target) && event.target !== chatInput) {
+      closeSkillPicker();
+    }
+  });
 
   async function prefetchIdentityIntro() {
     try {
@@ -299,7 +520,7 @@
     // Author / identity routing is handled only by the backend (PromptGate + fast paths).
     // Client-side shortcuts caused false positives (e.g. "open design 的作者").
 
-    if (busy) return;
+    if (isThreadBusy(currentThreadId)) return;
 
     welcome.classList.add("hidden");
     appendMessage("user", text);
@@ -311,10 +532,18 @@
     showTyping(true, t("chat.typing.understand"));
     beginTypingTicker();
 
+    const requestThreadId = currentThreadId;
     try {
       const controller = createActiveController();
       const traceId = createTraceId();
-      void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
+      // 存储 traceId 到线程状态,供 progress 事件路由
+      const st = ensureThreadState(requestThreadId);
+      st.traceId = traceId;
+      void window.SecretaryAPI.subscribeChatProgress(
+        traceId,
+        (event) => handleProgressEvent(event, traceId),
+        controller.signal,
+      );
       const isForkSend = Boolean(pendingParentId);
       const chatBody = {
         message: text,
@@ -338,14 +567,17 @@
       );
       showTyping(false);
 
-      // After a fork, the active path changes (old branch is replaced).
-      // render:true re-renders from server state so stale off-path messages
-      // are removed. For normal sends, render:false keeps the optimistic DOM
-      // and reconcileMessageIds() updates data-msg-id to server ids.
+      // 检查用户是否在请求期间切换了线程
+      const stillCurrentThread = requestThreadId === currentThreadId;
       const syncRender = isForkSend;
-      if (response.needs_confirmation) {
+
+      if (!stillCurrentThread) {
+        // 用户已切换到其他线程:后端已持久化回复,只需同步线程列表
         clearStreamingBubble();
-        pendingActionId = response.confirmation_action_id;
+        void syncThreadsFromServer({ render: false });
+      } else if (response.needs_confirmation) {
+        clearStreamingBubble();
+        ensureThreadState(currentThreadId).pendingActionId = response.confirmation_action_id;
         appendConfirmation(response);
         void syncThreadsFromServer({ render: syncRender });
       } else if (streamingBubbleEl) {
@@ -367,24 +599,42 @@
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.reply"));
     } finally {
-      finalizeProgressSession();
-      endTypingTicker();
-      clearActiveController();
-      showTyping(false);
-      setBusy(false);
-      chatInput.focus();
+      // 只清理当前线程的请求状态(如果还在当前线程)
+      if (requestThreadId === currentThreadId) {
+        finalizeProgressSession();
+        endTypingTicker();
+        showTyping(false);
+        chatInput.focus();
+      }
+      // 清除 per-thread 状态
+      const st = getThreadState(requestThreadId);
+      if (st) {
+        st.controller = null;
+        st.streamingText = "";
+        st.traceId = "";
+      }
+      updateThreadBusyIndicator(requestThreadId);
+      // 恢复 busy 状态(如果当前线程没有活跃请求)
+      if (!isThreadBusy(currentThreadId)) {
+        busy = false;
+        sendBtn.disabled = false;
+        chatInput.disabled = false;
+        pauseBtn.hidden = true;
+      }
+      activeRequestController = null;
     }
   }
 
   async function handleConfirm(approved, options = {}) {
-    if (!pendingActionId) return;
-    const actionId = pendingActionId;
-    pendingActionId = null;
+    const threadSt = ensureThreadState(currentThreadId);
+    if (!threadSt.pendingActionId) return;
+    const actionId = threadSt.pendingActionId;
+    threadSt.pendingActionId = null;
 
     const confirmRow = document.querySelector(".confirmation-row");
     if (confirmRow) {
       const status = approved ? `✅ ${t("confirm.allow")}` : `❌ ${t("confirm.deny")}`;
-      confirmRow.querySelector(".confirm-actions").innerHTML = `<span class="confirm-status">${status}</span>`;
+      confirmRow.querySelector(".confirm-actions").innerHTML = `<span class="confirm-status">${escapeHtml(status)}</span>`;
       confirmRow.classList.remove("confirmation-row");
     }
 
@@ -392,10 +642,17 @@
     showTyping(true, t("chat.typing.execute"));
     beginTypingTicker();
 
+    const requestThreadId = currentThreadId;
     try {
       const controller = createActiveController();
       const traceId = createTraceId();
-      void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
+      const st = ensureThreadState(requestThreadId);
+      st.traceId = traceId;
+      void window.SecretaryAPI.subscribeChatProgress(
+        traceId,
+        (event) => handleProgressEvent(event, traceId),
+        controller.signal,
+      );
       const response = await window.SecretaryAPI.request(
         "POST",
         "/api/chat/confirm",
@@ -405,7 +662,7 @@
           grant_permanent_read: Boolean(options.grantPermanentRead),
           grant_session_write: Boolean(options.grantSessionWrite),
           trace_id: traceId,
-          thread_id: currentThreadId || "",
+          thread_id: requestThreadId || "",
         },
         {
           signal: controller.signal,
@@ -414,9 +671,13 @@
       );
       showTyping(false);
 
-      if (response.needs_confirmation) {
+      const stillCurrentThread = requestThreadId === currentThreadId;
+      if (!stillCurrentThread) {
         clearStreamingBubble();
-        pendingActionId = response.confirmation_action_id;
+        void syncThreadsFromServer({ render: false });
+      } else if (response.needs_confirmation) {
+        clearStreamingBubble();
+        ensureThreadState(currentThreadId).pendingActionId = response.confirmation_action_id;
         appendConfirmation(response);
         void syncThreadsFromServer({ render: false });
       } else if (streamingBubbleEl) {
@@ -438,17 +699,42 @@
       clearStreamingBubble();
       handleRequestError(error, t("chat.error.action"));
     } finally {
-      finalizeProgressSession();
-      endTypingTicker();
-      clearActiveController();
-      showTyping(false);
-      setBusy(false);
-      chatInput.focus();
+      if (requestThreadId === currentThreadId) {
+        finalizeProgressSession();
+        endTypingTicker();
+        showTyping(false);
+        chatInput.focus();
+      }
+      const st = getThreadState(requestThreadId);
+      if (st) {
+        st.controller = null;
+        st.streamingText = "";
+        st.traceId = "";
+      }
+      updateThreadBusyIndicator(requestThreadId);
+      if (!isThreadBusy(currentThreadId)) {
+        busy = false;
+        sendBtn.disabled = false;
+        chatInput.disabled = false;
+        pauseBtn.hidden = true;
+      }
+      activeRequestController = null;
     }
   }
 
   function appendMessage(role, text) {
     appendMessageInternal(role, text, true);
+  }
+
+  // 时间标记分隔线:编辑式章节感
+  function insertTimeDivider(ts) {
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const divider = document.createElement("div");
+    divider.className = "time-divider";
+    divider.innerHTML = `<span class="time-divider-line"></span><span class="time-divider-text">${hh}:${mm}</span><span class="time-divider-line"></span>`;
+    messagesEl.appendChild(divider);
   }
 
   function usesGroundingTools(response) {
@@ -527,6 +813,7 @@
   }
 
   function appendGroundingMeta(response) {
+    appendRawToggle(response);
     if (!response) return;
     const showUnverified = shouldShowGroundingUnverified(response);
     const showVerified =
@@ -554,6 +841,52 @@
         : t("chat.grounding.verified");
     }
     bubble.appendChild(meta);
+  }
+
+  function appendRawToggle(response) {
+    if (!response) return;
+    const raw = String(response.raw_reply || "").trim();
+    if (!raw) return;
+    const finalText = String(response.reply || "").trim();
+    if (raw === finalText) return;
+
+    const rows = messagesEl.querySelectorAll(".message.bot");
+    const row = rows[rows.length - 1];
+    if (!row || row.querySelector(".raw-toggle")) return;
+
+    const bubble = row.querySelector(".bubble");
+    if (!bubble) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "raw-toggle";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "raw-toggle-btn";
+    btn.setAttribute("data-tip", "原始输出");
+    btn.setAttribute("aria-expanded", "false");
+    btn.innerHTML =
+      '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.5">' +
+      '<path d="M8 3C4.5 3 1.5 8 1.5 8s3 5 6.5 5 6.5-5 6.5-5-3-5-6.5-5z"/>' +
+      '<circle cx="8" cy="8" r="2"/></svg>';
+
+    const body = document.createElement("div");
+    body.className = "raw-toggle-body";
+    body.hidden = true;
+    body.innerHTML = renderMarkdown(raw);
+
+    btn.addEventListener("click", () => {
+      const open = body.hidden;
+      body.hidden = !open;
+      btn.setAttribute("aria-expanded", String(open));
+      btn.classList.toggle("is-open", open);
+      if (open) scrollChatToBottom();
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(body);
+    bubble.appendChild(wrap);
   }
 
   function isRuntimeSummaryMessage(text) {
@@ -589,6 +922,10 @@
       row.appendChild(buildMsgActionsEl(msgId, role, archived, thread));
     }
     messagesEl.appendChild(row);
+    if (persist) {
+      row.classList.add("msg-enter");
+      row.addEventListener("animationend", () => row.classList.remove("msg-enter"), { once: true });
+    }
     scrollChatToBottom();
   }
 
@@ -603,28 +940,44 @@
       const restoreBtn = document.createElement("button");
       restoreBtn.type = "button";
       restoreBtn.className = "msg-action-btn";
-      restoreBtn.textContent = "恢复";
+      restoreBtn.setAttribute("data-tip", "恢复");
       restoreBtn.dataset.action = "restore";
       restoreBtn.dataset.msgId = msgId;
+      restoreBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/>' +
+        '<path d="M3 4v5h5"/></svg>';
       wrap.appendChild(restoreBtn);
     } else {
       if (canFork) {
         const forkBtn = document.createElement("button");
         forkBtn.type = "button";
         forkBtn.className = "msg-action-btn";
-        forkBtn.textContent = "分叉";
-        forkBtn.title = "从此新开分支";
+        forkBtn.setAttribute("data-tip", "从此新开分支");
         forkBtn.dataset.action = "fork";
         forkBtn.dataset.msgId = msgId;
+        forkBtn.innerHTML =
+          '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+          'stroke-linejoin="round"><circle cx="6" cy="6" r="2"/>' +
+          '<circle cx="6" cy="18" r="2"/>' +
+          '<circle cx="18" cy="12" r="2"/>' +
+          '<path d="M6 8v8"/><path d="M8 6h4a4 4 0 0 1 4 4"/>' +
+          '<path d="M8 18h4a4 4 0 0 0 4-4"/></svg>';
         wrap.appendChild(forkBtn);
       }
       const rollbackBtn = document.createElement("button");
       rollbackBtn.type = "button";
       rollbackBtn.className = "msg-action-btn";
-      rollbackBtn.textContent = "回退";
-      rollbackBtn.title = "回退到此";
+      rollbackBtn.setAttribute("data-tip", "回退到此");
       rollbackBtn.dataset.action = "rollback";
       rollbackBtn.dataset.msgId = msgId;
+      rollbackBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><path d="M9 14L4 9l5-5"/>' +
+        '<path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H8"/></svg>';
       wrap.appendChild(rollbackBtn);
     }
     const switcher = buildSiblingSwitcherEl(thread, msgId);
@@ -704,15 +1057,14 @@
     }
   }
 
+  let scrollChatPending = false;
   function scrollChatToBottom() {
     if (!mainScrollEl) return;
-    const scroll = () => {
-      mainScrollEl.scrollTop = mainScrollEl.scrollHeight;
-    };
-    scroll();
+    if (scrollChatPending) return;
+    scrollChatPending = true;
     requestAnimationFrame(() => {
-      scroll();
-      requestAnimationFrame(scroll);
+      scrollChatPending = false;
+      mainScrollEl.scrollTop = mainScrollEl.scrollHeight;
     });
   }
 
@@ -730,48 +1082,48 @@
   }
 
   function isThirdPartyProjectAuthorQuestion(text) {
-    const t = normalizeIdentityText(text);
-    if (!t) return false;
-    if (/你|灵犀|本助手|这个助手/.test(t)) return false;
+    const normalized = normalizeIdentityText(text);
+    if (!normalized) return false;
+    if (/你|灵犀|本助手|这个助手/.test(normalized)) return false;
     if (
       /^([A-Za-z0-9][\w./\s-]{1,48}?)\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
-        t,
+        normalized,
       )
     ) {
       return true;
     }
     if (
       /(?:找|查|看|请问|帮我).{0,16}?[A-Za-z0-9][\w./\s-]{1,48}?\s*(?:项目|仓库|repo)?\s*的?\s*(作者|开发者|创建者|维护者|谁写|谁开发)/i.test(
-        t,
+        normalized,
       )
     ) {
       return true;
     }
-    if (/\bopen\s*[-_]?\s*design\b/i.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+    if (/\bopen\s*[-_]?\s*design\b/i.test(normalized) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(normalized)) {
       return true;
     }
-    if (/(~|\/Users\/|\/)/.test(t) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(t)) {
+    if (/(~|\/Users\/|\/)/.test(normalized) && /(作者|开发者|创建者|维护者|谁写|谁开发)/.test(normalized)) {
       return true;
     }
     return false;
   }
 
   function isAuthorRequest(text) {
-    const t = normalizeIdentityText(text);
-    if (!t) return false;
-    if (isThirdPartyProjectAuthorQuestion(t)) return false;
+    const normalized = normalizeIdentityText(text);
+    if (!normalized) return false;
+    if (isThirdPartyProjectAuthorQuestion(normalized)) return false;
     if (
       /谁写的|谁写|谁开发|谁做的|谁制作|谁创造|你的作者|你的开发者|你的创建者|谁是你的作者|谁是你的开发者|你的作者是谁|你的开发者是谁|谁创造了你|谁创造了灵犀|who made you|who created you|who built you|who developed you/i.test(
-        t,
+        normalized,
       )
     ) {
       return true;
     }
-    if (/谁.{0,6}写.{0,4}(你|灵犀|lumina)/i.test(t)) return true;
-    if (/(你|灵犀).{0,8}(作者|开发者|创建者|制作人)/i.test(t)) return true;
+    if (/谁.{0,6}写.{0,4}(你|灵犀|lumina)/i.test(normalized)) return true;
+    if (/(你|灵犀).{0,8}(作者|开发者|创建者|制作人)/i.test(normalized)) return true;
     if (
-      /^(作者|开发者|创建者|制作人)(是谁|哪位|谁)[啊呀吗]?[？?]?$/i.test(t) ||
-      /谁(开发|做|写|创造)了?(你|灵犀)/i.test(t)
+      /^(作者|开发者|创建者|制作人)(是谁|哪位|谁)[啊呀吗]?[？?]?$/i.test(normalized) ||
+      /谁(开发|做|写|创造)了?(你|灵犀)/i.test(normalized)
     ) {
       return true;
     }
@@ -779,36 +1131,36 @@
   }
 
   function coreIdentityMatch(text) {
-    const t = normalizeIdentityText(text);
-    if (!t) return false;
-    if (isAuthorRequest(t)) return false;
-    if (/帮我写|帮我做|帮我撰|帮我起草|帮我编辑|帮我润色|写一份|写个|撰写|起草/.test(t)) {
+    const normalized = normalizeIdentityText(text);
+    if (!normalized) return false;
+    if (isAuthorRequest(normalized)) return false;
+    if (/帮我写|帮我做|帮我撰|帮我起草|帮我编辑|帮我润色|写一份|写个|撰写|起草/.test(normalized)) {
       return false;
     }
-    if (/我的/.test(t) && /自我介绍/.test(t) && !/你/.test(t)) return false;
-    if (/自我介绍/.test(t)) return true;
-    if (/^(介绍一下|介绍下|介绍)$/.test(t)) return true;
-    if (t === "你是谁" || t === "你是什么" || /^你是谁[啊呀吗]?[？?]?$/.test(t)) return true;
+    if (/我的/.test(normalized) && /自我介绍/.test(normalized) && !/你/.test(normalized)) return false;
+    if (/自我介绍/.test(normalized)) return true;
+    if (/^(介绍一下|介绍下|介绍)$/.test(normalized)) return true;
+    if (normalized === "你是谁" || normalized === "你是什么" || /^你是谁[啊呀吗]?[？?]?$/.test(normalized)) return true;
     if (
       /你是什么|介绍一下你|介绍一下灵犀|说说你自己|你叫什么|你叫啥|你是做什么|你是干啥|你能做什么|你会什么|你都能干什么|你会干什么|说说你的能力|你有什么功能|什么是灵犀|灵犀是什么|who are you|what are you|what is lumina/i.test(
-        t,
+        normalized,
       )
     ) {
       return true;
     }
-    if (/(做|来|请|给).{0,4}自我介绍/.test(t)) return true;
-    if (/介绍(一下)?(你|你自己|灵犀|lumina)/i.test(t)) return true;
-    if (/(你|灵犀).{0,6}介绍/i.test(t)) return true;
-    if (/再.{0,8}介绍.{0,8}(你|自己|灵犀)?/.test(t)) return true;
+    if (/(做|来|请|给).{0,4}自我介绍/.test(normalized)) return true;
+    if (/介绍(一下)?(你|你自己|灵犀|lumina)/i.test(normalized)) return true;
+    if (/(你|灵犀).{0,6}介绍/i.test(normalized)) return true;
+    if (/再.{0,8}介绍.{0,8}(你|自己|灵犀)?/.test(normalized)) return true;
     return false;
   }
 
   function isIdentityRepeatRequest(text, messages) {
-    const t = normalizeIdentityText(text);
-    if (!/再说一遍|再说一次|再来一遍|再来一次|再讲一遍|重复一遍|再介绍/.test(t)) {
+    const normalized = normalizeIdentityText(text);
+    if (!/再说一遍|再说一次|再来一遍|再来一次|再讲一遍|重复一遍|再介绍/.test(normalized)) {
       return false;
     }
-    if (/(你|自己|灵犀|介绍|是谁|做什么|能力|功能)/.test(t)) return true;
+    if (/(你|自己|灵犀|介绍|是谁|做什么|能力|功能)/.test(normalized)) return true;
     if (!Array.isArray(messages) || !messages.length) return false;
     for (let i = messages.length - 1; i >= 0 && i >= messages.length - 6; i -= 1) {
       const item = messages[i];
@@ -833,7 +1185,8 @@
     clearStreamingBubble();
     showTyping(false);
     endTypingTicker();
-    pendingActionId = null;
+    const st = getThreadState(currentThreadId);
+    if (st) st.pendingActionId = null;
   }
 
   function resetProgressLog() {
@@ -1151,42 +1504,78 @@
     flushProgressPanel();
   }
 
-  function handleProgressEvent(event) {
+  function handleProgressEvent(event, traceId) {
     const kind = String(event?.kind || "");
-    if (kind === "reply_start") {
-      beginStreamingBubble();
-    } else if (kind === "reply_delta" && event?.delta) {
-      appendStreamingDelta(String(event.delta));
-    } else if (kind === "reply_end") {
-      // wait for POST to finalize
+
+    // 通过 traceId 找到对应的线程
+    let eventThreadId = "";
+    for (const [tid, st] of threadState) {
+      if (st.traceId === traceId) {
+        eventThreadId = tid;
+        break;
+      }
+    }
+    const isCurrentThread = eventThreadId === currentThreadId;
+
+    // 流式回复:只在当前线程的视图里更新 bubble
+    if (isCurrentThread) {
+      if (kind === "reply_start") {
+        beginStreamingBubble();
+      } else if (kind === "reply_delta" && event?.delta) {
+        appendStreamingDelta(String(event.delta));
+      } else if (kind === "reply_end") {
+        // 回复内容已全部通过流式发送,停止慢提示 ticker 避免「结果已显示却提示处理慢」
+        endTypingTicker();
+        showTyping(false);
+      }
+    } else if (eventThreadId) {
+      // 非当前线程:缓冲流式文本
+      if (kind === "reply_delta" && event?.delta) {
+        const st = getThreadState(eventThreadId);
+        if (st) {
+          st.streamingText += String(event.delta);
+          st.typingLabel = t("chat.typing.understand");
+        }
+      }
     }
 
     const label = String(event?.label || "").trim();
     if (!label && !kind.startsWith("reply_")) return;
-    if (progressEl && progressListEl && label && !kind.startsWith("reply_")) {
+
+    // 进度面板:只在当前线程显示
+    if (isCurrentThread && progressEl && progressListEl && label && !kind.startsWith("reply_")) {
       appendProgressItem(event, label);
       scrollChatToBottom();
     }
-    if (
-      kind === "subagent_started" ||
-      (kind === "tool_started" && event?.tool_name === "spawn_subagent")
-    ) {
-      clearStreamingBubble({ saveToProgress: true });
-      showTyping(true, label || t("chat.typing.subagent"));
-    } else if (kind === "subagent_paused") {
-      showTyping(true, label || t("chat.subagent.paused"));
-    } else if (kind === "subagent_finished") {
-      showTyping(true, t("chat.typing.organize"));
-    } else if (
-      kind === "tool_started" ||
-      kind === "iteration_started" ||
-      kind === "iteration_completed"
-    ) {
-      clearStreamingBubble({ saveToProgress: true });
-      showTyping(true, label);
+
+    // 缓存非当前线程的 typing label
+    if (!isCurrentThread && eventThreadId) {
+      const st = getThreadState(eventThreadId);
+      if (st && label) st.typingLabel = label;
     }
-    if (event?.kind === "done" && shouldShowProgressPanel()) {
-      showTyping(true, t("chat.typing.organize"));
+
+    if (isCurrentThread) {
+      if (
+        kind === "subagent_started" ||
+        (kind === "tool_started" && event?.tool_name === "spawn_subagent")
+      ) {
+        clearStreamingBubble({ saveToProgress: true });
+        showTyping(true, label || t("chat.typing.subagent"));
+      } else if (kind === "subagent_paused") {
+        showTyping(true, label || t("chat.subagent.paused"));
+      } else if (kind === "subagent_finished") {
+        showTyping(true, t("chat.typing.organize"));
+      } else if (
+        kind === "tool_started" ||
+        kind === "iteration_started" ||
+        kind === "iteration_completed"
+      ) {
+        clearStreamingBubble({ saveToProgress: true });
+        showTyping(true, label);
+      }
+      if (event?.kind === "done" && shouldShowProgressPanel()) {
+        showTyping(true, t("chat.typing.organize"));
+      }
     }
   }
 
@@ -1210,8 +1599,17 @@
       beginStreamingBubble();
     }
     streamingText += delta;
-    streamingBubbleEl.innerHTML = renderMarkdown(streamingText);
-    scrollChatToBottom();
+    if (streamingRenderPending) return;
+    streamingRenderPending = true;
+    const renderThreadId = currentThreadId;
+    requestAnimationFrame(() => {
+      streamingRenderPending = false;
+      // Re-verify thread hasn't switched before updating DOM (problem 6)
+      if (renderThreadId !== currentThreadId) return;
+      if (!streamingBubbleEl) return;
+      streamingBubbleEl.innerHTML = renderMarkdown(streamingText);
+      scrollChatToBottom();
+    });
   }
 
   function finalizeStreamingMessage(finalText) {
@@ -1254,28 +1652,123 @@
     streamingText = "";
   }
 
+  // ===== Per-thread state management =====
+
+  function getThreadState(tid) {
+    return threadState.get(tid) || null;
+  }
+
+  function ensureThreadState(tid) {
+    if (!threadState.has(tid)) {
+      threadState.set(tid, {
+        controller: null,
+        traceId: "",
+        streamingText: "",
+        pendingActionId: null,
+        typingLabel: "",
+        progressItems: [],
+      });
+    }
+    return threadState.get(tid);
+  }
+
+  function isThreadBusy(tid) {
+    const st = getThreadState(tid);
+    return Boolean(st && st.controller);
+  }
+
+  function saveCurrentStreamingState() {
+    if (!currentThreadId) return;
+    const st = ensureThreadState(currentThreadId);
+    st.streamingText = streamingText;
+    st.typingLabel = typingTextEl?.textContent || "";
+  }
+
+  function restoreThreadStreamingState(tid) {
+    const st = getThreadState(tid);
+    if (!st || !st.controller) {
+      // 没有活跃请求,清理流式状态
+      streamingBubbleEl = null;
+      streamingText = "";
+      return;
+    }
+    // 有活跃请求,恢复流式 bubble
+    streamingText = st.streamingText || "";
+    if (streamingText) {
+      beginStreamingBubble();
+      streamingBubbleEl.innerHTML = renderMarkdown(streamingText);
+      scrollChatToBottom();
+    }
+    // 恢复 typing 指示器
+    if (st.typingLabel) {
+      showTyping(true, st.typingLabel);
+    }
+  }
+
+  function setThreadBusy(tid, value) {
+    const st = ensureThreadState(tid);
+    if (value) {
+      // busy 由 controller 的存在决定
+    }
+    if (!value) {
+      st.controller = null;
+      st.streamingText = "";
+      st.typingLabel = "";
+      st.progressItems = [];
+    }
+    // 更新线程列表指示器
+    updateThreadBusyIndicator(tid);
+  }
+
+  function updateThreadBusyIndicator(tid) {
+    const wrap = threadListEl.querySelector(
+      `.thread-item-wrap[data-thread-id="${tid}"]`,
+    );
+    if (!wrap) return;
+    const busy = isThreadBusy(tid);
+    wrap.classList.toggle("is-busy", busy);
+  }
+
+  function updateAllThreadBusyIndicators() {
+    for (const tid of threadState.keys()) {
+      updateThreadBusyIndicator(tid);
+    }
+  }
+
   function setBusy(value) {
     busy = value;
+    // 只禁用当前线程的输入,不影响其他线程
     sendBtn.disabled = value;
     chatInput.disabled = value;
     pauseBtn.hidden = !value;
+    if (value) {
+      setThreadBusy(currentThreadId, true);
+    }
   }
 
   function createActiveController() {
     const controller = new AbortController();
     activeRequestController = controller;
+    const st = ensureThreadState(currentThreadId);
+    st.controller = controller;
+    updateThreadBusyIndicator(currentThreadId);
     return controller;
   }
 
   function clearActiveController() {
     activeRequestController = null;
+    setThreadBusy(currentThreadId, false);
   }
 
   function pauseCurrentRequest() {
     if (!activeRequestController) return;
     activeRequestController.abort();
     activeRequestController = null;
-    setBusy(false);
+    setThreadBusy(currentThreadId, false);
+    busy = false;
+    sendBtn.disabled = false;
+    chatInput.disabled = false;
+    pauseBtn.hidden = true;
     showTyping(false);
     endTypingTicker();
     clearStreamingBubble();
@@ -1411,7 +1904,8 @@
     return String(value)
       .replaceAll("&", "&amp;")
       .replaceAll('"', "&quot;")
-      .replaceAll("<", "&lt;");
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
   }
 
   function renderMarkdown(text) {
@@ -1426,7 +1920,9 @@
     return String(value)
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
   }
 
   function reconcileMessageIds() {
@@ -1529,11 +2025,15 @@
   }
 
   async function createThread(clearBackend = true) {
-    if (clearBackend && activeRequestController) {
-      activeRequestController.abort();
-    }
+    // 不再中断之前的请求:保存当前线程状态后切换
     if (clearBackend) {
-      setBusy(false);
+      saveCurrentStreamingState();
+      streamingBubbleEl = null;
+      streamingText = "";
+      busy = false;
+      sendBtn.disabled = false;
+      chatInput.disabled = false;
+      pauseBtn.hidden = true;
       resetTransientUI();
     }
     const thread = {
@@ -1548,6 +2048,7 @@
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    updateAllThreadBusyIndicators();
     try {
       const remote = await window.SecretaryAPI.request(
         "POST",
@@ -1594,11 +2095,28 @@
 
   async function switchThread(threadId) {
     if (!threadId || threadId === currentThreadId) return;
+    // 保存当前线程的流式状态(不中断请求)
+    saveCurrentStreamingState();
+    // 清理当前视图的 streaming bubble(会在 renderCurrentThreadMessages 中重建)
+    streamingBubbleEl = null;
+    streamingText = "";
+    // 切换线程
     currentThreadId = threadId;
     saveThreadsLocal();
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
+    // 恢复新线程的流式状态(如果有活跃请求)
+    restoreThreadStreamingState(threadId);
+    // 更新输入框状态:新线程可能没有活跃请求
+    const threadBusy = isThreadBusy(threadId);
+    busy = threadBusy;
+    sendBtn.disabled = threadBusy;
+    chatInput.disabled = threadBusy;
+    pauseBtn.hidden = !threadBusy;
+    if (!threadBusy) {
+      chatInput.focus();
+    }
     try {
       const remote = await window.SecretaryAPI.request(
         "PUT",
@@ -1621,11 +2139,13 @@
     threadListEl.innerHTML = threads
       .map((item) => {
         const active = item.id === currentThreadId ? " active" : "";
+        const busyCls = isThreadBusy(item.id) ? " is-busy" : "";
         const preview = buildThreadPreview(item);
+        const title = escapeHtml(item.title || t("thread.new"));
         return (
-          `<div class="thread-item-wrap${active}">` +
+          `<div class="thread-item-wrap${active}${busyCls}" data-thread-id="${item.id}" data-tooltip="${title}">` +
           `<button class="thread-item${active}" type="button" data-thread-id="${item.id}">` +
-          `<div class="thread-item-title">${escapeHtml(item.title || t("thread.new"))}</div>` +
+          `<div class="thread-item-title">${title}</div>` +
           `<div class="thread-item-preview">${escapeHtml(preview)}</div>` +
           `<div class="thread-item-time">${formatThreadTime(item.updatedAt)}</div>` +
           `</button>` +
@@ -1636,18 +2156,42 @@
       .join("");
   }
 
+  // 动态 hero 问候语:根据时段/节气/月相
+  function updateHeroGreeting() {
+    if (!window.LuminaLunar) return;
+    const titleEl = document.getElementById("hero-title");
+    const subEl = document.getElementById("hero-sub");
+    if (!titleEl) return;
+    const g = window.LuminaLunar.getGreeting(new Date());
+    titleEl.innerHTML = g.main;
+    if (subEl && g.sub) subEl.textContent = g.sub;
+  }
+
   function renderCurrentThreadMessages() {
     resetTransientUI();
     messagesEl.innerHTML = "";
     ensureChatToolbar();
+    ensureSidebarArchiveBtn();
     const thread = getCurrentThread();
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       welcome.classList.remove("hidden");
+      updateHeroGreeting();
       return;
     }
     welcome.classList.add("hidden");
     const path = computeActivePath(thread);
+    let lastMsgTime = null;
     for (const item of path) {
+      // 时间标记:与上一条间隔超过 30 分钟则插入分隔线
+      const itemTime = item.timestamp ? new Date(item.timestamp).getTime() : null;
+      if (itemTime !== null) {
+        if (lastMsgTime !== null && (itemTime - lastMsgTime) > 30 * 60 * 1000) {
+          insertTimeDivider(itemTime);
+        }
+        // Update lastMsgTime even if it was null, so subsequent messages
+        // have a baseline to compare against.
+        lastMsgTime = itemTime;
+      }
       appendMessageInternal(item.role, item.text, false, { id: item.id, archived: item.archived });
     }
     scrollChatToBottom();
@@ -1731,6 +2275,7 @@
     const prev = document.createElement("button");
     prev.type = "button";
     prev.className = "sibling-nav";
+    prev.setAttribute("data-tip", "上一分支");
     prev.textContent = "‹";
     prev.dataset.action = "sibling-prev";
     prev.dataset.msgId = msgId;
@@ -1741,6 +2286,7 @@
     const next = document.createElement("button");
     next.type = "button";
     next.className = "sibling-nav";
+    next.setAttribute("data-tip", "下一分支");
     next.textContent = "›";
     next.dataset.action = "sibling-next";
     next.dataset.msgId = msgId;
@@ -1779,9 +2325,10 @@
     };
     thread.messages.push(msg);
     thread.active_leaf_id = msg.id;
-    if (thread.messages.length > 400) {
-      thread.messages = thread.messages.slice(-400);
-    }
+    // NOTE: Do not truncate messages here. Blindly slicing the array breaks
+    // parent_id chains — surviving messages may reference deleted parents,
+    // causing computeActivePath to silently drop messages. Message retention
+    // should be managed by the server (archival/soft-delete) instead.
     if (role === "user") {
       thread.title = buildThreadTitle(text);
     }
@@ -1926,6 +2473,13 @@
         null,
         { timeoutMs: 5000 },
       );
+      // Tag with thread id so the map module can reject stale updates
+      // after a thread switch.
+      if (currentTreeData) currentTreeData._threadId = threadId;
+      // Live-update the map if it's currently open.
+      if (window.ConversationMapModule && window.ConversationMapModule.isOpen()) {
+        window.ConversationMapModule.update(currentTreeData);
+      }
     } catch (_error) {
       currentTreeData = null;
     }
@@ -2048,34 +2602,51 @@
       toolbar = document.createElement("div");
       toolbar.id = "chat-toolbar";
       toolbar.className = "chat-toolbar";
-      const label = document.createElement("label");
-      label.className = "archived-toggle";
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.id = "show-archived-toggle";
-      checkbox.checked = showArchived;
-      checkbox.addEventListener("change", () => {
-        showArchived = checkbox.checked;
-        renderCurrentThreadMessages();
-      });
-      const text = document.createElement("span");
-      text.textContent = "显示已归档";
-      label.appendChild(checkbox);
-      label.appendChild(text);
-      toolbar.appendChild(label);
       const mapBtn = document.createElement("button");
       mapBtn.type = "button";
       mapBtn.id = "btn-map-toggle";
       mapBtn.className = "map-toggle-btn js-map-toggle";
-      mapBtn.textContent = "地图";
-      mapBtn.title = "对话地图";
+      mapBtn.setAttribute("data-tip", "对话地图");
       toolbar.appendChild(mapBtn);
       if (messagesEl.parentElement) {
         messagesEl.parentElement.insertBefore(toolbar, messagesEl);
       }
     }
-    const checkbox = toolbar.querySelector("#show-archived-toggle");
-    if (checkbox) checkbox.checked = showArchived;
+  }
+
+  function ensureSidebarArchiveBtn() {
+    const sidebar = document.querySelector(".chat-sidebar");
+    if (!sidebar) return;
+    let footer = sidebar.querySelector(".sidebar-footer");
+    if (!footer) {
+      footer = document.createElement("div");
+      footer.className = "sidebar-footer";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "sidebar-archive-btn tip-right";
+      btn.setAttribute("data-tip", "显示已归档");
+      btn.setAttribute("aria-pressed", String(showArchived));
+      btn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+        'stroke-linejoin="round" aria-hidden="true">' +
+        '<rect x="3" y="4" width="18" height="4" rx="1"/>' +
+        '<path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/>' +
+        '<path d="M10 12h4"/></svg>';
+      btn.addEventListener("click", () => {
+        showArchived = !showArchived;
+        btn.setAttribute("aria-pressed", String(showArchived));
+        btn.classList.toggle("is-active", showArchived);
+        renderCurrentThreadMessages();
+      });
+      footer.appendChild(btn);
+      sidebar.appendChild(footer);
+    }
+    const btn = footer.querySelector(".sidebar-archive-btn");
+    if (btn) {
+      btn.setAttribute("aria-pressed", String(showArchived));
+      btn.classList.toggle("is-active", showArchived);
+    }
   }
 
   // Event delegation for message action buttons.
@@ -2111,10 +2682,47 @@
   window.ChatModule = {
     getCurrentThreadId: () => currentThreadId,
     refresh: () => syncThreadsFromServer({ render: true }),
+    // Map a message id to its turn id in the tree, for chat↔map linkage.
+    findTurnIdForMessage: (msgId) => findTurnIdForMessage(msgId),
   };
 
   // Refresh current thread when conversation map switches active leaf.
   document.addEventListener("conversation:active-leaf-changed", () => {
     void syncThreadsFromServer({ render: true });
   });
+
+  // Chat ↔ Map linkage: hovering a message row highlights the corresponding
+  // node in the conversation map (if open).
+  messagesEl.addEventListener("mouseover", (event) => {
+    const row = event.target.closest(".message[data-msg-id]");
+    if (!row) return;
+    const msgId = row.dataset.msgId;
+    if (!msgId) return;
+    if (!window.ConversationMapModule || !window.ConversationMapModule.isOpen()) return;
+    const turnId = findTurnIdForMessage(msgId);
+    if (turnId) window.ConversationMapModule.highlightNode(turnId);
+  });
+
+  messagesEl.addEventListener("mouseout", (event) => {
+    const row = event.target.closest(".message[data-msg-id]");
+    if (!row) return;
+    // Only clear when the cursor leaves the message row entirely (not when
+    // moving between child elements within the same row).
+    const next = event.relatedTarget;
+    if (next && next.closest && next.closest(".message[data-msg-id]") === row) return;
+    if (window.ConversationMapModule && window.ConversationMapModule.isOpen()) {
+      window.ConversationMapModule.highlightNode("");
+    }
+  });
+
+  // Look up the turn id that contains a given message id (user or assistant).
+  function findTurnIdForMessage(msgId) {
+    if (!currentTreeData || !Array.isArray(currentTreeData.nodes)) return "";
+    for (const node of currentTreeData.nodes) {
+      if (node.id === msgId) return node.id;
+      if (node.user_message_id === msgId) return node.id;
+      if (node.assistant_message_id === msgId) return node.id;
+    }
+    return "";
+  }
 })();
