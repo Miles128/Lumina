@@ -45,8 +45,8 @@ from secretary.agent.stop_hooks import (
     MaxIterationsStopHook,
     StopDecision,
     StopHook,
-    ThirdPersonMetaReplyStopHook,
 )
+from secretary.agent.text_utils import truncate_chars
 from secretary.agent.tools.base import Tool, ToolCall, _resolve_path
 from secretary.agent.tools.fs import (
     FileDeleteTool,
@@ -65,7 +65,7 @@ from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
 
-MAX_LOOP_STEPS = 12
+MAX_LOOP_STEPS = 20
 MAX_TOOL_OUTPUT_CHARS = 4000
 _PROGRESS_DETAIL_LIMIT = 320
 
@@ -74,6 +74,7 @@ _READ_ONLY_TOOL_NAMES = frozenset(
     {
         "list_dir",
         "file_read",
+        "read_document",
         "search_files",
         "glob_files",
         "search_memory",
@@ -133,7 +134,7 @@ def assistant_message_for_tool_call(
     """Build an assistant message paired with exactly one tool response."""
     content = assistant_message.get("content")
     text = content.strip() if isinstance(content, str) else ""
-    return {
+    result: dict[str, Any] = {
         "role": "assistant",
         "content": text or None,
         "tool_calls": [
@@ -147,6 +148,11 @@ def assistant_message_for_tool_call(
             }
         ],
     }
+    # DeepSeek thinking mode: tool-call turns must replay reasoning_content.
+    reasoning = assistant_message.get("reasoning_content")
+    if isinstance(reasoning, str):
+        result["reasoning_content"] = reasoning
+    return result
 
 
 @dataclass
@@ -164,6 +170,7 @@ class LoopResult:
     steps: list[StepResult]
     used_tools: list[str]
     total_steps: int
+    cancelled: bool = False
     pending_confirmation: PendingConfirmation | None = None
     pending_step: StepResult | None = None
     messages_snapshot: list[dict[str, Any]] | None = None
@@ -196,6 +203,7 @@ class AgentLoop:
         stop_hooks: list[StopHook] | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         on_subagent_paused: Callable[[Any], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self._llm_config = llm_config
         self._tools = {t.name: t for t in (tools or _default_tools())}
@@ -206,11 +214,11 @@ class AgentLoop:
         self._file_auth = file_auth
         self._stop_hooks = stop_hooks or [
             MaxIterationsStopHook(max_steps),
-            ThirdPersonMetaReplyStopHook(),
         ]
         self._progress_callback = progress_callback
         self._native_tools_enabled = True
         self._on_subagent_paused = on_subagent_paused
+        self._cancel_check = cancel_check
 
     def run(self, messages: list[dict[str, str]], temperature: float = 0.7) -> LoopResult:
         steps: list[StepResult] = []
@@ -230,6 +238,8 @@ class AgentLoop:
 
         for step_idx in range(self._max_steps):
             iteration = step_idx + 1
+            if self._is_cancelled():
+                return self._cancelled_result(steps, used_tools, step_idx)
             snapshot = LoopSnapshot(
                 iteration=iteration,
                 max_iterations=self._max_steps,
@@ -256,7 +266,6 @@ class AgentLoop:
                 ProgressEvent(
                     kind="iteration_started",
                     iteration=iteration,
-                    message=f"第 {iteration}/{self._max_steps} 轮思考",
                 )
             )
             current_messages = compact_messages_if_needed(current_messages, self._llm_config)
@@ -278,6 +287,8 @@ class AgentLoop:
                     list_tool = self._tools["list_dir"]
                     list_args = {"path": target}
                     try:
+                        if self._is_cancelled():
+                            return self._cancelled_result(steps, used_tools, step_idx)
                         list_output = list_tool.execute(list_args, self._working_dir)
                     except Exception as exc:
                         list_output = f"Error: {exc}"
@@ -326,7 +337,7 @@ class AgentLoop:
             )
             on_delta = None if block_stream else self._build_reply_delta_callback(iteration)
 
-            raw, tool_call, assistant_message, native_used = self._invoke_model(
+            raw, tool_calls, assistant_message, native_used = self._invoke_model(
                 payload,
                 tool_schemas,
                 force_read=force_read,
@@ -337,10 +348,32 @@ class AgentLoop:
                 self._emit_progress(ProgressEvent(kind="reply_end", iteration=iteration))
 
             thought = raw.strip() if raw else ""
-            if tool_call is None and raw:
+            if not tool_calls and raw:
                 thought, fence_call = self._parse_response(raw)
                 if fence_call is not None:
-                    tool_call = fence_call
+                    tool_calls = [fence_call]
+
+            if not tool_calls:
+                tool_call = None
+            elif len(tool_calls) > 1 and native_used:
+                batch_outcome = self._run_native_tool_batch(
+                    tool_calls,
+                    assistant_message=assistant_message,
+                    thought=thought,
+                    raw=raw,
+                    current_messages=current_messages,
+                    steps=steps,
+                    used_tools=used_tools,
+                    iteration=iteration,
+                    step_idx=step_idx,
+                )
+                if isinstance(batch_outcome, LoopResult):
+                    return batch_outcome
+                if batch_outcome is True:
+                    continue
+                tool_call = tool_calls[0]
+            else:
+                tool_call = tool_calls[0]
 
             if tool_call is None:
                 reply = self._sanitize_reply(thought, snapshot)
@@ -358,6 +391,8 @@ class AgentLoop:
                         list_tool = self._tools["list_dir"]
                         list_args = {"path": target}
                         try:
+                            if self._is_cancelled():
+                                return self._cancelled_result(steps, used_tools, step_idx)
                             list_output = list_tool.execute(list_args, self._working_dir)
                         except Exception as exc:
                             list_output = f"Error: {exc}"
@@ -475,7 +510,6 @@ class AgentLoop:
                     ProgressEvent(
                         kind="iteration_completed",
                         iteration=iteration,
-                        message="核实通过，停止循环",
                         success=True,
                     )
                 )
@@ -558,6 +592,8 @@ class AgentLoop:
                 )
                 if hasattr(tool, "bind_progress"):
                     tool.bind_progress(self._progress_callback)
+                if self._is_cancelled():
+                    return self._cancelled_result(steps, used_tools, step_idx)
                 tool_output = tool.execute(tool_call.arguments, self._working_dir)
                 used_tools.append(tool_call.name)
                 self._emit_progress(
@@ -584,7 +620,7 @@ class AgentLoop:
                 )
 
             if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-                tool_output = tool_output[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+                tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
 
             if tool_call.name == "spawn_subagent" and hasattr(tool, "consume_paused"):
                 paused = tool.consume_paused()
@@ -624,7 +660,6 @@ class AgentLoop:
                     ProgressEvent(
                         kind="iteration_completed",
                         iteration=iteration,
-                        message="需要澄清，停止循环",
                         success=True,
                     )
                 )
@@ -703,6 +738,40 @@ class AgentLoop:
             total_steps=self._max_steps,
         )
 
+    def _is_cancelled(self) -> bool:
+        if self._cancel_check is None:
+            return False
+        try:
+            return bool(self._cancel_check())
+        except Exception:
+            logger.debug("Cancel check failed", exc_info=True)
+            return False
+
+    def _cancelled_result(
+        self,
+        steps: list[StepResult],
+        used_tools: list[str],
+        total_steps: int,
+    ) -> LoopResult:
+        self._emit_progress(
+            ProgressEvent(
+                kind="stopped",
+                iteration=max(1, total_steps + 1),
+                message="已取消。",
+                success=False,
+            )
+        )
+        self._emit_progress(
+            ProgressEvent(kind="final_reply", iteration=max(1, total_steps + 1), message="已取消。")
+        )
+        return LoopResult(
+            reply="已取消。",
+            steps=steps,
+            used_tools=used_tools,
+            total_steps=total_steps,
+            cancelled=True,
+        )
+
     def execute_confirmed(
         self,
         pending: PendingConfirmation,
@@ -719,7 +788,7 @@ class AgentLoop:
             tool_output = f"Error: {exc}"
 
         if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-            tool_output = tool_output[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+            tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
 
         current_messages = list(messages)
         current_messages.append({
@@ -784,7 +853,7 @@ class AgentLoop:
             tool_output = f"Error: {exc}"
 
         if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-            tool_output = tool_output[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
+            tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
 
         continued = list(messages)
         continued.append({
@@ -889,7 +958,13 @@ class AgentLoop:
         return StopDecision(should_stop=False)
 
     def _sanitize_reply(self, reply: str, snapshot: LoopSnapshot) -> str:
-        output = reply
+        from secretary.agent.reply_rewriter import prepare_user_facing_reply
+
+        output = prepare_user_facing_reply(
+            reply,
+            snapshot.latest_user_message,
+            self._llm_config,
+        )
         for hook in self._stop_hooks:
             output = hook.sanitize_reply(output, snapshot)
         return output
@@ -934,7 +1009,7 @@ class AgentLoop:
         force_read: bool,
         temperature: float,
         on_delta: Callable[[str], None] | None,
-    ) -> tuple[str, ToolCall | None, dict[str, Any] | None, bool]:
+    ) -> tuple[str, list[ToolCall], dict[str, Any] | None, bool]:
         if self._native_tools_enabled and tool_schemas:
             read_schemas = self._read_tool_schemas(tool_schemas)
             active_schemas = read_schemas if force_read and read_schemas else tool_schemas
@@ -950,8 +1025,8 @@ class AgentLoop:
                         temperature=temperature,
                         timeout=180.0,
                     )
-                    tool_call = self._tool_call_from_result(result)
-                    return result.content, tool_call, result.assistant_message, True
+                    tool_calls = self._tool_calls_from_result(result)
+                    return result.content, tool_calls, result.assistant_message, True
                 except (AgentError, TypeError, ValueError) as error:
                     logger.warning("Native tool calling unavailable, falling back: %s", error)
                     self._native_tools_enabled = False
@@ -964,18 +1039,180 @@ class AgentLoop:
             on_delta=on_delta,
         )
         thought, tool_call = self._parse_response(raw)
-        return raw, tool_call, {"role": "assistant", "content": raw}, False
+        calls = [tool_call] if tool_call is not None else []
+        return raw, calls, {"role": "assistant", "content": raw}, False
+
+    def _tool_calls_from_result(self, result: ChatCompletionResult) -> list[ToolCall]:
+        if not result.tool_calls:
+            return []
+        return [
+            ToolCall(name=call.name, arguments=call.arguments, id=call.id)
+            for call in result.tool_calls
+        ]
 
     def _tool_call_from_result(self, result: ChatCompletionResult) -> ToolCall | None:
-        if not result.tool_calls:
+        calls = self._tool_calls_from_result(result)
+        return calls[0] if calls else None
+
+    def _run_native_tool_batch(
+        self,
+        tool_calls: list[ToolCall],
+        *,
+        assistant_message: dict[str, Any] | None,
+        thought: str,
+        raw: str,
+        current_messages: list[dict[str, Any]],
+        steps: list[StepResult],
+        used_tools: list[str],
+        iteration: int,
+        step_idx: int,
+    ) -> LoopResult | bool | None:
+        """Execute a native multi-tool step.
+
+        Returns:
+            LoopResult — stop (cancel / pause)
+            True — batch ran; continue outer loop
+            None — fall back to single-tool handling for tool_calls[0]
+        """
+        if assistant_message is None:
             return None
-        if len(result.tool_calls) > 1:
+
+        immediate: list[ToolCall] = []
+        first_confirm: ToolCall | None = None
+        confirm_kind = "action"
+        for call in tool_calls:
+            tool = self._tools.get(call.name)
+            if tool is None:
+                immediate.append(call)
+                continue
+            needs_confirm, kind = self._requires_confirmation(tool, call.arguments)
+            if needs_confirm:
+                if first_confirm is None:
+                    first_confirm = call
+                    confirm_kind = kind
+            else:
+                immediate.append(call)
+
+        if first_confirm is not None and not immediate:
+            return None
+
+        if first_confirm is not None and immediate:
+            # Mixed batch: run read-only/immediate first, then pause on confirm.
             logger.info(
-                "Model returned %s tool calls in one step; executing the first only",
-                len(result.tool_calls),
+                "Mixed tool batch (%s immediate, confirming %s); running immediate then pause",
+                len(immediate),
+                first_confirm.name,
             )
-        first = result.tool_calls[0]
-        return ToolCall(name=first.name, arguments=first.arguments, id=first.id)
+
+        if not immediate:
+            return None
+
+        paired: list[tuple[ToolCall, str]] = []
+        for index, call in enumerate(immediate):
+            if self._is_cancelled():
+                return self._cancelled_result(steps, used_tools, step_idx)
+            paired_call = ensure_tool_call_id(call, suffix=f"{step_idx}_{index}")
+            tool = self._tools.get(paired_call.name)
+            if tool is None:
+                output = f"Error: unknown tool '{paired_call.name}'"
+            else:
+                try:
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_started",
+                            iteration=iteration,
+                            tool_name=paired_call.name,
+                            detail=_tool_action_detail(
+                                tool, paired_call.arguments, self._working_dir
+                            ),
+                        )
+                    )
+                    if hasattr(tool, "bind_progress"):
+                        tool.bind_progress(self._progress_callback)
+                    output = tool.execute(paired_call.arguments, self._working_dir)
+                    used_tools.append(paired_call.name)
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_finished",
+                            iteration=iteration,
+                            tool_name=paired_call.name,
+                            success=True,
+                            detail=_progress_detail_preview(output),
+                        )
+                    )
+                except Exception as exc:
+                    output = f"Error executing {paired_call.name}: {exc}"
+                    logger.warning("Tool %s failed: %s", paired_call.name, exc)
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_finished",
+                            iteration=iteration,
+                            tool_name=paired_call.name,
+                            success=False,
+                            message=output,
+                            detail=_progress_detail_preview(output),
+                        )
+                    )
+            if len(output) > MAX_TOOL_OUTPUT_CHARS:
+                output = truncate_chars(output, MAX_TOOL_OUTPUT_CHARS)
+            steps.append(
+                StepResult(thought=thought if index == 0 else "", tool_call=paired_call, tool_output=output)
+            )
+            paired.append((paired_call, output))
+
+        # Rebuild assistant tool_calls to match executed ids (and optional confirm).
+        batch_calls = [call for call, _ in paired]
+        if first_confirm is not None:
+            confirm_paired = ensure_tool_call_id(first_confirm, suffix=f"{step_idx}_confirm")
+            batch_calls.append(confirm_paired)
+        batch_assistant = _assistant_message_for_batch(assistant_message, batch_calls)
+        current_messages.append(batch_assistant)
+        for call, output in paired:
+            current_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": output,
+                }
+            )
+
+        if first_confirm is not None:
+            confirm_paired = batch_calls[-1]
+            tool = self._tools.get(confirm_paired.name)
+            desc = (
+                tool.describe_action(confirm_paired.arguments, self._working_dir)
+                if tool is not None
+                else confirm_paired.name
+            )
+            risk = tool.risk_level if tool is not None else "high"
+            pending = PendingConfirmation(
+                action_id=f"act_{datetime.now(UTC).strftime('%H%M%S')}_{step_idx}",
+                tool_name=confirm_paired.name,
+                arguments=confirm_paired.arguments,
+                description=desc,
+                risk_level=risk,
+                confirmation_kind=confirm_kind,
+            )
+            step = StepResult(
+                thought=thought,
+                tool_call=confirm_paired,
+                tool_output=f"[Waiting for user confirmation] {desc}",
+                needs_confirmation=True,
+            )
+            steps.append(step)
+            return LoopResult(
+                reply=f"我需要你的确认才能继续：\n\n{desc}\n\n是否允许？",
+                steps=steps,
+                used_tools=used_tools,
+                total_steps=step_idx + 1,
+                pending_confirmation=pending,
+                pending_step=step,
+                messages_snapshot=list(current_messages),
+                pause_assistant_message=batch_assistant,
+                pause_native_used=True,
+            )
+
+        return True
 
     def _append_tool_result_messages(
         self,
@@ -1060,7 +1297,7 @@ class AgentLoop:
                 "- Never paste simulated `$ ls`, `total N`, permission lines, or directory trees (├──) in your reply.\n"
                 "- Never tell the user Lumina lacks read permission; list_dir names are enough for project lists; use file_read for contents.\n"
                 "- In final answers, only mention files that appeared in tool results.\n"
-                "- Use one tool call per step.\n"
+                "- Prefer batching independent read-only tools in one step when useful.\n"
                 "- Write tools (file_write, patch, file_delete, shell) need user confirmation.\n"
                 "- Shell tool results include a `[receipt:<id>]` header. When your final reply claims to have "
                 "run a command or cites its output, append `[receipt:<id>]` after that claim. "
@@ -1134,6 +1371,34 @@ class AgentLoop:
                 thought = "我先执行命令，再给你结果。"
 
         return thought, tool_call
+
+
+def _assistant_message_for_batch(
+    assistant_message: dict[str, Any],
+    tool_calls: list[ToolCall],
+) -> dict[str, Any]:
+    """Build one assistant message listing all tool_calls for native batch replay."""
+    content = assistant_message.get("content")
+    text = content.strip() if isinstance(content, str) else ""
+    result: dict[str, Any] = {
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                },
+            }
+            for call in tool_calls
+        ],
+    }
+    reasoning = assistant_message.get("reasoning_content")
+    if isinstance(reasoning, str):
+        result["reasoning_content"] = reasoning
+    return result
 
 
 def _default_tools() -> list[Tool]:

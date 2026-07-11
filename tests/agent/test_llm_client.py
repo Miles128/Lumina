@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -124,35 +123,34 @@ def test_chat_completion_with_tools_parses_tool_calls() -> None:
 
 
 def _fake_tools_result(payload: dict[str, object]):
-    from secretary.agent.llm_client import ChatCompletionResult, LlmToolCall
+    from secretary.agent.llm_client import _result_from_assistant_message
 
     msg = payload["choices"][0]["message"]
     assert isinstance(msg, dict)
-    calls_raw = msg.get("tool_calls", [])
-    assert isinstance(calls_raw, list)
-    tool_calls: list[LlmToolCall] = []
-    for idx, item in enumerate(calls_raw):
-        assert isinstance(item, dict)
-        fn = item.get("function", {})
-        assert isinstance(fn, dict)
-        args = fn.get("arguments", "{}")
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-        tool_calls.append(
-            LlmToolCall(
-                id=str(item.get("id", f"call_{idx}")),
-                name=str(fn.get("name", "")),
-                arguments=args if isinstance(args, dict) else {},
-            )
-        )
-    return ChatCompletionResult(
-        content=str(msg.get("content", "") or ""),
-        tool_calls=tuple(tool_calls),
-        assistant_message=msg,
-    )
+    return _result_from_assistant_message(msg)
+
+
+def test_chat_completion_with_tools_preserves_reasoning_content() -> None:
+    from secretary.agent.llm_client import _result_from_assistant_message
+
+    message = {
+        "content": "",
+        "reasoning_content": "Need to list files before answering.",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "list_dir",
+                    "arguments": "{\"path\": \".\"}",
+                },
+            }
+        ],
+    }
+    parsed = _result_from_assistant_message(message)
+    assert parsed.assistant_message["reasoning_content"] == "Need to list files before answering."
+    assert parsed.assistant_message["tool_calls"][0]["id"] == "call_1"
+    assert "reasoning_content" in parsed.assistant_message
 
 
 def test_usage_tracking() -> None:

@@ -74,6 +74,38 @@ def test_thread_store_delete_last_creates_replacement(tmp_path: Path) -> None:
     assert deleted["threads"][0]["messages"] == []
 
 
+def test_append_turn_sets_heuristic_title_only_once(tmp_path: Path) -> None:
+    store = ChatThreadStore(tmp_path / "chat_threads.json")
+    created = store.create_thread(title="新对话")
+    thread_id = str(created["current_id"])
+    store.append_turn(thread_id, "帮我整理下周飞书会议", "好的")
+    title1 = store.list_view()["threads"][0]["title"]
+    assert "飞书" in title1 or "会议" in title1
+    store.append_turn(thread_id, "再加一个周五站会", "已记下")
+    title2 = store.list_view()["threads"][0]["title"]
+    assert title2 == title1
+
+
+def test_maybe_refresh_title_at_milestone(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from secretary.agent.llm_config import LlmConfig
+
+    store = ChatThreadStore(tmp_path / "chat_threads.json")
+    created = store.create_thread(title="新对话")
+    thread_id = str(created["current_id"])
+    store.append_turn(thread_id, "帮我整理下周飞书会议", "下周有三场会")
+    cfg = LlmConfig(api_key="k", base_url="https://example.com/v1", model="m", source="env")
+    with patch(
+        "secretary.services.thread_title.chat_completion",
+        return_value="飞书下周会议",
+    ):
+        updated = store.maybe_refresh_title(thread_id, llm_config=cfg)
+    assert updated == "飞书下周会议"
+    assert store.list_view()["threads"][0]["title"] == "飞书下周会议"
+    assert store.list_view()["threads"][0]["auto_title_at_turn"] == 1
+
+
 # --- Tree branching tests (Task 1/2/9 data layer) ---
 
 

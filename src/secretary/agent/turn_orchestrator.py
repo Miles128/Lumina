@@ -41,6 +41,7 @@ class TurnOrchestrator:
         working_dir: Path | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         on_subagent_paused: Callable[[Any], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> LoopResult:
         loop = AgentLoop(
             llm_config,
@@ -50,6 +51,7 @@ class TurnOrchestrator:
             progress_callback=progress_callback,
             working_dir=working_dir,
             on_subagent_paused=on_subagent_paused,
+            cancel_check=cancel_check,
         )
         return loop.run(plan.messages, temperature=temperature)
 
@@ -67,12 +69,12 @@ class TurnOrchestrator:
         loop = AgentLoop(
             llm_config,
             tools=tools,
-            max_steps=8,
+            max_steps=20,
             file_auth=self._file_auth,
             progress_callback=progress_callback,
             working_dir=working_dir,
         )
-        return loop.execute_confirmed(pending, messages, temperature=temperature)
+        return loop.resume_after_confirmation(pending, messages, temperature=temperature)
 
     def resume_after_subagent(
         self,

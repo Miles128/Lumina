@@ -36,7 +36,7 @@ class ArchetypeSpec:
 
 EXPLORE_PROMPT = (
     "You are a read-only research sub-agent for Lumina.\n"
-    "Use list_dir, file_read, search_files, search_memory, web_search, "
+    "Use list_dir, file_read, read_document, search_files, search_memory, web_search, "
     "web_fetch, and session_search as needed.\n"
     "Do not modify files or spawn other agents.\n"
     "Report findings as concise bullet points; include file paths when relevant.\n"
@@ -45,21 +45,24 @@ EXPLORE_PROMPT = (
 
 WORKER_PROMPT = (
     "You are a worker sub-agent for Lumina.\n"
-    "You may read and modify the workspace using file_write, patch, and shell.\n"
-    "Destructive or risky operations may pause for user confirmation.\n"
+    "You may read and modify the workspace using file_write, patch, shell, and code_exec.\n"
+    "Use read_document for Excel/PDF/Word. Destructive or risky operations may pause "
+    "for user confirmation.\n"
     "Do not spawn other agents. Return a concise summary of what you changed or found."
 )
 
 VERIFY_PROMPT = (
     "You are a verification sub-agent for Lumina (read-only).\n"
-    "Review the task using list_dir, file_read, search_files, and search_memory.\n"
+    "Review the task using list_dir, file_read, read_document, search_files, "
+    "and search_memory.\n"
     "Output: (1) Pass/Fail, (2) issues found, (3) suggested fixes.\n"
     "Do not modify files or spawn other agents."
 )
 
 PLAN_SUB_PROMPT = (
     "You are a planning sub-agent for Lumina (read-only).\n"
-    "Survey the workspace with list_dir, file_read, search_files, and search_memory.\n"
+    "Survey the workspace with list_dir, file_read, read_document, search_files, "
+    "and search_memory.\n"
     "Produce a structured plan: goals, steps, risks, and what worker/explore should do next.\n"
     "Do not modify files, run shell, or spawn other agents."
 )
@@ -96,6 +99,7 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
                 {
                     "list_dir",
                     "file_read",
+                    "read_document",
                     "search_files",
                     "search_memory",
                     "web_search",
@@ -104,6 +108,7 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
                     "file_write",
                     "patch",
                     "shell",
+                    "code_exec",
                 }
             ),
         )
@@ -118,6 +123,7 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
                 {
                     "list_dir",
                     "file_read",
+                    "read_document",
                     "search_files",
                     "search_memory",
                     "web_search",
@@ -130,6 +136,9 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
 
 
 def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
+    from secretary.agent.tools.code_exec import CodeExecTool
+    from secretary.agent.tools.documents import ReadDocumentTool
+
     spec = get_archetype(archetype, deps.lumina_dir)
     if spec is None:
         return []
@@ -140,6 +149,7 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
                 {
                     "list_dir",
                     "file_read",
+                    "read_document",
                     "search_files",
                     "search_memory",
                     "web_search",
@@ -152,6 +162,7 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
                 {
                     "list_dir",
                     "file_read",
+                    "read_document",
                     "search_files",
                     "search_memory",
                     "web_search",
@@ -165,6 +176,7 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
     factories: dict[str, Tool] = {
         "list_dir": ListDirTool(),
         "file_read": FileReadTool(),
+        "read_document": ReadDocumentTool(),
         "search_files": SearchFilesTool(),
         "search_memory": SearchMemoryTool(deps.memory_store),
         "web_search": WebSearchTool(),
@@ -173,6 +185,7 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
         "file_write": FileWriteTool(),
         "patch": PatchTool(),
         "shell": ShellTool(),
+        "code_exec": CodeExecTool(),
     }
     tools: list[Tool] = []
     for key in sorted(allowed):

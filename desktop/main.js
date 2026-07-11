@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, session, nativeImage, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { spawn, exec } = require("child_process");
@@ -127,6 +127,8 @@ function createMainWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: "灵犀",
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 14, y: 16 },
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -304,4 +306,32 @@ ipcMain.handle("window:openKnowledge", () => {
 
 ipcMain.handle("window:openWorkspace", () => {
   createKnowledgeWindow();
+});
+
+ipcMain.handle("dialog:pickDirectory", async (_event, defaultPath) => {
+  const result = await dialog.showOpenDialog({
+    title: "选择工作区目录",
+    defaultPath: typeof defaultPath === "string" && defaultPath ? defaultPath : undefined,
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths.length) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
+ipcMain.handle("dialog:pickFiles", async (_event, defaultPath) => {
+  const result = await dialog.showOpenDialog({
+    title: "选择附件",
+    defaultPath: typeof defaultPath === "string" && defaultPath ? defaultPath : undefined,
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Documents", extensions: ["pdf", "docx", "xlsx", "xlsm", "csv", "txt", "md", "json"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths.length) {
+    return [];
+  }
+  return result.filePaths;
 });

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.ui]
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _chat_reply(reply: str) -> dict[str, object]:
@@ -198,7 +198,10 @@ class _MockChatBackend:
         messages.append(assistant_node)  # type: ignore[union-attr]
         target["active_leaf_id"] = assistant_node["id"]
         target["updatedAt"] = _now()
-        if user_message.strip():
+        if user_message.strip() and (
+            not str(target.get("title") or "").strip()
+            or str(target.get("title") or "").strip() == "新对话"
+        ):
             target["title"] = user_message.strip()[:48]
         return self._payload()
 

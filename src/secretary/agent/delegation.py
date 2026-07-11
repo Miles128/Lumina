@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from secretary.agent.loop import MAX_TOOL_OUTPUT_CHARS, LoopResult
+from secretary.agent.text_utils import truncate_chars
 
 DelegationKind = Literal["subagent", "cli"]
 DelegationStatus = Literal["done", "failed", "paused"]
@@ -35,10 +36,7 @@ class DelegationResult:
             lines.append("Files read: " + ", ".join(self.files_read[:20]))
         if self.used_tools:
             lines.append("Tools used: " + ", ".join(self.used_tools))
-        text = "\n\n".join(lines)
-        if len(text) > MAX_TOOL_OUTPUT_CHARS:
-            return text[:MAX_TOOL_OUTPUT_CHARS] + "\n...[truncated]"
-        return text
+        return truncate_chars("\n\n".join(lines), MAX_TOOL_OUTPUT_CHARS)
 
 
 def delegation_from_loop_result(

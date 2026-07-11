@@ -1,51 +1,118 @@
-.topbar {
+.topbar.chrome-float {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  z-index: 40;
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: none;
   border-bottom: 1px solid var(--line);
-  padding: 12px 16px;
+  background: var(--bg);
   gap: 12px;
+  pointer-events: auto;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.chrome-drag {
+  position: absolute;
+  inset: 0;
+  -webkit-app-region: drag;
+  pointer-events: auto;
+  z-index: 0;
+}
+
+.topbar.chrome-float > .topbar-left,
+.topbar.chrome-float > .topbar-right {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   flex: 1;
+  padding-left: 68px; /* room for macOS traffic lights */
 }
 
-.brand-lockup {
-  display: inline-flex;
+.topbar-right {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.topbar-left .logo-mark {
-  flex-shrink: 0;
+/* —— 月相按钮 + 信息条 —— */
+.moon-btn {
+  position: relative;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
-  object-fit: cover;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0.92;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.moon-btn:hover {
+  background: var(--control-hover);
+  opacity: 1;
+}
+
+.moon-btn:active {
+  transform: translateY(1px);
+}
+
+.moon-btn[aria-expanded="true"] {
+  background: var(--control-hover);
+  opacity: 1;
+}
+
+.moon-btn svg {
   display: block;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  width: 24px;
+  height: 24px;
 }
 
-.topbar-left .logo {
-  flex-shrink: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.topbar-sep {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
+.moon-info-bar {
   font-size: 12px;
-  line-height: 1;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  animation: moonBarIn 0.24s ease-out;
+}
+
+.moon-info-bar[hidden] {
+  display: none !important;
+}
+
+@keyframes moonBarIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .topbar-model {
@@ -53,33 +120,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+  max-width: 140px;
 }
 
 .token-usage {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  background: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
 }
 
 .token-usage strong {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-secondary);
 }
 
 .topbar-menu-wrap {
@@ -90,21 +153,23 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
-  border-radius: 999px;
-  width: 34px;
-  height: 28px;
+  border-radius: var(--radius);
+  width: 32px;
+  height: 32px;
   padding: 0;
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .topbar-menu-btn:hover,
 .topbar-menu-btn[aria-expanded="true"] {
   color: var(--text);
+  background: var(--control-hover);
 }
 
 .topbar-menu {
@@ -112,15 +177,15 @@
   top: calc(100% + 8px);
   right: 0;
   min-width: 150px;
-  background: #fff;
+  background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-  padding: 6px;
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  padding: 4px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 12;
+  z-index: 50;
 }
 
 .topbar-menu button {
@@ -130,13 +195,13 @@
   text-align: left;
   font: inherit;
   font-size: 13px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 7px 10px;
   cursor: pointer;
 }
 
 .topbar-menu button:hover {
-  background: var(--bg-subtle);
+  background: var(--control-hover);
   color: var(--text);
 }
 
@@ -172,11 +237,11 @@
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 55;
-  width: min(400px, calc(100vw - 32px));
-  background: #fff;
+  width: min(360px, calc(100vw - 32px));
+  background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -202,12 +267,12 @@
   color: var(--text-secondary);
   font-size: 22px;
   line-height: 1;
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
 .about-panel-head button:hover {
-  background: var(--bg-subtle);
+  background: var(--control-hover);
   color: var(--text);
 }
 
@@ -222,8 +287,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 0 0 12px;
+  gap: 10px;
+  padding: 8px 0 12px;
 }
 
 .about-logo-wrap {
@@ -235,12 +300,11 @@
 }
 
 .about-logo {
-  width: min(300px, calc(100vw - 96px));
-  height: auto;
+  width: 48px;
+  height: 48px;
   max-width: 100%;
-  aspect-ratio: 1;
   object-fit: contain;
-  border-radius: 20px;
+  border-radius: 50%;
   display: block;
 }
 

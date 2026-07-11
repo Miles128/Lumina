@@ -49,9 +49,11 @@ def test_build_tools_includes_p0_agent_tools(tmp_path: Path) -> None:
     expected = {
         "list_dir",
         "file_read",
+        "read_document",
         "file_write",
         "file_delete",
         "shell",
+        "code_exec",
         "search_memory",
         "web_search",
         "web_fetch",
@@ -324,12 +326,12 @@ def test_prepare_user_reply_runs_rewriter_then_sanitizer(tmp_path: Path) -> None
         source="env",
     )
     with patch(
-        "secretary.agent.chat_service.rewrite_if_forbidden_label",
+        "secretary.agent.reply_rewriter.rewrite_if_forbidden_label",
         return_value="用户未明确需求，等待用户补充",
     ) as mocked:
         reply = service._prepare_user_reply("原句", "继续", config)
     assert mocked.called
-    assert "用户" not in reply
+    assert "用户" not in reply[0]
 
 
 def test_chat_forces_shell_confirmation_from_bash_block(tmp_path: Path) -> None:

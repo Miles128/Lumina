@@ -39,11 +39,13 @@ async function apiRequest(method, route, body, requestOptions = {}) {
   }
   const fetchOptions = {
     method,
-    headers: { "Content-Type": "application/json" },
     signal: controller.signal,
   };
-  if (body) {
+  if (body !== undefined && body !== null && !(body instanceof FormData)) {
+    fetchOptions.headers = { "Content-Type": "application/json" };
     fetchOptions.body = JSON.stringify(body);
+  } else if (body instanceof FormData) {
+    fetchOptions.body = body;
   }
   let response;
   try {

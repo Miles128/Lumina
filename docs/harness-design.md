@@ -76,6 +76,7 @@ Harness（灵犀专有）
 - [x] 子 Agent 确认后父 loop 续跑（Codex turn stack，一层）
 - [x] Harness P0：`TurnContext` + `SessionStore`；SSE schema v2；`TurnRunner`；`DelegationResult`
 - [x] **Turn 持久化**：`SessionStore`（`~/.lumina/turns.json`）+ pause bundle 跨重启恢复
+  - multi-kind pause（confirmation / subagent / parent_resume 可并存）；重启后重建 `SpawnSubagentTool`
 - [x] **Context compaction**：长 turn 内消息历史压缩（Codex compaction 语义）
 - [x] **Auto profile**：规则路由 ask/plan/build，替代 `mode: primary` 自定义主 Agent
 - [x] `SpawnContext.depth + 1` 硬限一层

@@ -482,7 +482,10 @@
           </label>
           <label class="settings-field">
             <span>Shell 工作目录 · Shell working dir</span>
-            <input id="agent-shell-cwd" type="text" value="${escapeAttr(cfg.shell_working_dir || "")}" placeholder="留空则使用用户主目录" />
+            <div class="settings-path-row">
+              <input id="agent-shell-cwd" type="text" value="${escapeAttr(cfg.shell_working_dir || "")}" placeholder="留空则使用用户主目录" />
+              <button class="btn-text" type="button" id="btn-pick-shell-cwd">浏览…</button>
+            </div>
           </label>
         </div>
         <div class="platform-actions">
@@ -502,6 +505,17 @@
     document.getElementById("btn-clear-chat").addEventListener("click", clearChatHistory);
     document.getElementById("btn-clear-pollution").addEventListener("click", clearPollutedMemory);
     document.getElementById("agent-provider").addEventListener("change", onProviderChange);
+    document.getElementById("btn-pick-shell-cwd")?.addEventListener("click", async () => {
+      const input = document.getElementById("agent-shell-cwd");
+      if (!input) return;
+      if (window.secretary?.pickDirectory) {
+        const selected = await window.secretary.pickDirectory(input.value || undefined);
+        if (selected) input.value = selected;
+        return;
+      }
+      const raw = window.prompt("工作区目录路径", input.value || "");
+      if (raw != null && raw.trim()) input.value = raw.trim();
+    });
   }
 
   function onProviderChange(event) {
@@ -537,7 +551,7 @@
         <div class="about-pane-body">
           <div class="about-brand">
             <div class="about-logo-wrap">
-              <img class="about-logo" src="/assets/logo.png?v=3" alt="Lumina · 灵犀" decoding="async" />
+              <img class="about-logo" src="/assets/mark-lumen.svg?v=1" alt="灵犀" decoding="async" />
             </div>
             <p class="about-product">Lumina · 灵犀</p>
             <p class="about-tagline">本地优先的个人 AI 秘书</p>

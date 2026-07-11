@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from secretary.agent.reply_safety import sanitize_user_facing_reply
-
 
 @dataclass(frozen=True)
 class LoopSnapshot:
@@ -43,14 +41,3 @@ class MaxIterationsStopHook:
 
     def sanitize_reply(self, reply: str, snapshot: LoopSnapshot) -> str:
         return reply
-
-
-class ThirdPersonMetaReplyStopHook:
-    """Normalize third-person/meta replies to user-facing style."""
-
-    def before_iteration(self, snapshot: LoopSnapshot) -> StopDecision:
-        return StopDecision(should_stop=False)
-
-    def sanitize_reply(self, reply: str, snapshot: LoopSnapshot) -> str:
-        return sanitize_user_facing_reply(reply, snapshot.latest_user_message)
-

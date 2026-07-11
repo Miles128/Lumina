@@ -4,44 +4,28 @@ from __future__ import annotations
 
 import re
 
-_META_REPLY_PATTERNS = (
-    re.compile(r"用户.{0,40}(未明确|情绪化|情绪激动|反问|指责|抱怨)"),
-    re.compile(r"需等待用户"),
-    re.compile(r"需要澄清.{0,20}用户"),
-    re.compile(r"^用户[^。]{4,80}[。，]"),
+from secretary.agent.reply_safety_rules import (
+    load_forbidden_term_replacements,
+    load_meta_reply_patterns,
+    load_profanity_patterns,
+    load_unprofessional_patterns,
 )
 
-_PROFANITY_PATTERNS = (
-    re.compile(r"傻[逼屌吊叼比B]"),
-    re.compile(r"[操艹草]你妈"),
-    re.compile(r"他妈的"),
-    re.compile(r"妈的"),
-    re.compile(r"去死"),
-    re.compile(r"垃圾"),
-    re.compile(r"装逼"),
-    re.compile(r"装\s*[Bb]"),
-    re.compile(r"扯淡"),
-    re.compile(r"牛逼"),
-    re.compile(r"牛\s*[Bb]"),
-    re.compile(r"靠[你他]?"),
-    re.compile(r"f\*?u\*?c\*?k", re.IGNORECASE),
-    re.compile(r"shit", re.IGNORECASE),
-)
+_UNPROFESSIONAL_REPLACEMENT = "我这次判断失误"
 
-_UNPROFESSIONAL_PATTERNS = (
-    re.compile(r"我[眼]?瞎了"),
-    re.compile(r"我太笨了"),
-    re.compile(r"嘴硬"),
-    re.compile(r"跟你犟"),
-    re.compile(r"没别的原因"),
-    re.compile(r"装\s*什么"),
-)
 
 def is_third_person_meta_reply(text: str) -> bool:
     cleaned = text.strip()
     if not cleaned:
         return False
-    return any(pattern.search(cleaned) for pattern in _META_REPLY_PATTERNS)
+    return any(pattern.search(cleaned) for pattern in load_meta_reply_patterns())
+
+
+def contains_profanity(text: str) -> bool:
+    """True when any configured profanity pattern matches."""
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in load_profanity_patterns())
 
 
 def strip_reasoning_chain(text: str) -> str:
@@ -71,6 +55,12 @@ def strip_reasoning_chain(text: str) -> str:
 
 
 def sanitize_user_facing_reply(reply: str, user_message: str) -> str:
+    """Apply deterministic safety passes (meta / forbidden labels / tone).
+
+    Profanity is intentionally not masked here — callers must run
+    ``rewrite_profanity_until_clean`` (via ``prepare_user_facing_reply``)
+    first when an LLM is available.
+    """
     output = strip_reasoning_chain(reply)
     if is_third_person_meta_reply(output):
         output = (
@@ -78,33 +68,20 @@ def sanitize_user_facing_reply(reply: str, user_message: str) -> str:
             f"你说的「{user_message}」我听见了。\n"
             f"我重新来：你要我做什么，直接说，我按你的原话办。"
         )
-    output = _sanitize_profanity(output)
     output = _sanitize_forbidden_terms(output)
     output = _sanitize_unprofessional_tone(output)
-    output = _ensure_gentle_tone(output, user_message)
     return output
 
 
-def _sanitize_profanity(text: str) -> str:
-    cleaned = text
-    for pattern in _PROFANITY_PATTERNS:
-        cleaned = pattern.sub("***", cleaned)
-    return cleaned
-
-
 def _sanitize_forbidden_terms(text: str) -> str:
-    # Hard ban certain labels in user-facing replies.
-    return text.replace("用户", "你")
+    cleaned = text
+    for src, dst in load_forbidden_term_replacements():
+        cleaned = cleaned.replace(src, dst)
+    return cleaned
 
 
 def _sanitize_unprofessional_tone(text: str) -> str:
     cleaned = text
-    for pattern in _UNPROFESSIONAL_PATTERNS:
-        cleaned = pattern.sub("我这次判断失误", cleaned)
+    for pattern in load_unprofessional_patterns():
+        cleaned = pattern.sub(_UNPROFESSIONAL_REPLACEMENT, cleaned)
     return cleaned
-
-
-def _ensure_gentle_tone(text: str, user_message: str) -> str:
-    if not text:
-        return ""
-    return text

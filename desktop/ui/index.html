@@ -4,20 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>灵犀 · Lumina</title>
-    <link rel="icon" type="image/png" href="/assets/logo.png?v=3" />
-    <link rel="stylesheet" href="/assets/tokens.css?v=2" />
-    <link rel="stylesheet" href="/assets/chat.css?v=41" />
-    <link rel="stylesheet" href="/assets/topbar-lite.css?v=5" />
+    <link rel="icon" type="image/svg+xml" href="/assets/mark-lumen.svg?v=1" />
+    <link rel="stylesheet" href="/assets/tokens.css?v=4" />
+    <link rel="stylesheet" href="/assets/chat.css?v=46" />
+    <link rel="stylesheet" href="/assets/topbar-lite.css?v=9" />
   </head>
   <body>
-    <div class="app">
-      <header class="topbar">
+    <div class="app immersive">
+      <header class="topbar chrome-float">
+        <div class="chrome-drag" aria-hidden="true"></div>
         <div class="topbar-left">
-          <div class="brand-lockup">
-            <img class="logo-mark" src="/assets/logo.png?v=3" alt="" width="32" height="32" decoding="async" />
-            <span class="logo" data-i18n="app.name">Lumina · 灵犀</span>
-          </div>
-          <span class="topbar-sep" aria-hidden="true">—</span>
+          <button id="btn-moon" type="button" class="moon-btn" data-tip="月相与节气" aria-label="月相与节气" aria-expanded="false"></button>
+          <span id="moon-info-bar" class="moon-info-bar" hidden></span>
           <span class="topbar-model" id="topbar-model" data-i18n-title="model.current">加载中…</span>
         </div>
         <div class="topbar-right">
@@ -51,9 +49,9 @@
         <div class="about-panel-body">
           <div class="about-brand">
             <div class="about-logo-wrap">
-              <img class="about-logo" src="/assets/logo.png?v=3" alt="Lumina · 灵犀" decoding="async" />
+              <img class="about-logo" src="/assets/mark-lumen.svg?v=1" alt="灵犀" decoding="async" />
             </div>
-            <p class="about-product" data-i18n="app.name">Lumina · 灵犀</p>
+            <p class="about-product" data-i18n="app.name">灵犀</p>
           </div>
           <p><span class="about-label" data-i18n="about.developer">开发者</span><span>四海</span></p>
           <p><span class="about-label" data-i18n="about.email">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
@@ -62,7 +60,7 @@
       </aside>
 
       <div class="workspace">
-        <aside class="chat-sidebar">
+        <aside class="chat-sidebar" id="chat-sidebar">
           <div class="chat-sidebar-head">
             <button id="btn-new-thread" type="button" class="new-thread-btn sidebar-icon-btn" title="新对话 (Ctrl+N)" data-i18n-title="chat.newThread" data-i18n-aria="chat.newThread">
               <svg class="new-thread-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
@@ -80,6 +78,18 @@
                 <path d="M8 18h4a4 4 0 0 0 4-4"/>
               </svg>
             </button>
+            <button id="btn-sidebar-collapse" type="button" class="sidebar-collapse-btn sidebar-icon-btn" title="收起侧栏" aria-label="收起侧栏">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6"/>
+                <path d="M4 4v16"/>
+              </svg>
+            </button>
+            <button id="btn-sidebar-expand" type="button" class="sidebar-expand-btn sidebar-icon-btn" title="展开侧栏" aria-label="展开侧栏" hidden>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 18l6-6-6-6"/>
+                <path d="M20 4v16"/>
+              </svg>
+            </button>
           </div>
           <nav id="thread-list" class="thread-list"></nav>
         </aside>
@@ -89,7 +99,8 @@
           <main class="main">
             <div class="main-inner">
               <section id="welcome" class="hero">
-                <h1 data-i18n="chat.welcome">有什么可以帮你？</h1>
+                <h1 id="hero-title" data-i18n="chat.welcome">有什么可以帮你？</h1>
+                <p id="hero-sub" class="hero-sub"></p>
                 <div class="prompts">
                   <button class="prompt" type="button" data-i18n="prompt.reading.label" data-i18n-prompt="prompt.reading">最近在读什么</button>
                   <span class="prompt-sep">·</span>
@@ -113,32 +124,47 @@
           </main>
 
           <footer class="composer-wrap">
+            <div id="composer-attachments" class="composer-attachments" hidden></div>
             <form id="chat-form" class="composer">
-              <div class="agent-mode-picker" id="agent-mode-picker">
-                <button type="button" class="agent-mode-btn" id="agent-mode-btn" aria-haspopup="listbox" aria-expanded="false" title="Agent 模式">
-                  <span class="agent-mode-label" id="agent-mode-label">Auto</span>
-                  <svg class="agent-mode-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-                    <path d="M6 9l6 6 6-6"/>
+              <div class="composer-toolbar">
+                <div class="agent-mode-picker" id="agent-mode-picker">
+                  <button type="button" class="agent-mode-btn" id="agent-mode-btn" aria-haspopup="listbox" aria-expanded="false" title="Agent 模式">
+                    <span class="agent-mode-label" id="agent-mode-label">Auto</span>
+                    <svg class="agent-mode-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </button>
+                  <ul class="agent-mode-menu" id="agent-mode-menu" role="listbox" hidden>
+                    <li role="option" data-mode="auto">
+                      <strong>Auto · 自动</strong>
+                      <span>系统按问题类型选择 Ask / Plan / Build</span>
+                    </li>
+                    <li role="option" data-mode="build">
+                      <strong>Build · 执行</strong>
+                      <span>可读写工具 + 子 Agent 委派</span>
+                    </li>
+                    <li role="option" data-mode="ask">
+                      <strong>Ask · 问答</strong>
+                      <span>只读检索，不改文件不跑 shell</span>
+                    </li>
+                    <li role="option" data-mode="plan">
+                      <strong>Plan · 规划</strong>
+                      <span>只读分析 + 待办，输出计划</span>
+                    </li>
+                  </ul>
+                </div>
+                <button type="button" class="workspace-chip" id="workspace-chip" title="工作区目录" aria-label="工作区目录">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
                   </svg>
                 </button>
-                <ul class="agent-mode-menu" id="agent-mode-menu" role="listbox" hidden>
-                  <li role="option" data-mode="auto">
-                    <strong>Auto · 自动</strong>
-                    <span>系统按问题类型选择 Ask / Plan / Build</span>
-                  </li>
-                  <li role="option" data-mode="build">
-                    <strong>Build · 执行</strong>
-                    <span>可读写工具 + 子 Agent 委派</span>
-                  </li>
-                  <li role="option" data-mode="ask">
-                    <strong>Ask · 问答</strong>
-                    <span>只读检索，不改文件不跑 shell</span>
-                  </li>
-                  <li role="option" data-mode="plan">
-                    <strong>Plan · 规划</strong>
-                    <span>只读分析 + 待办，输出计划</span>
-                  </li>
-                </ul>
+                <button type="button" class="attach-btn" id="attach-btn" title="添加附件" aria-label="添加附件">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a1.5 1.5 0 1 1-2.12-2.12l7.78-7.78"/>
+                  </svg>
+                </button>
+                <input type="file" id="attach-input" multiple hidden
+                  accept=".pdf,.docx,.xlsx,.xlsm,.csv,.txt,.md,.json,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
               </div>
               <textarea
                 id="chat-input"
@@ -197,11 +223,12 @@
     <script src="/assets/i18n.js?v=10"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/location.js?v=5"></script>
-    <script src="/assets/topbar.js?v=4"></script>
-    <script src="/assets/settings.js?v=10"></script>
+    <script src="/assets/lunar.js?v=1"></script>
+    <script src="/assets/topbar.js?v=6"></script>
+    <script src="/assets/settings.js?v=11"></script>
     <script src="/assets/skills.js?v=5"></script>
-    <script src="/assets/chat.js?v=49"></script>
-    <script src="/assets/conversation_map.js?v=3"></script>
+    <script src="/assets/chat.js?v=55"></script>
+    <script src="/assets/conversation_map.js?v=4"></script>
     <script>
       window.LuminaI18n?.applyDocument();
       window.ConversationMapModule?.init();

@@ -5,14 +5,16 @@
   if (!mapViewEl) return;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const NODE_W = 144;
-  const NODE_H = 38;
-  const PAD = 16;
-  const LAYOUT_X_STEP = 168;
-  const LAYOUT_X_OFFSET = 12;
-  const LAYOUT_Y_STEP = 52;
-  const LAYOUT_Y_OFFSET = 12;
-  const PREVIEW_LEN = 14;
+  // Width +50% vs previous 144; taller card for up to 3 text lines.
+  const NODE_W = 216;
+  const NODE_H = 64;
+  const PAD = 20;
+  const LAYOUT_X_GAP = 28;
+  const LAYOUT_Y_STEP = 92;
+  const LAYOUT_Y_OFFSET = 8;
+  const PREVIEW_CHARS = 42;
+  const TEXT_MAX_LINES = 3;
+  const TEXT_LINE_H = 12;
 
   let currentThread = "";
   let treeData = null;
@@ -22,8 +24,7 @@
     return window.LuminaI18n ? window.LuminaI18n.t(key) : key;
   }
 
-  // BFS from root: each depth level gets a fixed x, nodes within a level
-  // are stacked vertically by discovery order. Simple grid layout.
+  // Vertical spine (depth → y). Sibling forks fan out left–right (x).
   function computeLayout(nodes, rootId) {
     const byId = new Map();
     for (const n of nodes) byId.set(n.id, n);
@@ -35,38 +36,74 @@
       childrenMap.get(pid).push(n);
     }
 
-    const levels = [];
-    const visited = new Set();
-    const queue = [{ id: rootId, depth: 0 }];
-    while (queue.length) {
-      const { id, depth } = queue.shift();
-      if (!id || visited.has(id) || !byId.has(id)) continue;
-      visited.add(id);
-      if (!levels[depth]) levels[depth] = [];
-      levels[depth].push(id);
-      const kids = childrenMap.get(id) || [];
-      for (const k of kids) {
-        if (!visited.has(k.id)) queue.push({ id: k.id, depth: depth + 1 });
-      }
-    }
-
-    // Append any unreachable orphans at depth 0 so they still render.
-    for (const n of nodes) {
-      if (!visited.has(n.id)) {
-        if (!levels[0]) levels[0] = [];
-        levels[0].push(n.id);
-      }
-    }
-
     const positions = new Map();
-    levels.forEach((ids, depth) => {
-      ids.forEach((id, index) => {
-        positions.set(id, {
-          x: depth * LAYOUT_X_STEP + LAYOUT_X_OFFSET,
-          y: index * LAYOUT_Y_STEP + LAYOUT_Y_OFFSET,
-        });
+    const subtreeWidth = new Map();
+
+    function measure(id) {
+      if (!id || !byId.has(id)) return NODE_W;
+      const kids = (childrenMap.get(id) || []).filter((k) => byId.has(k.id));
+      if (!kids.length) {
+        subtreeWidth.set(id, NODE_W);
+        return NODE_W;
+      }
+      let total = 0;
+      for (const k of kids) {
+        total += measure(k.id);
+      }
+      total += LAYOUT_X_GAP * (kids.length - 1);
+      const w = Math.max(NODE_W, total);
+      subtreeWidth.set(id, w);
+      return w;
+    }
+
+    function place(id, depth, left) {
+      if (!id || !byId.has(id) || positions.has(id)) return;
+      const w = subtreeWidth.get(id) || NODE_W;
+      const kids = (childrenMap.get(id) || []).filter((k) => byId.has(k.id));
+      positions.set(id, {
+        x: left + (w - NODE_W) / 2,
+        y: depth * LAYOUT_Y_STEP + LAYOUT_Y_OFFSET,
       });
-    });
+      if (!kids.length) return;
+      let cursor = left;
+      const kidsTotal =
+        kids.reduce((sum, k) => sum + (subtreeWidth.get(k.id) || NODE_W), 0) +
+        LAYOUT_X_GAP * (kids.length - 1);
+      if (kidsTotal < w) {
+        cursor += (w - kidsTotal) / 2;
+      }
+      for (const k of kids) {
+        const kw = subtreeWidth.get(k.id) || NODE_W;
+        place(k.id, depth + 1, cursor);
+        cursor += kw + LAYOUT_X_GAP;
+      }
+    }
+
+    const roots = [];
+    if (rootId && byId.has(rootId)) {
+      roots.push(rootId);
+    } else {
+      for (const n of nodes) {
+        if (!n.parent_id || !byId.has(n.parent_id)) roots.push(n.id);
+      }
+    }
+
+    let forestLeft = 0;
+    for (const rid of roots) {
+      const w = measure(rid);
+      place(rid, 0, forestLeft);
+      forestLeft += w + LAYOUT_X_GAP;
+    }
+
+    // Orphans not reached (cycles / broken links)
+    for (const n of nodes) {
+      if (!positions.has(n.id)) {
+        measure(n.id);
+        place(n.id, 0, forestLeft);
+        forestLeft += (subtreeWidth.get(n.id) || NODE_W) + LAYOUT_X_GAP;
+      }
+    }
+
     return positions;
   }
 
@@ -88,7 +125,25 @@
   function truncatePreview(raw) {
     const text = String(raw || "").replace(/\s+/g, " ").trim();
     if (!text) return "";
-    return text.length > PREVIEW_LEN ? `${text.slice(0, PREVIEW_LEN)}…` : text;
+    return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
+  }
+
+  function wrapPreviewLines(raw, maxLines = TEXT_MAX_LINES) {
+    const text = truncatePreview(raw);
+    if (!text) return [];
+    const lines = [];
+    // ~10px font in ~190px content width ≈ 18 CJK chars / line
+    const perLine = 18;
+    let rest = text;
+    while (rest && lines.length < maxLines) {
+      if (rest.length <= perLine || lines.length === maxLines - 1) {
+        lines.push(rest);
+        break;
+      }
+      lines.push(rest.slice(0, perLine));
+      rest = rest.slice(perLine);
+    }
+    return lines;
   }
 
   function userPreview(node) {
@@ -127,6 +182,25 @@
     el.className = "map-status";
     el.textContent = message;
     mapViewEl.appendChild(el);
+  }
+
+  function appendMultilineText(g, className, x, y, lines) {
+    const textEl = document.createElementNS(SVG_NS, "text");
+    textEl.setAttribute("class", className);
+    textEl.setAttribute("x", String(x));
+    textEl.setAttribute("y", String(y));
+    lines.forEach((line, index) => {
+      const tspan = document.createElementNS(SVG_NS, "tspan");
+      tspan.setAttribute("x", String(x));
+      if (index === 0) {
+        tspan.setAttribute("y", String(y));
+      } else {
+        tspan.setAttribute("dy", String(TEXT_LINE_H));
+      }
+      tspan.textContent = line;
+      textEl.appendChild(tspan);
+    });
+    g.appendChild(textEl);
   }
 
   function render() {
@@ -184,7 +258,7 @@
     const byId = new Map();
     for (const n of nodes) byId.set(n.id, n);
 
-    // Edges first (so nodes paint over them)
+    // Edges: parent bottom → child top (vertical tree)
     for (const node of nodes) {
       const pid = node.parent_id || "";
       if (!pid || !byId.has(pid)) continue;
@@ -193,20 +267,19 @@
       if (!from || !to) continue;
       const isActive = activeSet.has(node.id) && activeSet.has(pid);
       const line = document.createElementNS(SVG_NS, "path");
-      const x1 = from.x + NODE_W + PAD;
-      const y1 = from.y + NODE_H / 2 + PAD;
-      const x2 = to.x + PAD;
-      const y2 = to.y + NODE_H / 2 + PAD;
-      const midX = (x1 + x2) / 2;
+      const x1 = from.x + NODE_W / 2 + PAD;
+      const y1 = from.y + NODE_H + PAD;
+      const x2 = to.x + NODE_W / 2 + PAD;
+      const y2 = to.y + PAD;
+      const midY = (y1 + y2) / 2;
       line.setAttribute(
         "d",
-        `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`,
+        `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`,
       );
       line.setAttribute("class", `map-edge${isActive ? " is-active" : ""}`);
       svg.appendChild(line);
     }
 
-    // Nodes (each node = one Q&A turn)
     for (const node of nodes) {
       const pos = positions.get(node.id);
       if (!pos) continue;
@@ -230,30 +303,31 @@
       const qLabel = document.createElementNS(SVG_NS, "text");
       qLabel.setAttribute("class", "map-node-q-label");
       qLabel.setAttribute("x", "8");
-      qLabel.setAttribute("y", "15");
+      qLabel.setAttribute("y", "14");
       qLabel.textContent = "问";
       g.appendChild(qLabel);
 
-      const qText = document.createElementNS(SVG_NS, "text");
-      qText.setAttribute("class", "map-node-q-text");
-      qText.setAttribute("x", "22");
-      qText.setAttribute("y", "15");
-      qText.textContent = userPreview(node);
-      g.appendChild(qText);
+      const qLines = wrapPreviewLines(node.user_preview || "(提问)", 2);
+      appendMultilineText(g, "map-node-q-text", 22, 14, qLines.length ? qLines : ["(提问)"]);
 
       const aLabel = document.createElementNS(SVG_NS, "text");
       aLabel.setAttribute("class", "map-node-a-label");
       aLabel.setAttribute("x", "8");
-      aLabel.setAttribute("y", "29");
+      aLabel.setAttribute("y", "48");
       aLabel.textContent = "答";
       g.appendChild(aLabel);
 
-      const aText = document.createElementNS(SVG_NS, "text");
-      aText.setAttribute("class", "map-node-a-text");
-      aText.setAttribute("x", "22");
-      aText.setAttribute("y", "29");
-      aText.textContent = assistantPreview(node);
-      g.appendChild(aText);
+      const aLines = wrapPreviewLines(
+        node.has_assistant ? node.assistant_preview || "(灵犀)" : "（待回答）",
+        1,
+      );
+      appendMultilineText(
+        g,
+        "map-node-a-text",
+        22,
+        48,
+        aLines.length ? aLines : [node.has_assistant ? "(灵犀)" : "（待回答）"],
+      );
 
       const tooltip = document.createElementNS(SVG_NS, "title");
       tooltip.textContent = `问：${userPreview(node)}\n答：${assistantPreview(node)}`;

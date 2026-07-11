@@ -85,6 +85,10 @@ _TOOL_LABELS: dict[str, str] = {
 
 def progress_event_label(event: ProgressEvent) -> str:
     prefix = _subagent_prefix(event)
+    # Iteration counters stay internal — only surface explicit status copy
+    # (e.g. "网络连接 · …", "整理回复").
+    if event.kind in {"iteration_started", "iteration_completed"}:
+        return prefix + event.message.strip() if event.message.strip() else ""
     if event.message.strip():
         return prefix + event.message.strip()
     if event.kind == "turn_started":
@@ -93,10 +97,6 @@ def progress_event_label(event: ProgressEvent) -> str:
         return "本轮完成" if event.success else "本轮结束（待确认）"
     if event.kind == "pause_confirmation":
         return event.message.strip() or "等待确认"
-    if event.kind == "iteration_started":
-        return prefix + f"第 {event.iteration} 轮思考"
-    if event.kind == "iteration_completed":
-        return prefix + (event.message.strip() or "核实通过，准备输出")
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"

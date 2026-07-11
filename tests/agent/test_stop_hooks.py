@@ -9,6 +9,9 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, ListDirTool, PendingConfirmation, ShellTool
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.stop_hooks import MaxIterationsStopHook
+from secretary.agent.turn_orchestrator import TurnOrchestrator
+from secretary.exceptions import AgentError
+from secretary.services.file_auth import FileAuthService
 
 
 def _llm_config() -> LlmConfig:
@@ -132,4 +135,45 @@ def test_execute_confirmed_returns_tool_output_when_model_emits_followup_tool_ca
             temperature=0.0,
         )
     assert "done" in result.reply
+
+
+def test_orchestrator_confirmed_action_continues_loop_after_followup_tool_call(
+    tmp_path: Path,
+) -> None:
+    orchestrator = TurnOrchestrator(FileAuthService(tmp_path / "file_auth.json"))
+    pending = PendingConfirmation(
+        action_id="act_1",
+        tool_name="shell",
+        arguments={"command": "printf confirmed"},
+        description="⚡ 执行命令: `printf confirmed`",
+        risk_level="high",
+        confirmation_kind="shell",
+    )
+    followup_tool = (
+        "先读取目录，再给最终答案。\n"
+        "```tool-call\n"
+        '{"name":"list_dir","arguments":{"path":"."}}\n'
+        "```"
+    )
+    final_answer = "最终答案：确认命令已执行，并且目录也读取完成。"
+
+    with (
+        patch(
+            "secretary.agent.loop.chat_completion_with_tools",
+            side_effect=AgentError("native tools unavailable"),
+        ),
+        patch("secretary.agent.loop.chat_completion", side_effect=[followup_tool, final_answer]) as mocked,
+    ):
+        result = orchestrator.run_confirmed_action(
+            _llm_config(),
+            tools=[ShellTool(), ListDirTool()],
+            pending=pending,
+            messages=[{"role": "user", "content": "执行命令后继续完成任务"}],
+            temperature=0.0,
+            working_dir=tmp_path,
+        )
+
+    assert result.reply == final_answer
+    assert result.used_tools == ["shell", "list_dir"]
+    assert mocked.call_count == 2
 

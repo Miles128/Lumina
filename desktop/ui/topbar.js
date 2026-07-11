@@ -10,6 +10,13 @@
   const aboutBackdrop = document.getElementById("about-backdrop");
   const closeAboutBtn = document.getElementById("btn-close-about");
 
+  // Moon button must init even if other chrome nodes are missing.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initMoonButton);
+  } else {
+    initMoonButton();
+  }
+
   if (!menuBtn || !menuPanel || !tokenValueEl || !modelEl) {
     return;
   }
@@ -39,6 +46,11 @@
     if (event.key === "Escape") {
       if (aboutPanel && !aboutPanel.hidden) {
         closeAbout();
+        return;
+      }
+      const moonBar = document.getElementById("moon-info-bar");
+      if (moonBar && !moonBar.hidden) {
+        toggleMoonInfoBar();
         return;
       }
       setMenuOpen(false);
@@ -215,5 +227,56 @@
     document.body.classList.toggle("ui-width-narrow", width === "narrow");
     document.body.classList.toggle("ui-width-medium", width === "medium");
     document.body.classList.toggle("ui-width-wide", width === "wide");
+  }
+
+  /* ===== 月相按钮 + 顶部信息条 ===== */
+  function renderMoonButton() {
+    const btn = document.getElementById("btn-moon");
+    if (!btn || !window.LuminaLunar) return;
+    const now = new Date();
+    btn.innerHTML = window.LuminaLunar.moonSVG(now, 24);
+  }
+
+  function renderMoonInfoBar() {
+    const bar = document.getElementById("moon-info-bar");
+    if (!bar || !window.LuminaLunar) return;
+    const now = new Date();
+    const name = window.LuminaLunar.moonPhaseName(now);
+    const lunarDay = window.LuminaLunar.lunarDayLabel(now);
+    const term = window.LuminaLunar.getSolarTerm(now);
+    const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`;
+    const weekDays = ["日", "一", "二", "三", "四", "五", "六"];
+    const week = `周${weekDays[now.getDay()]}`;
+    const parts = [dateStr, week, lunarDay, name];
+    if (term) parts.push(term);
+    bar.textContent = parts.join(" · ");
+  }
+
+  let moonInfoBarTimer = null;
+
+  function toggleMoonInfoBar() {
+    const btn = document.getElementById("btn-moon");
+    const bar = document.getElementById("moon-info-bar");
+    if (!btn || !bar) return;
+    if (!bar.hidden) {
+      bar.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      if (moonInfoBarTimer) {
+        clearInterval(moonInfoBarTimer);
+        moonInfoBarTimer = null;
+      }
+    } else {
+      renderMoonInfoBar();
+      bar.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      if (moonInfoBarTimer) clearInterval(moonInfoBarTimer);
+      moonInfoBarTimer = setInterval(renderMoonInfoBar, 60_000);
+    }
+  }
+
+  function initMoonButton() {
+    renderMoonButton();
+    const btn = document.getElementById("btn-moon");
+    if (btn) btn.addEventListener("click", toggleMoonInfoBar);
   }
 })();

@@ -27,7 +27,8 @@ async def test_progress_hub_streams_events() -> None:
     async for chunk in hub.stream("trace-1"):
         chunks.append(chunk)
 
-    assert any("第 1 轮思考" in chunk for chunk in chunks)
+    assert any('"kind": "tool_started"' in chunk for chunk in chunks)
+    assert not any("轮思考" in chunk for chunk in chunks)
     assert any("执行命令" in chunk for chunk in chunks)
     assert any('"kind": "done"' in chunk for chunk in chunks)
 
@@ -52,15 +53,22 @@ def test_progress_event_label_for_mcp_tool() -> None:
     assert "MCP filesystem/read_file" in label
 
 
-def test_progress_event_label_for_iteration_completed() -> None:
+def test_progress_event_label_hides_bare_iteration() -> None:
+    started = progress_event_label(ProgressEvent(kind="iteration_started", iteration=2))
+    completed = progress_event_label(ProgressEvent(kind="iteration_completed", iteration=2))
+    assert started == ""
+    assert completed == ""
+
+
+def test_progress_event_label_keeps_explicit_iteration_status() -> None:
     label = progress_event_label(
         ProgressEvent(
-            kind="iteration_completed",
-            iteration=2,
-            message="核实通过，停止循环",
+            kind="iteration_started",
+            iteration=1,
+            message="网络连接 · 开始联网检索",
         ),
     )
-    assert "核实通过" in label
+    assert "网络连接" in label
 
 
 def test_progress_event_payload_includes_detail() -> None:

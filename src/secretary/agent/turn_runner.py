@@ -69,6 +69,7 @@ class TurnRunner:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         on_subagent_paused: Callable[[Any], None] | None = None,
         turn: TurnContext | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         if wrapped is not None and turn is not None:
@@ -89,6 +90,7 @@ class TurnRunner:
                 working_dir=working_dir,
                 progress_callback=wrapped,
                 on_subagent_paused=on_subagent_paused,
+                cancel_check=cancel_check,
             )
             if wrapped is not None and turn is not None:
                 if result.pending_confirmation:

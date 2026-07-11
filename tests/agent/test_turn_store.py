@@ -36,11 +36,9 @@ def test_session_store_pause_bundle(tmp_path) -> None:
             "messages": [{"role": "user", "content": "run echo"}],
         },
     )
-    loaded = store.load_pause("trace-2")
-    assert loaded is not None
-    kind, data = loaded
-    assert kind == "confirmation"
-    assert data["pending"]["tool_name"] == "shell"
+    loaded = store.load_pauses("trace-2")
+    assert "confirmation" in loaded
+    assert loaded["confirmation"]["pending"]["tool_name"] == "shell"
 
 
 def test_session_store_clear_turn_removes_disk_record(tmp_path) -> None:

@@ -276,15 +276,17 @@ class ChatThreadStore:
             active_leaf_id = item.get("active_leaf_id")
             if not isinstance(active_leaf_id, str) or active_leaf_id not in retained_ids:
                 active_leaf_id = normalized_messages[-1]["id"] if normalized_messages else ""
-            cleaned.append(
-                {
-                    "id": thread_id,
-                    "title": str(item.get("title") or "新对话")[:120],
-                    "updatedAt": str(item.get("updatedAt") or item.get("updated_at") or datetime.now(UTC).isoformat()),
-                    "messages": normalized_messages,
-                    "active_leaf_id": active_leaf_id,
-                }
-            )
+            cleaned_item: dict[str, Any] = {
+                "id": thread_id,
+                "title": str(item.get("title") or "新对话")[:120],
+                "updatedAt": str(item.get("updatedAt") or item.get("updated_at") or datetime.now(UTC).isoformat()),
+                "messages": normalized_messages,
+                "active_leaf_id": active_leaf_id,
+            }
+            auto_at = item.get("auto_title_at_turn")
+            if isinstance(auto_at, int) and auto_at >= 0:
+                cleaned_item["auto_title_at_turn"] = auto_at
+            cleaned.append(cleaned_item)
         current = current_id if any(t["id"] == current_id for t in cleaned) else (cleaned[0]["id"] if cleaned else "")
         self.save_document(current_id=current, threads=cleaned)
         return self.list_view()
@@ -364,9 +366,55 @@ class ChatThreadStore:
         target["messages"] = messages
         target["active_leaf_id"] = new_leaf_id
         target["updatedAt"] = now
-        if user_message.strip():
-            target["title"] = user_message.strip()[:48]
+        current_title = str(target.get("title") or "").strip()
+        if user_message.strip() and (not current_title or current_title == "新对话"):
+            from secretary.services.thread_title import heuristic_title
+
+            target["title"] = heuristic_title(user_message)
         self.save_document(current_id=thread_id, threads=threads)
+
+    def maybe_refresh_title(
+        self,
+        thread_id: str,
+        *,
+        llm_config: Any | None = None,
+    ) -> str | None:
+        """Summarize and update the thread title when a refresh milestone is hit.
+
+        Returns the new title when updated, otherwise None.
+        """
+        from secretary.services.thread_title import (
+            should_refresh_title,
+            summarize_thread_title,
+            user_turn_count,
+        )
+
+        document = self.load_document()
+        threads = document["threads"]
+        target: dict[str, Any] | None = None
+        for item in threads:
+            if isinstance(item, dict) and item.get("id") == thread_id:
+                target = item
+                break
+        if target is None:
+            return None
+        messages = target.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return None
+        turns = user_turn_count(messages)
+        last = target.get("auto_title_at_turn")
+        last_turn = int(last) if isinstance(last, int) else 0
+        if not should_refresh_title(user_turns=turns, last_auto_title_turn=last_turn):
+            return None
+        fallback = str(target.get("title") or "新对话")
+        title = summarize_thread_title(messages, llm_config, fallback=fallback)
+        if not title:
+            title = fallback
+        target["title"] = title[:120]
+        target["auto_title_at_turn"] = turns
+        target["updatedAt"] = datetime.now(UTC).isoformat()
+        self.save_document(current_id=document["current_id"], threads=threads)
+        return title
 
     def set_active_leaf(self, thread_id: str, leaf_id: str) -> dict[str, Any]:
         document = self.load_document()

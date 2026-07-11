@@ -11,9 +11,7 @@
   --chat-hero-bottom-padding: 40px;
   --chat-composer-pad-y: 10px;
   --chat-composer-pad-x: 16px;
-  --chat-avatar-size: 30px;
-  --chat-avatar-text-gap: 2em;
-  --chat-user-column-reserve: calc(var(--chat-avatar-size) + var(--chat-avatar-text-gap));
+  --chat-main-x: 48px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -29,9 +27,32 @@ html, body {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
-/* Top bar */
+.app.immersive {
+  --chrome-h: 42px;
+  --chat-main-x: 48px;
+}
+
+.app.immersive > .workspace {
+  flex: 1;
+  min-height: 0;
+}
+
+.app.immersive > .topbar.chrome-float {
+  position: relative;
+  flex-shrink: 0;
+  height: var(--chrome-h);
+  min-height: var(--chrome-h);
+  padding: 0 14px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  pointer-events: auto;
+}
+
+/* Top bar (legacy non-float fallback) */
 .topbar {
   justify-content: space-between;
   width: 100%;
@@ -81,6 +102,26 @@ html, body {
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
+  flex-shrink: 0;
+  transition: width 0.18s ease;
+}
+
+.chat-sidebar.is-collapsed {
+  width: 52px;
+  padding: 10px 6px;
+}
+
+.chat-sidebar.is-collapsed .thread-list,
+.chat-sidebar.is-collapsed .map-sidebar-btn,
+.chat-sidebar.is-collapsed .sidebar-collapse-btn {
+  display: none !important;
+}
+
+.chat-sidebar.is-collapsed .chat-sidebar-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 8px;
 }
 
 .chat-sidebar-head {
@@ -91,47 +132,59 @@ html, body {
   padding: 4px 6px 8px;
 }
 
+.chat-sidebar:not(.is-collapsed) .sidebar-expand-btn {
+  display: none !important;
+}
+
+.chat-sidebar.is-collapsed .sidebar-expand-btn {
+  display: inline-flex !important;
+}
+
+.sidebar-collapse-btn,
+.sidebar-expand-btn {
+  margin-left: auto;
+}
+
+.chat-sidebar.is-collapsed .sidebar-collapse-btn,
+.chat-sidebar.is-collapsed .sidebar-expand-btn {
+  margin-left: 0;
+}
+
 /* Shared icon-button style for sidebar head (new thread + map toggle) */
 .sidebar-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--line);
-  background: var(--bg-subtle);
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: 12px;
+  border-radius: var(--radius);
   padding: 0;
   font: inherit;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
-    transform 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .sidebar-icon-btn:hover {
-  background: var(--text);
-  border-color: var(--text);
-  color: #fff;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
+  background: var(--control-hover);
+  color: var(--text);
 }
 
 .sidebar-icon-btn:active {
-  transform: translateY(0);
-  box-shadow: none;
+  background: var(--control-active);
 }
 
 .sidebar-icon-btn:focus-visible {
-  outline: 2px solid var(--accent, #2563eb);
+  outline: 2px solid var(--line-strong);
   outline-offset: 1px;
 }
 
 .sidebar-icon-btn.is-active {
-  background: var(--text);
-  border-color: var(--text);
-  color: #fff;
+  background: var(--control-active);
+  color: var(--text);
 }
 
 .new-thread-icon,
@@ -242,13 +295,21 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.corner-mini-map,
+.corner-mini-map-track,
+.corner-mini-map-dot,
+.corner-mini-map-edge {
+  display: none !important;
 }
 
 /* Main */
 .main {
   flex: 1;
   overflow: auto;
-  padding: var(--chat-main-top-padding) 24px 100px;
+  padding: var(--chat-main-top-padding) var(--chat-main-x, 48px) 100px;
 }
 
 .main-inner {
@@ -267,7 +328,18 @@ html, body {
   font-size: 28px;
   font-weight: 500;
   letter-spacing: -0.03em;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+}
+
+.hero-sub {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  min-height: 1.2em;
+}
+
+.hero-sub:empty {
+  display: none;
 }
 
 .prompts {
@@ -315,36 +387,25 @@ html, body {
 .message.user {
   align-self: flex-end;
   flex-direction: row-reverse;
+  max-width: min(100%, 640px);
 }
 
 .message.bot {
   align-self: flex-start;
-  width: calc(100% - var(--chat-user-column-reserve));
-  max-width: calc(100% - var(--chat-user-column-reserve));
+  width: 100%;
+  max-width: 100%;
 }
 
 .message.bot .bubble {
   flex: 1;
   min-width: 0;
   color: var(--text);
+  background: transparent;
+  padding: 0;
 }
 
 .avatar {
-  width: var(--chat-avatar-size);
-  height: var(--chat-avatar-size);
-  border-radius: 50%;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  flex-shrink: 0;
-  background: #fff;
-}
-
-.avatar img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  object-position: center;
+  display: none !important;
 }
 
 .bubble {
@@ -365,6 +426,10 @@ html, body {
 
 .message.user .bubble {
   color: var(--text);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  border: none;
 }
 
 .bubble.markdown a {
@@ -858,8 +923,55 @@ html, body {
 .composer-wrap {
   position: sticky;
   bottom: 0;
-  padding: 0 24px 20px;
+  padding: 0 var(--chat-main-x, 48px) 20px;
   background: linear-gradient(180deg, transparent 0%, var(--bg) 32%);
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0 0 8px;
+  padding: 0 2px;
+}
+
+.composer-attachments[hidden] {
+  display: none;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.attachment-chip button:hover {
+  color: var(--text);
 }
 
 .composer {
@@ -869,16 +981,58 @@ html, body {
   align-items: flex-end;
   gap: 8px;
   padding: var(--chat-composer-pad-y) 10px var(--chat-composer-pad-y) var(--chat-composer-pad-x);
-  background: var(--bg);
-  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border: none;
   border-radius: var(--radius-lg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 24px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: none;
+  transition: background 0.15s;
+}
+
+.composer.is-drop-target {
+  background: color-mix(in srgb, var(--bg-subtle) 80%, #d7e3ef);
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding-bottom: 2px;
+}
+
+.workspace-chip,
+.attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+  max-width: none;
+}
+
+.workspace-chip:hover,
+.attach-btn:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.workspace-chip-label {
+  display: none;
+}
+
+.attach-btn {
+  padding: 6px 8px;
 }
 
 .composer:focus-within {
-  border-color: var(--line-strong);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 32px rgba(0, 0, 0, 0.06);
+  background: color-mix(in srgb, var(--bg-subtle) 70%, var(--line));
 }
 
 .composer textarea {
@@ -928,10 +1082,10 @@ html, body {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border: 1px solid var(--line);
-  background: var(--bg-subtle, #f6f6f6);
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: 8px;
+  border-radius: var(--radius);
   font: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -941,14 +1095,12 @@ html, body {
 }
 
 .agent-mode-btn:hover {
-  background: var(--bg, #fff);
-  border-color: var(--line-strong);
+  background: var(--control-hover);
   color: var(--text);
 }
 
 .agent-mode-btn[aria-expanded="true"] {
-  background: var(--bg, #fff);
-  border-color: var(--line-strong);
+  background: var(--control-active);
   color: var(--text);
 }
 
@@ -1204,6 +1356,18 @@ html, body {
   background: var(--bg);
   color: var(--text);
   transition: border-color 0.15s;
+}
+
+.settings-path-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.settings-path-row input {
+  flex: 1;
+  width: auto;
 }
 
 .settings-field input:focus,
@@ -2001,7 +2165,7 @@ body.skill-col-resizing {
 .btn-confirm-deny {
   background: var(--bg-subtle);
   color: var(--text-secondary);
-  border: 1px solid var(--line);
+  border: none;
 }
 
 .btn-confirm-deny:hover {
@@ -2048,10 +2212,10 @@ body.ui-width-wide {
   }
 
   .topbar { --bar-px: 16px; }
-  .main { padding: 0 16px 88px; }
+  .main { padding: 0 32px 88px; }
   .hero { padding: 48px 0 28px; }
   .hero h1 { font-size: 24px; }
-  .composer-wrap { padding: 0 16px 20px; }
+  .composer-wrap { padding: 0 32px 20px; }
   .sheet { inset: 0; border-radius: 0; border: none; }
   .sheet-body { flex-direction: column; }
   .sheet-nav {
@@ -2124,10 +2288,10 @@ body.ui-width-wide {
 }
 
 .msg-action-btn {
-  border: 1px solid var(--line);
-  background: var(--bg);
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 2px 8px;
   font: inherit;
   font-size: 11px;
@@ -2138,8 +2302,7 @@ body.ui-width-wide {
 
 .msg-action-btn:hover {
   color: var(--text);
-  border-color: var(--line-strong);
-  background: var(--bg-subtle);
+  background: var(--control-hover);
 }
 
 /* Sibling branch switcher */
@@ -2149,9 +2312,9 @@ body.ui-width-wide {
   gap: 2px;
   margin-left: 4px;
   padding: 0 2px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg);
+  border: none;
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
 }
 
 .sibling-nav {
@@ -2253,28 +2416,26 @@ body.ui-width-wide {
 /* Map toggle button in chat toolbar */
 .map-toggle-btn {
   margin-left: auto;
-  border: 1px solid var(--line);
-  background: var(--bg);
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 2px 10px;
   font: inherit;
   font-size: 11px;
   line-height: 1.4;
   cursor: pointer;
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
+  transition: color 0.12s, background 0.12s;
 }
 
 .map-toggle-btn:hover {
   color: var(--text);
-  border-color: var(--line-strong);
-  background: var(--bg-subtle);
+  background: var(--control-hover);
 }
 
 .map-toggle-btn.is-active {
-  background: var(--text);
-  color: #fff;
-  border-color: var(--text);
+  background: var(--control-active);
+  color: var(--text);
 }
 
 /* Full-area map view replaces main + composer when open */
@@ -2355,31 +2516,32 @@ body.map-view-open .chat-column > .fork-banner {
 /* Edges */
 .map-edge {
   fill: none;
-  stroke: var(--line-strong);
+  stroke: var(--line);
   stroke-width: 1;
 }
 
 .map-edge.is-active {
-  stroke: var(--accent, #2563eb);
-  stroke-width: 1.5;
+  stroke: var(--text-secondary);
+  stroke-width: 1.25;
 }
 
 /* Nodes (each node = one Q&A turn) */
 .map-node rect {
   fill: var(--bg);
-  stroke: var(--line-strong);
+  stroke: var(--line);
   stroke-width: 1;
   cursor: pointer;
   transition: fill 0.12s, stroke 0.12s;
 }
 
 .map-node.is-active rect {
-  stroke: var(--accent, #2563eb);
-  stroke-width: 1.5;
+  stroke: var(--text-secondary);
+  stroke-width: 1.25;
+  fill: var(--bg-subtle);
 }
 
 .map-node.is-leaf rect {
-  stroke-width: 1.5;
+  stroke-width: 1.25;
 }
 
 .map-node.is-archived rect {
@@ -2389,7 +2551,7 @@ body.map-view-open .chat-column > .fork-banner {
 
 .map-node:hover rect {
   fill: var(--bg-subtle);
-  stroke: var(--text);
+  stroke: var(--text-tertiary);
 }
 
 .map-node-q-label,

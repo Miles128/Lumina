@@ -36,8 +36,10 @@ from secretary.agent.loop import LoopResult, PendingConfirmation
 from secretary.agent.p0_tools import is_user_input_request
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
-from secretary.agent.reply_rewriter import rewrite_if_forbidden_label
-from secretary.agent.reply_safety import is_third_person_meta_reply, sanitize_user_facing_reply
+from secretary.agent.reply_rewriter import (
+    prepare_user_facing_reply,
+)
+from secretary.agent.reply_safety import is_third_person_meta_reply
 from secretary.agent.session_store import (
     PauseKind,
     SessionStore,
@@ -151,6 +153,7 @@ class ChatService:
         self._active_thread_id = ""
         self._active_trace_id = ""
         self._active_parent_message_id = ""
+        self._turn_working_dir: Path | None = None
         self._tool_registry = ChatToolRegistry(
             settings=settings,
             store=store,
@@ -203,24 +206,37 @@ class ChatService:
     def _restore_pause_from_store(self, trace_id: str) -> None:
         if not trace_id or self._session_store.persistence_path is None:
             return
-        loaded = self._session_store.load_pause(trace_id)
-        if loaded is None:
+        loaded = self._session_store.load_pauses(trace_id)
+        if not loaded:
             return
-        kind, data = loaded
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
             return
         try:
-            if kind == "confirmation":
-                pending, messages = pause_restore_confirmation(data)
+            sub_state = None
+            if "confirmation" in loaded:
+                pending, messages = pause_restore_confirmation(loaded["confirmation"])
                 self._set_pending(pending, messages, llm_config, persist=False)
-            elif kind == "subagent":
-                self._handle_subagent_paused(pause_restore_subagent(data, llm_config), persist=False)
-            elif kind == "parent_resume":
+            if "subagent" in loaded:
+                sub_state = pause_restore_subagent(loaded["subagent"], llm_config)
+                self._handle_subagent_paused(sub_state, persist=False)
+            if "parent_resume" in loaded:
                 tools = self._tool_registry.build_tools()
                 self._set_parent_turn_resume(
-                    pause_restore_parent(data, llm_config=llm_config, tools=tools),
+                    pause_restore_parent(
+                        loaded["parent_resume"],
+                        llm_config=llm_config,
+                        tools=tools,
+                    ),
                     persist=False,
+                )
+            if "subagent" in loaded or "parent_resume" in loaded:
+                parent_session_id = (
+                    sub_state.parent_session_id if sub_state is not None else ""
+                )
+                self._active_spawn_tool = self._tool_registry.make_spawn_tool(
+                    llm_config,
+                    parent_session_id=parent_session_id or None,
                 )
         except ValueError:
             return
@@ -306,11 +322,21 @@ class ChatService:
         location_lat: float | None = None,
         location_lng: float | None = None,
         parent_message_id: str | None = None,
+        working_dir: str | None = None,
+        attachments: list[str] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ChatResult:
         cleaned = message.strip()
         self._active_thread_id = thread_id.strip() if thread_id else ""
         self._active_trace_id = trace_id.strip() if trace_id else ""
         self._active_parent_message_id = parent_message_id or ""
+        self._turn_working_dir = self._resolve_turn_working_dir(working_dir)
+        if attachments:
+            from secretary.services.chat_uploads import format_attachments_block
+
+            block = format_attachments_block(attachments)
+            if block:
+                cleaned = f"{cleaned}\n\n{block}" if cleaned else block
         history = self._load_history()
         if is_author_request(cleaned):
             return self._handle_author_gate(cleaned)
@@ -356,6 +382,7 @@ class ChatService:
                 view.markdown[:800],
                 memory_hits=len(hits),
                 progress_callback=progress_callback,
+                cancel_check=cancel_check,
             )
 
         decision = self._prompt_gate.evaluate(cleaned, history)
@@ -435,6 +462,7 @@ class ChatService:
             profile_excerpt,
             decision=decision,
             progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
 
     def confirm_action(
@@ -645,10 +673,7 @@ class ChatService:
     ) -> ChatResult:
         tools = list(used_tools or [])
         if route == "sync_empty":
-            safe_reply = sanitize_user_facing_reply(
-                rewrite_if_forbidden_label(reply, user_message, None),
-                user_message,
-            )
+            safe_reply = prepare_user_facing_reply(reply, user_message, None)
             verified, note = True, ""
         else:
             safe_reply, verified, note = self._prepare_user_reply(
@@ -791,7 +816,7 @@ class ChatService:
             fallback = (
                 f"{error}\n\n"
                 "我先切换到离线模式：\n"
-                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits, llm_configured=True)}"
             )
             self._append_history(cleaned, fallback)
             self._save_to_session("assistant", fallback)
@@ -805,7 +830,7 @@ class ChatService:
             logger.exception("Unexpected error in chat turn")
             fallback = (
                 f"抱歉，处理请求时出错（{type(exc).__name__}）。\n\n"
-                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits, llm_configured=True)}"
             )
             self._append_history(cleaned, fallback)
             self._save_to_session("assistant", fallback)
@@ -827,6 +852,7 @@ class ChatService:
         *,
         memory_hits: int = 0,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ChatResult:
         """Realtime/web queries: agent loop with web_search + web_fetch (model picks tools)."""
         from secretary.agent.web_research import WEB_RESEARCH_APPENDIX
@@ -850,7 +876,7 @@ class ChatService:
         messages.append({"role": "user", "content": cleaned})
 
         tools = self._pick_web_tools(cleaned)
-        agent_plan = AgentTurnPlan(messages=messages, max_steps=8, tools=tools)
+        agent_plan = AgentTurnPlan(messages=messages, max_steps=20, tools=tools)
 
         if progress_callback is not None:
             progress_callback(
@@ -869,6 +895,7 @@ class ChatService:
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
                 turn=self._active_turn(self._active_trace_id),
+                cancel_check=cancel_check,
             )
             chat = self._finalize_agent_result(
                 cleaned,
@@ -913,6 +940,7 @@ class ChatService:
         *,
         decision: GateDecision,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ChatResult:
         configured = self._current_agent_profile()
         light_mode = decision.action == GateAction.LIGHT
@@ -1004,6 +1032,7 @@ class ChatService:
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
                 turn=self._active_turn(self._active_trace_id),
+                cancel_check=cancel_check,
             )
             if (
                 result.pending_confirmation
@@ -1040,7 +1069,7 @@ class ChatService:
             fallback = (
                 f"{error}\n\n"
                 "我先切换到离线模式：\n"
-                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits, llm_configured=True)}"
             )
             self._append_history(cleaned, fallback)
             self._save_to_session("assistant", fallback)
@@ -1054,7 +1083,7 @@ class ChatService:
             logger.exception("Unexpected error in chat turn")
             fallback = (
                 f"抱歉，处理请求时出错（{type(exc).__name__}）。\n\n"
-                f"{self._fallback_reply(cleaned, profile_markdown, hits)}"
+                f"{self._fallback_reply(cleaned, profile_markdown, hits, llm_configured=True)}"
             )
             self._append_history(cleaned, fallback)
             self._save_to_session("assistant", fallback)
@@ -1155,8 +1184,7 @@ class ChatService:
         if is_user_input_request(raw_reply):
             return raw_reply, grounding_verified, grounding_note
 
-        rewritten = rewrite_if_forbidden_label(raw_reply, user_message, llm_config)
-        sanitized = sanitize_user_facing_reply(rewritten, user_message)
+        sanitized = prepare_user_facing_reply(raw_reply, user_message, llm_config)
         return enforce_grounded_reply(
             sanitized,
             user_message,
@@ -1170,7 +1198,18 @@ class ChatService:
             return self._agent_config_store.load().temperature
         return 0.7
 
+    def _resolve_turn_working_dir(self, working_dir: str | None) -> Path | None:
+        raw = (working_dir or "").strip()
+        if not raw:
+            return None
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            return path.resolve()
+        return None
+
     def _shell_working_dir(self) -> Path:
+        if self._turn_working_dir is not None:
+            return self._turn_working_dir
         raw = ""
         if self._agent_config_store is not None:
             raw = self._agent_config_store.load().shell_working_dir.strip()
@@ -1338,6 +1377,8 @@ class ChatService:
         message: str,
         profile_markdown: str,
         hits: list[MemoryChunk],
+        *,
+        llm_configured: bool = False,
     ) -> str:
         personal_query = "画像" in message or "我是谁" in message or "个人" in message
         if personal_query and profile_markdown.strip():
@@ -1349,13 +1390,24 @@ class ChatService:
                 if len(snippet) > 140:
                     snippet = snippet[:140] + "…"
                 lines.append(f"{index}. {item.title} — {snippet}")
-            lines.append(
-                "\n配置 LLM_API_KEY 后我可以更自然地对话。请在灵犀的 .env 或 agent.json 中设置。"
-            )
+            if llm_configured:
+                lines.append("\n大模型暂时不可用；上面是本地记忆摘要，可稍后再试。")
+            else:
+                lines.append(
+                    "\n配置 LLM_API_KEY 后我可以更自然地对话。"
+                    "请在设置或 ~/.lumina/agent.json 中配置。"
+                )
             return "\n".join(lines)
+        if llm_configured:
+            return (
+                "大模型请求失败，但本地 API 已配置（~/.lumina/agent.json）。"
+                "请稍后再试，或检查设置里的模型与密钥是否有效。"
+            )
         return (
-            "还没配置大模型 API。请在你的灵犀项目目录创建 `.env` 文件：\n\n"
-            "```\nLLM_API_KEY=你的KEY\nLLM_BASE_URL=https://api.deepseek.com/v1\nLLM_MODEL=deepseek-chat\n```\n\n"
+            "还没配置大模型 API。请在设置里填写密钥，或在 `~/.lumina/agent.json` 中配置；"
+            "也可在项目目录创建 `.env`：\n\n"
+            "```\nLLM_API_KEY=你的KEY\nLLM_BASE_URL=https://api.deepseek.com\n"
+            "LLM_MODEL=deepseek-chat\n```\n\n"
             f"你刚才说：{message}\n\n"
             "配置好模型后我就能正常聊天了。想让我了解你的真实情况，可以点右上角「同步」。"
         )
@@ -1398,6 +1450,7 @@ class ChatService:
                 assistant_message,
                 parent_message_id=self._active_parent_message_id,
             )
+            self._maybe_refresh_thread_title()
             return
         history = self._load_history()
         history.append({"role": "user", "content": user_message[:MAX_MESSAGE_CHARS]})
@@ -1408,6 +1461,18 @@ class ChatService:
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    def _maybe_refresh_thread_title(self) -> None:
+        if not self._active_thread_id:
+            return
+        llm_config = resolve_llm_config(self._settings, self._agent_config_store)
+        try:
+            self._thread_store.maybe_refresh_title(
+                self._active_thread_id,
+                llm_config=llm_config,
+            )
+        except Exception:
+            logger.exception("thread title refresh failed")
 
     def _get_or_create_session_id(self) -> str:
         session_path = self._settings.resolved_data_dir() / ".current_session"

@@ -12,6 +12,7 @@ ASK_TOOL_NAMES = frozenset(
     {
         "list_dir",
         "file_read",
+        "read_document",
         "search_files",
         "glob_files",
         "search_memory",
@@ -234,10 +235,11 @@ def resolve_parent_tools(
 
 
 def default_max_steps_for_profile(profile: AgentProfile, *, filesystem_turn: bool) -> int:
+    """Upper bound only — the loop returns as soon as a satisfactory reply is ready."""
     if profile is AgentProfile.ASK:
-        return 6
+        return 20
     if profile is AgentProfile.PLAN:
-        return 8
+        return 20
     if filesystem_turn:
-        return 8
-    return 8
+        return 20
+    return 20

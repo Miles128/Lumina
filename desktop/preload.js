@@ -16,4 +16,10 @@ contextBridge.exposeInMainWorld("secretary", {
   openWorkspace() {
     return ipcRenderer.invoke("window:openWorkspace");
   },
+  pickDirectory(defaultPath) {
+    return ipcRenderer.invoke("dialog:pickDirectory", defaultPath || "");
+  },
+  pickFiles(defaultPath) {
+    return ipcRenderer.invoke("dialog:pickFiles", defaultPath || "");
+  },
 });

@@ -15,11 +15,15 @@
   const chatInput = document.getElementById("chat-input");
   const sendBtn = document.getElementById("btn-send");
   const mainScrollEl = document.querySelector(".chat-column .main");
-  const BOT_AVATAR_SRC = "/assets/logo.png?v=3";
   const agentModePicker = document.getElementById("agent-mode-picker");
   const agentModeBtn = document.getElementById("agent-mode-btn");
   const agentModeLabel = document.getElementById("agent-mode-label");
   const agentModeMenu = document.getElementById("agent-mode-menu");
+  const workspaceChip = document.getElementById("workspace-chip");
+  const attachBtn = document.getElementById("attach-btn");
+  const attachInput = document.getElementById("attach-input");
+  const attachmentsEl = document.getElementById("composer-attachments");
+  const composerEl = document.getElementById("chat-form");
 
   const AGENT_MODE_LABELS = {
     auto: "Auto",
@@ -29,10 +33,15 @@
     orchestrator: "Build",
   };
   let currentAgentMode = "auto";
+  let currentWorkspaceDir = "";
+  /** @type {{ name: string, path: string, size?: number }[]} */
+  let pendingAttachments = [];
+  const MAX_ATTACHMENTS = 10;
 
   let busy = false;
   let pendingActionId = null;
   let activeRequestController = null;
+  let activeTraceId = "";
   let typingTicker = null;
   let typingStartAt = 0;
   let slowNoticeSent = false;
@@ -60,6 +69,7 @@
 
   const THREADS_KEY = "lumina.chat.threads.v1";
   const CURRENT_THREAD_KEY = "lumina.chat.current.v1";
+  const SIDEBAR_COLLAPSED_KEY = "lumina.chat.sidebarCollapsed.v1";
 
   function t(key, vars) {
     if (window.LuminaI18n) {
@@ -68,15 +78,34 @@
     return key;
   }
 
-  function avatarLabel(role) {
-    return role === "bot" ? t("bot.name") : t("user.me");
+  function setSidebarCollapsed(collapsed) {
+    const sidebar = document.getElementById("chat-sidebar");
+    const collapseBtn = document.getElementById("btn-sidebar-collapse");
+    const expandBtn = document.getElementById("btn-sidebar-expand");
+    if (!sidebar) return;
+    sidebar.classList.toggle("is-collapsed", collapsed);
+    if (collapseBtn) collapseBtn.hidden = collapsed;
+    if (expandBtn) expandBtn.hidden = !collapsed;
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch (_) { /* ignore */ }
   }
 
+  function initSidebarCollapse() {
+    const collapseBtn = document.getElementById("btn-sidebar-collapse");
+    const expandBtn = document.getElementById("btn-sidebar-expand");
+    let collapsed = false;
+    try {
+      collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch (_) { /* ignore */ }
+    setSidebarCollapsed(collapsed);
+    collapseBtn?.addEventListener("click", () => setSidebarCollapsed(true));
+    expandBtn?.addEventListener("click", () => setSidebarCollapsed(false));
+  }
+
+  initSidebarCollapse();
+
   window.addEventListener("lumina:language", () => {
-    document.querySelectorAll(".message .avatar").forEach((el) => {
-      const isBot = el.classList.contains("bot");
-      el.setAttribute("aria-label", avatarLabel(isBot ? "bot" : "user"));
-    });
     window.LuminaI18n?.applyDocument();
   });
   const RUNTIME_SUMMARY_RE =
@@ -94,6 +123,181 @@
     event.preventDefault();
     sendMessage(chatInput.value.trim());
   });
+
+  function basenamePath(path) {
+    const text = String(path || "").replace(/[/\\]+$/, "");
+    const parts = text.split(/[/\\]/);
+    return parts[parts.length - 1] || text || "工作区";
+  }
+
+  function renderWorkspaceChip() {
+    if (!workspaceChip) return;
+    if (currentWorkspaceDir) {
+      workspaceChip.title = currentWorkspaceDir;
+      workspaceChip.setAttribute("aria-label", `工作区：${basenamePath(currentWorkspaceDir)}`);
+    } else {
+      workspaceChip.title = "选择工作区目录（shell / 读写默认路径）";
+      workspaceChip.setAttribute("aria-label", "工作区目录");
+    }
+  }
+
+  function renderAttachments() {
+    if (!attachmentsEl) return;
+    attachmentsEl.innerHTML = "";
+    if (!pendingAttachments.length) {
+      attachmentsEl.hidden = true;
+      return;
+    }
+    attachmentsEl.hidden = false;
+    pendingAttachments.forEach((item, index) => {
+      const chip = document.createElement("div");
+      chip.className = "attachment-chip";
+      chip.title = item.path;
+      const label = document.createElement("span");
+      label.textContent = item.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "移除附件");
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        pendingAttachments.splice(index, 1);
+        renderAttachments();
+      });
+      chip.append(label, remove);
+      attachmentsEl.appendChild(chip);
+    });
+  }
+
+  async function ensureThreadId() {
+    if (currentThreadId) return currentThreadId;
+    await createThread(false);
+    return currentThreadId || "";
+  }
+
+  function mergeUploadedFiles(files) {
+    const existing = new Set(pendingAttachments.map((item) => item.path));
+    for (const file of files || []) {
+      if (!file?.path || existing.has(file.path)) continue;
+      if (pendingAttachments.length >= MAX_ATTACHMENTS) break;
+      pendingAttachments.push({
+        name: file.name || basenamePath(file.path),
+        path: file.path,
+        size: file.size || 0,
+      });
+      existing.add(file.path);
+    }
+    renderAttachments();
+  }
+
+  async function uploadBrowserFiles(fileList) {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+    const threadId = await ensureThreadId();
+    const form = new FormData();
+    form.append("thread_id", threadId || "default");
+    for (const file of files.slice(0, MAX_ATTACHMENTS - pendingAttachments.length)) {
+      form.append("files", file, file.name);
+    }
+    const response = await window.SecretaryAPI.request("POST", "/api/chat/uploads", form, {
+      timeoutMs: 60_000,
+    });
+    mergeUploadedFiles(response?.files || []);
+  }
+
+  async function uploadLocalPaths(paths) {
+    const list = (paths || []).filter(Boolean);
+    if (!list.length) return;
+    const threadId = await ensureThreadId();
+    const response = await window.SecretaryAPI.request(
+      "POST",
+      "/api/chat/uploads/from-paths",
+      { thread_id: threadId || "default", paths: list.slice(0, MAX_ATTACHMENTS - pendingAttachments.length) },
+      { timeoutMs: 60_000 },
+    );
+    mergeUploadedFiles(response?.files || []);
+  }
+
+  async function pickWorkspaceDir() {
+    let selected = null;
+    if (window.secretary?.pickDirectory) {
+      selected = await window.secretary.pickDirectory(currentWorkspaceDir || undefined);
+    } else {
+      const raw = window.prompt("工作区目录路径", currentWorkspaceDir || "");
+      selected = raw == null ? null : raw.trim();
+    }
+    if (!selected) return;
+    const previous = currentWorkspaceDir;
+    currentWorkspaceDir = selected;
+    renderWorkspaceChip();
+    try {
+      await window.SecretaryAPI.request("PUT", "/api/agent/config", {
+        shell_working_dir: selected,
+      });
+    } catch (error) {
+      currentWorkspaceDir = previous;
+      renderWorkspaceChip();
+      console.error("Failed to set workspace:", error);
+    }
+  }
+
+  async function pickAttachments() {
+    if (window.secretary?.pickFiles) {
+      try {
+        const paths = await window.secretary.pickFiles(currentWorkspaceDir || undefined);
+        if (paths?.length) {
+          await uploadLocalPaths(paths);
+          return;
+        }
+      } catch (error) {
+        console.error("pickFiles failed:", error);
+      }
+    }
+    attachInput?.click();
+  }
+
+  if (workspaceChip) {
+    workspaceChip.addEventListener("click", () => {
+      void pickWorkspaceDir();
+    });
+  }
+  if (attachBtn && attachInput) {
+    attachBtn.addEventListener("click", () => {
+      void pickAttachments();
+    });
+    attachInput.addEventListener("change", () => {
+      void uploadBrowserFiles(attachInput.files).finally(() => {
+        attachInput.value = "";
+      });
+    });
+  }
+
+  if (composerEl) {
+    let dragDepth = 0;
+    const setDropTarget = (on) => {
+      composerEl.classList.toggle("is-drop-target", on);
+    };
+    composerEl.addEventListener("dragenter", (event) => {
+      if (![...event.dataTransfer.types].includes("Files")) return;
+      event.preventDefault();
+      dragDepth += 1;
+      setDropTarget(true);
+    });
+    composerEl.addEventListener("dragover", (event) => {
+      if (![...event.dataTransfer.types].includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    composerEl.addEventListener("dragleave", () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setDropTarget(false);
+    });
+    composerEl.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dragDepth = 0;
+      setDropTarget(false);
+      void uploadBrowserFiles(event.dataTransfer?.files);
+    });
+  }
 
   chatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -151,7 +355,6 @@
   }
 
   async function loadAgentMode() {
-    if (!agentModeBtn) return;
     try {
       const config = await window.SecretaryAPI.request("GET", "/api/agent/config");
       const profile = String(config?.agent_profile || "auto").toLowerCase();
@@ -159,10 +362,12 @@
       if (AGENT_MODE_LABELS[normalized]) {
         currentAgentMode = normalized;
       }
+      currentWorkspaceDir = String(config?.shell_working_dir || "").trim();
     } catch (_error) {
       // Keep default "auto".
     }
     renderAgentModeLabel();
+    renderWorkspaceChip();
   }
 
   if (agentModeBtn && agentModeMenu) {
@@ -190,8 +395,8 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setAgentModeMenuOpen(false);
     });
-    void loadAgentMode();
   }
+  void loadAgentMode();
 
   const LUMINA_IDENTITY_INTRO_FALLBACK =
     "我是灵犀（Lumina），在你本机运行的个人 AI 秘书。\n\n" +
@@ -294,7 +499,9 @@
   }
 
   async function sendMessage(text) {
-    if (!text) return;
+    const trimmed = (text || "").trim();
+    const attachmentPaths = pendingAttachments.map((item) => item.path);
+    if (!trimmed && !attachmentPaths.length) return;
 
     // Author / identity routing is handled only by the backend (PromptGate + fast paths).
     // Client-side shortcuts caused false positives (e.g. "open design 的作者").
@@ -302,9 +509,14 @@
     if (busy) return;
 
     welcome.classList.add("hidden");
-    appendMessage("user", text);
+    const displayText = trimmed
+      || `附件：${pendingAttachments.map((item) => item.name).join("、")}`;
+    appendMessage("user", displayText);
     chatInput.value = "";
     autoResize();
+    const sentAttachments = attachmentPaths.slice();
+    pendingAttachments = [];
+    renderAttachments();
     setBusy(true);
     slowNoticeSent = false;
     resetProgressLog();
@@ -314,13 +526,16 @@
     try {
       const controller = createActiveController();
       const traceId = createTraceId();
+      activeTraceId = traceId;
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
       const isForkSend = Boolean(pendingParentId);
       const chatBody = {
-        message: text,
+        message: trimmed,
         trace_id: traceId,
         thread_id: currentThreadId || "",
         parent_message_id: pendingParentId || "",
+        working_dir: currentWorkspaceDir || "",
+        attachments: sentAttachments,
       };
       // Fork intent is consumed once the request is sent.
       if (pendingParentId) {
@@ -395,6 +610,7 @@
     try {
       const controller = createActiveController();
       const traceId = createTraceId();
+      activeTraceId = traceId;
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
       const response = await window.SecretaryAPI.request(
         "POST",
@@ -579,12 +795,8 @@
     const row = document.createElement("div");
     row.className = `message ${role}${archived ? " archived" : ""}${isActiveLeaf ? " is-active-leaf" : ""}`;
     if (msgId) row.dataset.msgId = msgId;
-    const avatarSrc = role === "bot" ? BOT_AVATAR_SRC : "/assets/avatar-user.svg";
     const bubbleClass = "bubble markdown";
-    row.innerHTML =
-      `<div class="avatar ${role}" aria-label="${avatarLabel(role)}">` +
-      `<img src="${avatarSrc}" alt="" aria-hidden="true" /></div>` +
-      `<div class="${bubbleClass}">${renderMessageHtml(role, text)}</div>`;
+    row.innerHTML = `<div class="${bubbleClass}">${renderMessageHtml(role, text)}</div>`;
     if (msgId) {
       row.appendChild(buildMsgActionsEl(msgId, role, archived, thread));
     }
@@ -661,9 +873,6 @@
     }
 
     row.innerHTML = `
-      <div class="avatar bot" aria-label="${avatarLabel("bot")}">
-        <img src="${BOT_AVATAR_SRC}" alt="" aria-hidden="true" />
-      </div>
       <div class="bubble confirm-bubble">
         <div class="confirm-text markdown">${renderMarkdown(replyText)}</div>
         <div class="confirm-detail">${escapeHtml(description)}</div>
@@ -1084,8 +1293,15 @@
     }
   }
 
-  function appendProgressItem(event, label) {
+    function appendProgressItem(event, label) {
     const kind = String(event?.kind || "");
+    // Hide thinking-round counters; keep explicit status like network connect.
+    if (
+      (kind === "iteration_started" || kind === "iteration_completed") &&
+      !/网络连接|整理回复/.test(String(label || event?.message || ""))
+    ) {
+      return;
+    }
     if (kind === "iteration_started") {
       progressSession.maxIteration = Math.max(
         progressSession.maxIteration,
@@ -1177,10 +1393,12 @@
       showTyping(true, label || t("chat.subagent.paused"));
     } else if (kind === "subagent_finished") {
       showTyping(true, t("chat.typing.organize"));
+    } else if (kind === "tool_started") {
+      clearStreamingBubble({ saveToProgress: true });
+      showTyping(true, label);
     } else if (
-      kind === "tool_started" ||
-      kind === "iteration_started" ||
-      kind === "iteration_completed"
+      (kind === "iteration_started" || kind === "iteration_completed") &&
+      /网络连接|整理回复/.test(label)
     ) {
       clearStreamingBubble({ saveToProgress: true });
       showTyping(true, label);
@@ -1196,10 +1414,7 @@
     streamingText = "";
     const row = document.createElement("div");
     row.className = "message bot streaming";
-    row.innerHTML =
-      `<div class="avatar bot" aria-label="${avatarLabel("bot")}">` +
-      `<img src="${BOT_AVATAR_SRC}" alt="" aria-hidden="true" /></div>` +
-      `<div class="bubble markdown"></div>`;
+    row.innerHTML = `<div class="bubble markdown"></div>`;
     messagesEl.appendChild(row);
     streamingBubbleEl = row.querySelector(".bubble");
     scrollChatToBottom();
@@ -1269,12 +1484,23 @@
 
   function clearActiveController() {
     activeRequestController = null;
+    activeTraceId = "";
   }
 
   function pauseCurrentRequest() {
     if (!activeRequestController) return;
+    const traceId = activeTraceId;
+    if (traceId) {
+      void window.SecretaryAPI.request(
+        "POST",
+        "/api/chat/cancel",
+        { trace_id: traceId },
+        { timeoutMs: 5000 },
+      ).catch(() => {});
+    }
     activeRequestController.abort();
     activeRequestController = null;
+    activeTraceId = "";
     setBusy(false);
     showTyping(false);
     endTypingTicker();
@@ -1643,6 +1869,7 @@
     const thread = getCurrentThread();
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       welcome.classList.remove("hidden");
+      updateHeroGreeting();
       return;
     }
     welcome.classList.add("hidden");
@@ -1652,6 +1879,16 @@
     }
     scrollChatToBottom();
     void fetchTreeData(currentThreadId);
+  }
+
+  function updateHeroGreeting() {
+    if (!window.LuminaLunar) return;
+    const titleEl = document.getElementById("hero-title");
+    const subEl = document.getElementById("hero-sub");
+    if (!titleEl) return;
+    const g = window.LuminaLunar.getGreeting(new Date());
+    titleEl.innerHTML = g.main;
+    if (subEl && g.sub) subEl.textContent = g.sub;
   }
 
   // Walk parent_id chain from active_leaf_id back to root, then reverse.
@@ -1783,7 +2020,10 @@
       thread.messages = thread.messages.slice(-400);
     }
     if (role === "user") {
-      thread.title = buildThreadTitle(text);
+      const current = String(thread.title || "").trim();
+      if (!current || current === t("thread.new")) {
+        thread.title = buildThreadTitle(text);
+      }
     }
     thread.updatedAt = new Date().toISOString();
     threads = sortThreadsByUpdatedAt(threads);

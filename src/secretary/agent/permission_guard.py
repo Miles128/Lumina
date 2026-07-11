@@ -11,6 +11,7 @@ PLAN_DENY_TOOL_NAMES = frozenset(
         "patch",
         "file_delete",
         "shell",
+        "code_exec",
         "sync_source",
         "shibei_import",
         "memory",
@@ -19,7 +20,17 @@ PLAN_DENY_TOOL_NAMES = frozenset(
     }
 )
 
-PLAN_DENY_NAME_TOKENS = ("write", "delete", "remove", "shell", "sync", "import", "spawn", "cli")
+PLAN_DENY_NAME_TOKENS = (
+    "write",
+    "delete",
+    "remove",
+    "shell",
+    "exec",
+    "sync",
+    "import",
+    "spawn",
+    "cli",
+)
 
 
 def tool_allowed_for_profile(profile: AgentProfile, tool: Tool) -> bool:

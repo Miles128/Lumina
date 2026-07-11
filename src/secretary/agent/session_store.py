@@ -17,9 +17,36 @@ from secretary.agent.turn_models import TurnContext, TurnStatus
 
 PauseKind = Literal["confirmation", "subagent", "parent_resume"]
 
+_PAUSE_KINDS: tuple[PauseKind, ...] = ("confirmation", "subagent", "parent_resume")
+
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _normalize_pause_entry(raw: Any) -> dict[PauseKind, dict[str, Any]]:
+    """Upgrade legacy `{kind, data}` or multi-kind map into `{kind: data, ...}`."""
+    if not isinstance(raw, dict):
+        return {}
+    # Legacy single-kind: {"kind": "...", "data": {...}}
+    legacy_kind = raw.get("kind")
+    legacy_data = raw.get("data")
+    if legacy_kind in _PAUSE_KINDS and isinstance(legacy_data, dict) and "kinds" not in raw:
+        return {cast(PauseKind, legacy_kind): legacy_data}
+    entry: dict[PauseKind, dict[str, Any]] = {}
+    for kind in _PAUSE_KINDS:
+        data = raw.get(kind)
+        if isinstance(data, dict):
+            entry[kind] = data
+    return entry
+
+
+def _pause_entry_to_disk(entry: dict[PauseKind, dict[str, Any]]) -> dict[str, Any]:
+    kinds = [kind for kind in _PAUSE_KINDS if kind in entry]
+    payload: dict[str, Any] = {"kinds": kinds}
+    for kind in kinds:
+        payload[kind] = entry[kind]
+    return payload
 
 
 def _pending_from_dict(raw: dict[str, Any]) -> PendingConfirmation:
@@ -114,7 +141,7 @@ def pause_restore_subagent(data: dict[str, Any], llm_config: LlmConfig) -> SubAg
         child_session_id=str(data.get("child_session_id") or ""),
         parent_session_id=str(data.get("parent_session_id") or ""),
         messages=[item for item in data.get("messages", []) if isinstance(item, dict)],
-        max_steps=int(data.get("max_steps") or 8),
+        max_steps=int(data.get("max_steps") or 20),
         working_dir=Path(str(data.get("working_dir") or ".")),
         pending=_pending_from_dict(pending_raw),
         llm_config=llm_config,
@@ -155,7 +182,7 @@ def pause_restore_parent(
     return ParentTurnResumeState(
         messages_snapshot=[item for item in data.get("messages_snapshot", []) if isinstance(item, dict)],
         tools=[by_name[name] for name in tool_names if name in by_name],
-        max_steps=int(data.get("max_steps") or 8),
+        max_steps=int(data.get("max_steps") or 20),
         pending_step=pending_step,
         assistant_message=data.get("assistant_message")
         if isinstance(data.get("assistant_message"), dict)
@@ -289,37 +316,35 @@ class SessionStore:
             self._write_document({"turns": turns, "pauses": pauses})
 
     def save_pause(self, trace_id: str, *, kind: PauseKind, data: dict[str, Any]) -> None:
+        """Merge one pause kind into the per-trace multi-kind bundle (does not wipe others)."""
         if not trace_id or self._path is None:
             return
-        document = self._load_document()
-        pauses = document.get("pauses", {})
-        if not isinstance(pauses, dict):
-            pauses = {}
-        pauses[trace_id] = {"kind": kind, "data": data}
-        self._write_document({"turns": document.get("turns", {}), "pauses": pauses})
+        with self._lock:
+            document = self._load_document()
+            pauses = document.get("pauses", {})
+            if not isinstance(pauses, dict):
+                pauses = {}
+            entry = _normalize_pause_entry(pauses.get(trace_id))
+            entry[kind] = data
+            pauses[trace_id] = _pause_entry_to_disk(entry)
+            self._write_document({"turns": document.get("turns", {}), "pauses": pauses})
 
-    def load_pause(self, trace_id: str) -> tuple[PauseKind, dict[str, Any]] | None:
+    def load_pauses(self, trace_id: str) -> dict[PauseKind, dict[str, Any]]:
+        """Return all pause kinds stored for a trace (empty dict if none)."""
         if not trace_id or self._path is None:
-            return None
+            return {}
         raw = self._load_document().get("pauses", {}).get(trace_id)
-        if not isinstance(raw, dict):
-            return None
-        kind = raw.get("kind")
-        data = raw.get("data")
-        if kind not in {"confirmation", "subagent", "parent_resume"}:
-            return None
-        if not isinstance(data, dict):
-            return None
-        return kind, data
+        return _normalize_pause_entry(raw)
 
     def clear_pause(self, trace_id: str) -> None:
         if not trace_id or self._path is None:
             return
-        document = self._load_document()
-        pauses = document.get("pauses", {})
-        if isinstance(pauses, dict):
-            pauses.pop(trace_id, None)
-        self._write_document({"turns": document.get("turns", {}), "pauses": pauses})
+        with self._lock:
+            document = self._load_document()
+            pauses = document.get("pauses", {})
+            if isinstance(pauses, dict):
+                pauses.pop(trace_id, None)
+            self._write_document({"turns": document.get("turns", {}), "pauses": pauses})
 
     def _load_document(self) -> dict[str, Any]:
         if self._path is None or not self._path.exists():
@@ -346,10 +371,10 @@ class SessionStore:
             "turns": document.get("turns", {}),
             "pauses": document.get("pauses", {}),
         }
-        self._path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp_path.write_text(text, encoding="utf-8")
+        tmp_path.replace(self._path)
 
     def _load_turns(self) -> dict[str, TurnContext]:
         turns: dict[str, TurnContext] = {}

@@ -126,6 +126,8 @@ class ChatToolRegistry:
             SkillViewTool,
             TodoTool,
         )
+        from secretary.agent.tools.code_exec import CodeExecTool
+        from secretary.agent.tools.documents import ReadDocumentTool
         from secretary.agent.web_search import WebSearchTool
 
         session_id = self._get_session_id()
@@ -134,6 +136,7 @@ class ChatToolRegistry:
         tools: list[Tool] = [
             ListDirTool(),
             FileReadTool(),
+            ReadDocumentTool(),
             SearchFilesTool(),
             GlobFilesTool(),
             SearchMemoryTool(self._store),
@@ -145,6 +148,7 @@ class ChatToolRegistry:
             PatchTool(),
             FileDeleteTool(),
             ShellTool(),
+            CodeExecTool(),
             TodoTool(TodoStore(todo_path)),
             SkillsListTool(self._skills),
             SkillViewTool(self._skills),
@@ -197,8 +201,13 @@ class ChatToolRegistry:
         defaults = self._default_memory_tool_names()
         return [all_tools[name] for name in defaults if name in all_tools]
 
-    def make_spawn_tool(self, llm_config: LlmConfig) -> SpawnSubagentTool:
-        session_id = self._get_session_id()
+    def make_spawn_tool(
+        self,
+        llm_config: LlmConfig,
+        *,
+        parent_session_id: str | None = None,
+    ) -> SpawnSubagentTool:
+        session_id = (parent_session_id or "").strip() or self._get_session_id()
         spawn_context = SpawnContext(parent_session_id=session_id, depth=0)
         deps = SubAgentDeps(
             llm_config=llm_config,

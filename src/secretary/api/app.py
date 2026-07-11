@@ -7,9 +7,9 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +24,7 @@ from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.session_store import SessionStore
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
+from secretary.agent.turn_cancel import begin_turn, end_turn, request_cancel
 from secretary.agent.turn_orchestrator import TurnOrchestrator
 from secretary.agent.turn_runner import TurnRunner
 from secretary.api.legacy_workspace import router as legacy_workspace_router
@@ -34,6 +35,12 @@ from secretary.memory.db import MemoryStore
 from secretary.memory.kb import KnowledgeWorkspace
 from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
+from secretary.services.chat_uploads import (
+    DEFAULT_ATTACHMENT_PROMPT,
+    MAX_UPLOAD_FILES,
+    copy_local_path,
+    save_upload_bytes,
+)
 from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
@@ -89,13 +96,24 @@ class MemorySearchResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(default="", max_length=8000)
     trace_id: str = Field(default="", max_length=64)
     thread_id: str = Field(default="", max_length=64)
     location_city: str = Field(default="", max_length=64)
     location_lat: float | None = Field(default=None, ge=-90, le=90)
     location_lng: float | None = Field(default=None, ge=-180, le=180)
     parent_message_id: str = Field(default="", max_length=64)
+    working_dir: str = Field(default="", max_length=1024)
+    attachments: list[str] = Field(default_factory=list, max_length=10)
+
+
+class ChatCancelRequest(BaseModel):
+    trace_id: str = Field(min_length=1, max_length=64)
+
+
+class ChatUploadsFromPathsRequest(BaseModel):
+    thread_id: str = Field(default="", max_length=64)
+    paths: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ChatThreadActiveLeafRequest(BaseModel):
@@ -827,6 +845,11 @@ async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
     )
 
 
+@app.post("/api/chat/cancel")
+def cancel_chat(body: ChatCancelRequest) -> dict[str, bool]:
+    return {"cancelled": request_cancel(body.trace_id.strip())}
+
+
 @app.get("/api/identity/author")
 def identity_author() -> dict[str, str]:
     from secretary.agent.identity import get_author_reply
@@ -852,12 +875,18 @@ def reverse_location(body: LocationReverseRequest) -> LocationReverseResponse:
 @app.post("/api/chat")
 def chat(request: Request, body: ChatRequest) -> ChatResponse:
     chat_service: ChatService = _svc(request).chat_service
+    attachments = [p.strip() for p in body.attachments if isinstance(p, str) and p.strip()]
     message = body.message.strip()
+    if not message and not attachments:
+        raise HTTPException(status_code=400, detail="message or attachments required")
+    if not message:
+        message = DEFAULT_ATTACHMENT_PROMPT
     author_turn = chat_service.is_author_turn(message)
     identity_turn = chat_service.is_identity_turn(message)
     trace_id = "" if (author_turn or identity_turn) else body.trace_id.strip()
     thread_id = body.thread_id.strip()
     progress = _build_progress_callback(request, trace_id)
+    cancel_event = begin_turn(trace_id) if trace_id else None
     if trace_id:
         request.app.state.session_store.start_turn(
             trace_id=trace_id,
@@ -873,11 +902,62 @@ def chat(request: Request, body: ChatRequest) -> ChatResponse:
                 thread_id=thread_id or None,
                 trace_id=trace_id or None,
                 parent_message_id=body.parent_message_id or None,
+                working_dir=body.working_dir or None,
+                attachments=attachments,
+                cancel_check=cancel_event.is_set if cancel_event is not None else None,
             )
         keep_turn = bool(result.pending_confirmation)
         return _to_chat_response(result, usage)
     finally:
         _finish_progress(request, trace_id, keep_turn=keep_turn)
+        if trace_id:
+            end_turn(trace_id)
+
+
+@app.post("/api/chat/uploads")
+async def upload_chat_files(
+    files: Annotated[list[UploadFile], File()],
+    thread_id: Annotated[str, Form()] = "",
+) -> dict[str, object]:
+    uploads = list(files)
+    if not uploads:
+        raise HTTPException(status_code=400, detail="no files")
+    if len(uploads) > MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=400, detail=f"max {MAX_UPLOAD_FILES} files")
+    data_dir = settings.resolved_data_dir()
+    saved: list[dict[str, object]] = []
+    try:
+        for upload in uploads:
+            content = await upload.read()
+            item = save_upload_bytes(
+                data_dir,
+                thread_id=thread_id,
+                filename=upload.filename or "file",
+                content=content,
+            )
+            saved.append(item.as_dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"files": saved}
+
+
+@app.post("/api/chat/uploads/from-paths")
+def upload_chat_files_from_paths(
+    body: ChatUploadsFromPathsRequest,
+) -> dict[str, object]:
+    if not body.paths:
+        raise HTTPException(status_code=400, detail="no paths")
+    if len(body.paths) > MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=400, detail=f"max {MAX_UPLOAD_FILES} files")
+    data_dir = settings.resolved_data_dir()
+    saved: list[dict[str, object]] = []
+    try:
+        for raw in body.paths:
+            item = copy_local_path(data_dir, thread_id=body.thread_id, source=raw)
+            saved.append(item.as_dict())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"files": saved}
 
 
 @app.post("/api/chat/confirm")

@@ -124,7 +124,8 @@ class ListDirTool(Tool):
         header = f"📂 {path} ({len(lines)} entries)"
         footer = (
             "注：📁/📄 行是真实目录项名称，可直接用于回答「有哪些文件夹/项目」。"
-            "需要文件内容时用 file_read；按关键词找目录/文件用 search_files。"
+            "需要文件内容时用 file_read；Excel/PDF/Word 用 read_document；"
+            "按关键词找目录/文件用 search_files。"
             "不要对用户声称灵犀「没有读权限」或「只能看目录结构」。"
         )
         return f"{header}\n" + "\n".join(lines) + f"\n\n{footer}"
@@ -136,7 +137,10 @@ class ListDirTool(Tool):
 
 class FileReadTool(Tool):
     name = "file_read"
-    description = "Read the contents of a file. No confirmation needed for reading."
+    description = (
+        "Read the contents of a text file. No confirmation needed. "
+        "For Excel/PDF/Word use read_document instead."
+    )
     needs_confirmation = False
     risk_level = "low"
 

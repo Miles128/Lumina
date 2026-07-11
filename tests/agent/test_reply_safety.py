@@ -1,10 +1,39 @@
 """Tests for reply safety filter."""
 
 from secretary.agent.reply_safety import (
+    contains_profanity,
     is_third_person_meta_reply,
     sanitize_user_facing_reply,
     strip_reasoning_chain,
 )
+from secretary.agent.reply_safety_rules import (
+    load_forbidden_term_replacements,
+    load_meta_reply_patterns,
+    load_profanity_patterns,
+    load_unprofessional_patterns,
+    rules_dir,
+)
+
+
+def test_reply_safety_rules_md_files_exist_and_load() -> None:
+    assert (rules_dir() / "profanity.md").is_file()
+    assert (rules_dir() / "unprofessional.md").is_file()
+    assert (rules_dir() / "meta-reply.md").is_file()
+    assert (rules_dir() / "forbidden-terms.md").is_file()
+    assert any(p.search("我靠") for p in load_profanity_patterns())
+    assert load_unprofessional_patterns()
+    assert load_meta_reply_patterns()
+    assert ("用户", "你") in load_forbidden_term_replacements()
+
+
+def test_profanity_allows_normal_compounds() -> None:
+    for text in ("可以挂靠到技能目录", "这个方案很可靠", "傻子也会犯错", "别装傻", "靠谱一点"):
+        assert not contains_profanity(text), text
+
+
+def test_profanity_detects_swear_forms() -> None:
+    for text in ("我靠", "靠你", "靠！", "傻逼", "他妈的，这个回答垃圾", "装逼"):
+        assert contains_profanity(text), text
 
 
 def test_detects_classifier_reason_leak() -> None:
@@ -23,10 +52,11 @@ def test_sanitize_replaces_meta_reply() -> None:
     assert "你又行了" in fixed
 
 
-def test_sanitize_filters_profanity_and_keeps_gentle_tone() -> None:
-    fixed = sanitize_user_facing_reply("他妈的，这个回答垃圾", "请你帮我")
-    assert "***" in fixed
-    assert not fixed.startswith("你这个反馈很关键，我先直接处理问题。")
+def test_sanitize_does_not_mask_profanity_with_stars() -> None:
+    raw = "他妈的，这个回答垃圾"
+    fixed = sanitize_user_facing_reply(raw, "请你帮我")
+    assert "***" not in fixed
+    assert contains_profanity(fixed)
 
 
 def test_sanitize_replaces_forbidden_label_everywhere() -> None:
@@ -48,10 +78,15 @@ def test_strip_reasoning_chain_removes_think_blocks() -> None:
     assert strip_reasoning_chain(raw) == "最终答案是：42"
 
 
-def test_sanitize_filters_slang() -> None:
+def test_sanitize_leaves_slang_for_llm_rewrite() -> None:
     fixed = sanitize_user_facing_reply("这个方案有点装逼", "你怎么看")
-    assert "装逼" not in fixed
-    assert "***" in fixed
+    assert "装逼" in fixed
+    assert "***" not in fixed
+
+
+def test_sanitize_no_longer_calls_gentle_tone_noop() -> None:
+    """Regression: empty gentle-tone helper was removed; sanitize must still return text."""
+    assert sanitize_user_facing_reply("你好", "嗨") == "你好"
 
 
 def test_sanitize_strips_reasoning_before_display() -> None:

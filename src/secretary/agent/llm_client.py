@@ -335,8 +335,11 @@ def _assistant_message_dict(
     content: str,
     tool_calls: tuple[LlmToolCall, ...],
 ) -> dict[str, Any]:
+    # DeepSeek thinking mode requires reasoning_content on tool-call turns to be
+    # replayed on every subsequent request; dropping it yields HTTP 400.
+    reasoning = message.get("reasoning_content")
     if tool_calls:
-        return {
+        result: dict[str, Any] = {
             "role": "assistant",
             "content": content or None,
             "tool_calls": [
@@ -351,7 +354,13 @@ def _assistant_message_dict(
                 for call in tool_calls
             ],
         }
-    return {"role": "assistant", "content": content}
+        if isinstance(reasoning, str):
+            result["reasoning_content"] = reasoning
+        return result
+    result = {"role": "assistant", "content": content}
+    if isinstance(reasoning, str) and reasoning:
+        result["reasoning_content"] = reasoning
+    return result
 
 
 def _extract_stream_delta(chunk: dict[str, object]) -> str:

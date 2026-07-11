@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.text_utils import truncate_chars
 from secretary.agent.tools.base import Tool, ToolCall
 
 _READ_ONLY_SHELL_CMDS = {
@@ -184,6 +185,4 @@ class ShellTool(Tool):
         if result.returncode != 0:
             output += f"\n[exit code: {result.returncode}]"
         output = output.strip() or "(no output)"
-        if len(output) > self._MAX_OUTPUT_CHARS:
-            output = output[: self._MAX_OUTPUT_CHARS] + "\n...[truncated]"
-        return output
+        return truncate_chars(output, self._MAX_OUTPUT_CHARS)
