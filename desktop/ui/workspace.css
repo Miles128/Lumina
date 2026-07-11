@@ -57,9 +57,9 @@ html, body {
 }
 
 .kb-badge[data-status="error"] {
-  color: #b42318;
-  border-color: #fecdca;
-  background: #fef3f2;
+  color: var(--danger);
+  border-color: var(--line-strong);
+  background: var(--accent-soft);
 }
 
 .topbar-actions {
@@ -85,7 +85,7 @@ html, body {
 
 .btn.primary {
   background: var(--text);
-  color: #fff;
+  color: var(--bg);
 }
 
 .btn.primary:hover:not(:disabled) { opacity: 0.88; }
@@ -154,11 +154,11 @@ html, body {
 }
 
 .kb-panel-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-tertiary);
   margin-bottom: 12px;
 }
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult, _coerce_to_tool_result
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ class McpBridgeTool(Tool):
         self.name = f"mcp_{spec.server_name}_{spec.tool_name}"
         self.description = f"[MCP:{spec.server_name}] {spec.description or spec.tool_name}"
         self.needs_confirmation = _needs_confirmation(spec.tool_name)
+        self.read_only = not self.needs_confirmation
         self.risk_level = "medium" if self.needs_confirmation else "low"
 
     def _parameters(self) -> dict[str, Any]:
@@ -69,12 +70,15 @@ class McpBridgeTool(Tool):
             return {"type": "object", "properties": {}, "required": []}
         return schema
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
-        return self._manager.call_tool(
-            self._spec.server_name,
-            self._spec.remote_name,
-            arguments,
-            timeout=self._spec.timeout,
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        return _coerce_to_tool_result(
+            self._manager.call_tool(
+                self._spec.server_name,
+                self._spec.remote_name,
+                arguments,
+                timeout=self._spec.timeout,
+            ),
+            tool_name=self.name,
         )
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:

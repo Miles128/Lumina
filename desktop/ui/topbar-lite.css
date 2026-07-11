@@ -27,11 +27,47 @@
   flex-shrink: 0;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   object-fit: cover;
   display: block;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+/* —— 月相按钮 + 顶部信息条 —— */
+.moon-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: background 0.18s var(--ease);
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.moon-btn:hover { background: var(--bg-subtle); opacity: 1; }
+.moon-btn:active { transform: translateY(1px); }
+.moon-btn[aria-expanded="true"] { background: var(--bg-subtle); opacity: 1; }
+.moon-btn svg circle { transition: opacity 0.3s var(--ease); }
+
+.moon-info-bar {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: moonBarIn 0.24s var(--ease-out);
+}
+.moon-info-bar[hidden] { display: none; }
+@keyframes moonBarIn {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .topbar-left .logo {
@@ -68,12 +104,13 @@
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  border: 1px solid var(--line);
+  border: none;
   border-radius: 999px;
-  padding: 3px 10px;
-  color: var(--text-secondary);
+  padding: 4px 10px;
+  color: var(--text-tertiary);
   font-size: 12px;
-  background: #fff;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
 }
 
 .token-usage strong {
@@ -90,21 +127,23 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
-  border-radius: 999px;
-  width: 34px;
-  height: 28px;
+  border-radius: var(--radius);
+  width: 32px;
+  height: 32px;
   padding: 0;
   cursor: pointer;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
 .topbar-menu-btn:hover,
 .topbar-menu-btn[aria-expanded="true"] {
   color: var(--text);
+  background: var(--bg-subtle);
 }
 
 .topbar-menu {
@@ -112,10 +151,10 @@
   top: calc(100% + 8px);
   right: 0;
   min-width: 150px;
-  background: #fff;
+  background: var(--bg-elevated);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -173,10 +212,10 @@
   transform: translate(-50%, -50%);
   z-index: 55;
   width: min(400px, calc(100vw - 32px));
-  background: #fff;
+  background: var(--bg-elevated);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 
@@ -246,8 +285,9 @@
 
 .about-product {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 400;
   letter-spacing: -0.02em;
 }
 

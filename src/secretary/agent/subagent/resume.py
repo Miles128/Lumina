@@ -45,6 +45,7 @@ class SubAgentResumeState:
     pending: PendingConfirmation
     llm_config: LlmConfig
     temperature: float
+    success_criteria: str = ""
     pending_step: StepResult | None = None
     steps_completed: int = 0
     used_tools: list[str] = field(default_factory=list)

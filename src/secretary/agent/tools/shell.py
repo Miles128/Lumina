@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool, ToolCall
+from secretary.agent.tools.base import Tool, ToolCall, ToolResult
 
 _READ_ONLY_SHELL_CMDS = {
     "ls",
@@ -28,8 +28,6 @@ _READ_ONLY_SHELL_CMDS = {
     "sort",
     "uniq",
     "cut",
-    "awk",
-    "sed",
     "stat",
     "du",
     "tree",
@@ -55,6 +53,8 @@ def _is_read_only_shell_command(command: str) -> bool:
         return False
     if re.search(r">>\s*\S+", text):
         return False
+    # 安全优先：基于正则的重定向检测会误判引号内的 >（如 grep 'a>b'），
+    # 但误判方向是从"只读"变为"需确认"，不会把写操作误判为只读，因此可接受。
     # Allow redirection only to /dev/null
     for match in re.finditer(r"(?<!\d)>\s*(\S+)|\d>\s*(\S+)", text):
         target = (match.group(1) or match.group(2) or "").strip()
@@ -77,8 +77,6 @@ def _is_read_only_shell_command(command: str) -> bool:
                 return False
             cmd = argv[0].lower()
             if cmd not in _READ_ONLY_SHELL_CMDS:
-                return False
-            if cmd == "sed" and any(arg == "-i" or arg.startswith("-i") for arg in argv[1:]):
                 return False
     return True
 
@@ -114,6 +112,7 @@ class ShellTool(Tool):
     description = "Execute a shell command. REQUIRES user confirmation before executing."
     needs_confirmation = True
     risk_level = "high"
+    read_only = False
     _MAX_OUTPUT_CHARS = 12_000
 
     def _parameters(self) -> dict[str, Any]:
@@ -130,11 +129,15 @@ class ShellTool(Tool):
         command = arguments.get("command", "")
         return f"⚡ 执行命令: `{command}`"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         command = str(arguments.get("command", "")).strip()
         timeout = min(int(arguments.get("timeout", 30) or 30), 120)
         if not command:
-            return "Error: empty command (model did not provide a command)"
+            return ToolResult.failure(
+                "Error: empty command (model did not provide a command)",
+                error_type="validation",
+                retryable=False,
+            )
         cwd = working_dir if working_dir.is_dir() else Path.home()
         env = os.environ.copy()
 
@@ -172,11 +175,23 @@ class ShellTool(Tool):
                 if attempt == 0 and not needs_shell:
                     needs_shell = True
                     continue
-                return f"Error: failed to run command in {cwd}"
+                return ToolResult.failure(
+                    f"Error: failed to run command in {cwd}",
+                    error_type="internal",
+                    retryable=False,
+                )
             except subprocess.TimeoutExpired:
-                return f"Error: command timed out after {timeout}s"
+                return ToolResult.failure(
+                    f"Error: command timed out after {timeout}s",
+                    error_type="timeout",
+                    retryable=True,
+                )
             except Exception as exc:
-                return f"Error: {exc}"
+                return ToolResult.failure(
+                    f"Error: {exc}",
+                    error_type="internal",
+                    retryable=False,
+                )
 
         output = result.stdout or ""
         if result.stderr:

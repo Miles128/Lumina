@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ def run_agent_browser(
 class _BrowserSessionTool(Tool):
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def __init__(self, session: str) -> None:
         self._session = session
@@ -98,10 +99,14 @@ class BrowserOpenTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return f"打开网页 {arguments.get('url', '')}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         url = str(arguments.get("url", "")).strip()
         if not url.startswith(("http://", "https://")):
-            return "Error: url must start with http:// or https://"
+            return ToolResult.failure(
+                "Error: url must start with http:// or https://",
+                error_type="validation",
+                retryable=False,
+            )
         ok, output = run_agent_browser(["open", url], session=self._session)
         return output if ok else output
 
@@ -136,7 +141,7 @@ class BrowserSnapshotTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "获取浏览器页面快照（accessibility tree）"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         args = ["snapshot", "-i", "-c", "--depth", str(int(arguments.get("depth", 6)))]
         if arguments.get("include_urls", True):
             args.append("--urls")
@@ -170,7 +175,7 @@ class BrowserScreenshotTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "浏览器截图"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         args = ["screenshot"]
         path = str(arguments.get("path", "")).strip()
         if path:
@@ -202,10 +207,14 @@ class BrowserClickTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return f"点击 {arguments.get('target', '')}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         target = str(arguments.get("target", "")).strip()
         if not target:
-            return "Error: target is required"
+            return ToolResult.failure(
+                "Error: target is required",
+                error_type="validation",
+                retryable=False,
+            )
         ok, output = run_agent_browser(["click", target], session=self._session)
         return output
 
@@ -227,11 +236,15 @@ class BrowserFillTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return f"填写 {arguments.get('target', '')}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         target = str(arguments.get("target", "")).strip()
         text = str(arguments.get("text", ""))
         if not target:
-            return "Error: target is required"
+            return ToolResult.failure(
+                "Error: target is required",
+                error_type="validation",
+                retryable=False,
+            )
         ok, output = run_agent_browser(["fill", target, text], session=self._session)
         return output
 
@@ -246,7 +259,7 @@ class BrowserCloseTool(_BrowserSessionTool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "关闭浏览器会话"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         ok, output = run_agent_browser(["close"], session=self._session)
         return output if ok else output
 

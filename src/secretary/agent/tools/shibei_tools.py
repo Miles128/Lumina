@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 from secretary.services.shibei_service import ShibeiService, format_list_sources
 
 
@@ -16,6 +16,7 @@ class ShibeiSearchTool(Tool):
         "Use for personal notes, articles, interview prep, and synced document Q&A. "
         "If results are empty, call shibei_import or guide the user to Settings → Shibei."
     )
+    read_only = True
 
     def __init__(self, service: ShibeiService) -> None:
         self._service = service
@@ -35,7 +36,7 @@ class ShibeiSearchTool(Tool):
         query = str(arguments.get("query", "")).strip()
         return f"检索 Shibei 知识库：{query[:80]}" if query else "检索 Shibei 知识库"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         try:
             result = self._service.search(
                 str(arguments.get("query", "")),
@@ -48,7 +49,11 @@ class ShibeiSearchTool(Tool):
                 return f"{result}\n\n[Agent hint] 可调用 shibei_import 增量导入，或让用户在设置 → Shibei 检查 sources。"
             return result
         except Exception as error:
-            return f"Error: {error}"
+            return ToolResult.failure(
+                f"Error: {error}",
+                error_type="internal",
+                retryable=False,
+            )
 
 
 class ShibeiImportTool(Tool):
@@ -57,6 +62,7 @@ class ShibeiImportTool(Tool):
         "Incrementally import monitored folders into the Shibei knowledge base. "
         "Run after adding new documents or when search returns empty."
     )
+    read_only = False
 
     def __init__(self, service: ShibeiService) -> None:
         self._service = service
@@ -75,17 +81,22 @@ class ShibeiImportTool(Tool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "全量重建 Shibei 索引" if arguments.get("full") else "增量导入 Shibei 知识库"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         try:
             result = self._service.import_all(full=bool(arguments.get("full", False)))
             return result.message
         except Exception as error:
-            return f"Error: {error}"
+            return ToolResult.failure(
+                f"Error: {error}",
+                error_type="internal",
+                retryable=False,
+            )
 
 
 class ShibeiListSourcesTool(Tool):
     name = "shibei_list_sources"
     description = "List documents currently indexed in the Shibei knowledge base."
+    read_only = True
 
     def __init__(self, service: ShibeiService) -> None:
         self._service = service
@@ -102,7 +113,7 @@ class ShibeiListSourcesTool(Tool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "列出 Shibei 已索引文档"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         try:
             payload = self._service.list_sources(
                 limit=int(arguments.get("limit", 20)),
@@ -110,4 +121,8 @@ class ShibeiListSourcesTool(Tool):
             )
             return format_list_sources(payload)
         except Exception as error:
-            return f"Error: {error}"
+            return ToolResult.failure(
+                f"Error: {error}",
+                error_type="internal",
+                retryable=False,
+            )

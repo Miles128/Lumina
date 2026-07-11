@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -472,6 +472,7 @@ class WebSearchTool(Tool):
     )
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -491,10 +492,14 @@ class WebSearchTool(Tool):
             "required": ["query"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         query = arguments.get("query", "").strip()
         if not query:
-            return "Error: empty search query"
+            return ToolResult.failure(
+                "Error: empty search query",
+                error_type="validation",
+                retryable=False,
+            )
 
         engine = str(arguments.get("engine", "auto")).lower().strip() or "auto"
         limit = min(arguments.get("limit", 5), MAX_RESULTS_PER_ENGINE)
@@ -505,11 +510,15 @@ class WebSearchTool(Tool):
         try:
             results, used_engine = run_search(query, engine, limit)
         except (RuntimeError, ValueError) as exc:
-            return f"Error: {exc}"
+            return ToolResult.failure(
+                f"Error: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
 
         return _format_results(results, query, engine_note=used_engine)
 
-    def _search_all(self, query: str, limit: int) -> str:
+    def _search_all(self, query: str, limit: int) -> str | ToolResult:
         all_results: list[SearchResult] = []
         errors: list[str] = []
 
@@ -528,7 +537,11 @@ class WebSearchTool(Tool):
                 all_results.extend(instant[0])
 
         if not all_results:
-            return "Error: all search engines failed.\n" + "\n".join(errors)
+            return ToolResult.failure(
+                "Error: all search engines failed.\n" + "\n".join(errors),
+                error_type="internal",
+                retryable=False,
+            )
 
         seen_urls: set[str] = set()
         deduped: list[SearchResult] = []

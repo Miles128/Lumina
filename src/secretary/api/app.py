@@ -152,6 +152,7 @@ class ChatResponse(BaseModel):
     usage_completion_tokens: int = 0
     usage_total_tokens: int = 0
     confirmation_scope: str = ""
+    raw_reply: str = ""
 
 
 class ConfirmActionRequest(BaseModel):
@@ -381,6 +382,7 @@ def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> Chat
         usage_completion_tokens=usage_stats.completion_tokens,
         usage_total_tokens=usage_stats.total_tokens,
         confirmation_scope=result.confirmation_scope,
+        raw_reply=result.raw_reply,
     )
 
 

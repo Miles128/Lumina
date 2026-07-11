@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -90,3 +91,11 @@ def live_base_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 @pytest.fixture(scope="session")
 def browser_context_args(live_base_url: str) -> dict[str, object]:
     return {"base_url": live_base_url}
+
+
+@pytest.fixture
+def context(browser: Any, browser_context_args: dict[str, object]) -> Iterator[Any]:
+    """Create a fresh browser context for each test to isolate local/session storage."""
+    context_ = browser.new_context(**browser_context_args)
+    yield context_
+    context_.close()

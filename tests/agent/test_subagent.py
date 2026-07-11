@@ -233,4 +233,4 @@ def test_parent_loop_invokes_spawn_and_receives_summary(tmp_path: Path) -> None:
 def test_spawn_tool_requires_goal(tmp_path: Path) -> None:
     tool = SpawnTool(_deps(tmp_path), SpawnContext(parent_session_id="s", depth=0))
     output = tool.execute({"archetype": "explore"}, tmp_path)
-    assert "non-empty goal" in output
+    assert output.error and "non-empty goal" in output.error

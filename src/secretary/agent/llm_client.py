@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -21,6 +22,7 @@ Role = Literal["system", "user", "assistant", "tool"]
 
 _MAX_RETRIES = 3
 _BASE_BACKOFF_SECONDS = 1.0
+_MAX_BACKOFF_SECONDS = 30.0
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
@@ -37,8 +39,11 @@ def _is_retryable_error(exc: Exception) -> bool:
 
 
 def _sleep_for_retry(attempt: int) -> None:
+    """指数退避 + jitter：base * 2^(attempt-1) + 随机抖动，上限 _MAX_BACKOFF_SECONDS。"""
     delay = _BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
-    time.sleep(delay)
+    delay = min(delay, _MAX_BACKOFF_SECONDS)
+    jitter = random.uniform(0, _BASE_BACKOFF_SECONDS)  # noqa: S311
+    time.sleep(delay + jitter)
 
 
 def _build_http_client(timeout: float) -> httpx.Client:
@@ -76,13 +81,18 @@ _USAGE_TRACKER: ContextVar[LlmUsage | None] = ContextVar(
 
 
 class _UsageScope:
-    """Manual context manager (avoiding @contextmanager typing issues with mypy strict)."""
+    """Manual context manager (avoiding @contextmanager typing issues with mypy strict).
+
+    支持嵌套：内层 scope 退出时，其用量会合并到外层 scope，确保 API 层总量不丢失。
+    """
 
     def __init__(self) -> None:
         self._usage = LlmUsage()
         self._token: Any = None
+        self._parent: LlmUsage | None = None
 
     def __enter__(self) -> LlmUsage:
+        self._parent = _USAGE_TRACKER.get()
         self._token = _USAGE_TRACKER.set(self._usage)
         return self._usage
 
@@ -90,6 +100,12 @@ class _UsageScope:
         if self._token is not None:
             _USAGE_TRACKER.reset(self._token)
             self._token = None
+        # 将本 scope 的用量合并到父 scope，支持嵌套场景
+        if self._parent is not None:
+            self._parent.prompt_tokens += self._usage.prompt_tokens
+            self._parent.completion_tokens += self._usage.completion_tokens
+            self._parent.total_tokens += self._usage.total_tokens
+            self._parent = None
 
 
 def llm_usage_scope() -> _UsageScope:

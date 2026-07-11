@@ -345,6 +345,17 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | N13 | 定时 Agent / cron | Backlog |
 | N14 | IM 网关（飞书 bot） | FR-16 |
 
+#### Future · 自进化与 Agent 演进（P3 / Research）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| F20 | **Skill 自进化** | 基于用户反馈或执行失败自动更新/生成 SKILL.md / manifest.json + run.py |
+| F21 | **反思记忆（Reflexion-style）** | 将失败、用户纠正、成功模式写入长期记忆，供后续 turn 检索 |
+| F22 | **代码级自修复** | 在显式用户确认下，让子 Agent 修改 Lumina 自身源码并跑测试验证；默认关闭 |
+| F23 | **评测 harness（eval-driven）** | 为常见任务建立基准用例，用 eval 驱动 prompt/tool 迭代 |
+| F24 | **智能 archetype 选择** | 根据用户一次性任务描述，自动匹配 explore / worker / verify / plan 或自定义 subagent，不新增内置类型 |
+| F25 | **结构化输出卡片** | 复用 `ASK_USER_REQUEST` 标记协议，新增 `SUMMARY_CARD` / `CODE_DIFF_CARD` / `REFERENCE_CARD` 等语义卡片；走工具返回 → loop 短路 → 前端卡片渲染路径（不进流式 delta）；需前后端协同 |
+
 ### 明确不做（近期）
 
 - LangGraph 迁移

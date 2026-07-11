@@ -57,4 +57,4 @@ def test_sync_source_tool_all() -> None:
 def test_connector_status_unknown_source() -> None:
     sync = MagicMock()
     output = ConnectorStatusTool(sync).execute({"source": "unknown"}, Path("."))
-    assert output.startswith("Error:")
+    assert output.error and output.error.startswith("Error:")

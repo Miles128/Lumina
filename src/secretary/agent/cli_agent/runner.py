@@ -193,13 +193,27 @@ class CliAgentRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                preexec_fn=os.setsid,
+                # start_new_session 在 C 层调用 setsid，避免 preexec_fn 在
+                # fork 后子进程中执行 Python 回调导致的多线程死锁问题。
+                start_new_session=True,
             )
+            stdout: str | None = None
+            stderr: str | None = None
             try:
                 stdout, stderr = proc.communicate(input=stdin_text, timeout=timeout)
             except subprocess.TimeoutExpired:
                 self._kill_process_group(proc)
                 raise
+            finally:
+                # 显式关闭 stdio 管道，防止 TimeoutExpired 后 communicate
+                # 未正常返回导致管道资源泄漏。
+                for attr in ("stdin", "stdout", "stderr"):
+                    stream = getattr(proc, attr, None)
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except Exception as exc:
+                            logger.debug("CLI stream close failed: %s", exc)
             return proc.returncode or 0, stdout or "", stderr or ""
 
         completed = subprocess.run(
@@ -225,12 +239,46 @@ class CliAgentRunner:
         if proc.poll() is not None:
             return
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            pgid = os.getpgid(proc.pid)
         except ProcessLookupError:
             return
         except Exception as exc:
-            logger.warning("CLI process group kill failed: %s", exc)
-            proc.kill()
+            logger.warning("CLI getpgid failed: %s", exc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return
+        # 先发 SIGTERM 让子进程优雅退出
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception as exc:
+            logger.warning("CLI process group SIGTERM failed: %s", exc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return
+        # 等待最多 3 秒，超时则 SIGKILL 兜底，防止子进程忽略 SIGTERM 成为孤儿
+        try:
+            proc.wait(timeout=3)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception as exc:
+            logger.debug("CLI process wait after SIGTERM failed: %s", exc)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except Exception as exc:
+            logger.warning("CLI process group SIGKILL failed: %s", exc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     @staticmethod
     def _summarize(cfg: CliProviderConfig, stdout: str, stderr: str) -> str:
