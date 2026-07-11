@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld("secretary", {
   openKnowledge() {
     return ipcRenderer.invoke("window:openKnowledge");
   },
+  // openWorkspace is an intentional alias of openKnowledge — both IPC handlers
+  // route to createKnowledgeWindow(). Kept as a distinct name so callers that
+  // semantically mean "open the workspace" read clearly at the call site.
   openWorkspace() {
     return ipcRenderer.invoke("window:openWorkspace");
   },

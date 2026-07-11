@@ -15,6 +15,10 @@ const RESTART_DELAY_MS = 3000;
 const LOAD_RETRY_COUNT = 40;
 const LOAD_RETRY_DELAY_MS = 500;
 const LOAD_RETRY_FLAG = "__luminaLoadingWithRetry";
+// Guards against unbounded restart loops when the backend port is held by a
+// process we cannot kill. Reset to 0 once the backend produces stdout.
+const MAX_ADDRESS_IN_USE_RETRIES = 3;
+let addressInUseRetries = 0;
 
 function projectRoot() {
   return path.resolve(__dirname, "..");
@@ -53,11 +57,23 @@ function startBackend() {
   );
   backendProcess.stdout.on("data", (data) => {
     console.log(`[backend] ${data.toString().trimEnd()}`);
+    // Backend is alive and producing output — clear the retry counter.
+    addressInUseRetries = 0;
   });
   backendProcess.stderr.on("data", (data) => {
     const text = data.toString();
     console.error(`[backend:err] ${text.trimEnd()}`);
     if (text.includes("address already in use")) {
+      if (addressInUseRetries >= MAX_ADDRESS_IN_USE_RETRIES) {
+        console.error(
+          `[backend] giving up after ${MAX_ADDRESS_IN_USE_RETRIES} failed attempts to reclaim port ${BACKEND_PORT}`,
+        );
+        return;
+      }
+      addressInUseRetries += 1;
+      console.warn(
+        `[backend] port in use, retry ${addressInUseRetries}/${MAX_ADDRESS_IN_USE_RETRIES}`,
+      );
       killPortHolder(BACKEND_PORT).then(() => {
         backendProcess = null;
         startBackend();
@@ -169,6 +185,10 @@ function createKnowledgeWindow() {
 }
 
 function attachLoadRetry(win, targetUrl) {
+  // Listener lifetime is bound to win.webContents: when the window is closed
+  // the webContents is destroyed and all its listeners are GC'd automatically.
+  // No explicit removal is needed (and removing it on loadUrlWithBackendRetry
+  // completion would break retry on a subsequent navigation failure).
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (!isMainFrame) return;
     if (errorCode === -3) return;
@@ -220,11 +240,25 @@ function applyAppIcon() {
   }
 }
 
+function isLocalOrigin(url) {
+  if (!url) return false;
+  return url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost");
+}
+
 function setupGeolocationPermissions() {
   const ses = session.defaultSession;
-  ses.setPermissionCheckHandler((_webContents, permission) => permission === "geolocation");
-  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === "geolocation");
+  // Only grant geolocation to our own local backend origin. Any other origin
+  // (e.g. a navigated third-party page) is denied.
+  ses.setPermissionCheckHandler((webContents, permission) => {
+    if (permission !== "geolocation") return false;
+    return isLocalOrigin(webContents.getURL());
+  });
+  ses.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission !== "geolocation") {
+      callback(false);
+      return;
+    }
+    callback(isLocalOrigin(webContents.getURL()));
   });
 }
 
@@ -241,10 +275,34 @@ async function waitForBackend(retries = 30) {
   return false;
 }
 
+function setupContentSecurityPolicy() {
+  // Lock down the renderer to local + explicitly-allowlisted origins.
+  // Google Fonts (stylesheets + font files) are allowlisted because the UI
+  // loads Fraunces/Geist/Geist Mono from fonts.googleapis.com at runtime.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' data: https://fonts.gstatic.com",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+          ].join("; "),
+        ],
+      },
+    });
+  });
+}
+
 app.setName("灵犀");
 
 app.whenReady().then(async () => {
   applyAppIcon();
+  setupContentSecurityPolicy();
   setupGeolocationPermissions();
   await ensureBackend();
   createMainWindow();

@@ -25,7 +25,7 @@
     "action.save": { en: "Save", zh: "保存" },
 
     "chat.newThread": { en: "New chat", zh: "新对话" },
-    "chat.welcome": { en: "How can I help?", zh: "有什么可以帮你？" },
+    "chat.welcome": { en: "What to build today?", zh: "今天做点什么？" },
     "chat.placeholder": { en: "Message", zh: "输入消息" },
     "chat.processing": { en: "Working…", zh: "正在处理…" },
     "chat.typing.understand": { en: "Understanding your question…", zh: "正在理解你的问题…" },
@@ -83,12 +83,9 @@
     "chat.sync.user": { en: "Sync all data", zh: "同步全部数据" },
     "chat.sync.done": { en: "Sync complete — {n} memories written.", zh: "同步完成，写入 {n} 条记忆。" },
 
-    "prompt.reading": { en: "Summarize what I've been reading lately", zh: "总结一下我最近在读什么" },
-    "prompt.schedule": { en: "What's on my schedule and todos today?", zh: "帮我看看今天的日程和待办" },
-    "prompt.profile": { en: "What does my personal profile look like?", zh: "我的个人信息画像是什么样的" },
-    "prompt.reading.label": { en: "Recent reading", zh: "最近在读什么" },
-    "prompt.schedule.label": { en: "Today's plan", zh: "今天安排" },
-    "prompt.profile.label": { en: "My profile", zh: "个人画像" },
+    "prompt.orchestrate": { en: "Orchestrate a workflow", zh: "编排一个工作流" },
+    "prompt.chain": { en: "Chain a conversation flow", zh: "串一条对话链" },
+    "prompt.skill": { en: "Run a skill", zh: "运行一个 skill" },
 
     "token.label": { en: "Token", zh: "Token" },
     "model.loading": { en: "Loading…", zh: "加载中…" },
@@ -150,9 +147,13 @@
 
     "appearance.title": { en: "Appearance", zh: "界面" },
     "appearance.desc": {
-      en: "Density, reading width, and display language.",
-      zh: "调整密度、阅读宽度与界面语言。",
+      en: "Theme, density, reading width, and display language.",
+      zh: "调整主题、密度、阅读宽度与界面语言。",
     },
+    "appearance.theme": { en: "Theme", zh: "主题" },
+    "appearance.theme.light": { en: "White", zh: "白" },
+    "appearance.theme.dark": { en: "Black", zh: "黑" },
+    "appearance.theme.paper": { en: "Paper", zh: "纸" },
     "appearance.language": { en: "Language", zh: "语言" },
     "appearance.lang.zh": { en: "中文", zh: "中文" },
     "appearance.lang.en": { en: "English", zh: "English" },
@@ -174,6 +175,16 @@
 
     "confirm.allow": { en: "Allowed", zh: "已允许" },
     "confirm.deny": { en: "Denied", zh: "已拒绝" },
+
+    "map.title": { en: "Conversation map", zh: "对话地图" },
+    "map.hint": { en: "Click a node to switch branch", zh: "点击节点切换分支" },
+    "map.empty": { en: "No conversation nodes", zh: "暂无对话节点" },
+    "map.switching": { en: "Switching branch…", zh: "正在切换分支…" },
+    "map.switchFailed": { en: "Switch failed: {error}", zh: "切换失败：{error}" },
+    "map.retry": { en: "Please retry later", zh: "请稍后重试" },
+    "map.placeholder.question": { en: "(question)", zh: "(提问)" },
+    "map.placeholder.answer": { en: "(Lumina)", zh: "(灵犀)" },
+    "map.placeholder.pending": { en: "(pending)", zh: "（待回答）" },
   };
 
   function getLanguage() {
@@ -223,13 +234,22 @@
       const key = el.getAttribute("data-i18n-title");
       if (key) el.title = t(key);
     });
+    scope.querySelectorAll("[data-i18n-tip]").forEach((el) => {
+      const key = el.getAttribute("data-i18n-tip");
+      if (key) el.setAttribute("data-tip", t(key));
+    });
     scope.querySelectorAll("[data-i18n-aria]").forEach((el) => {
       const key = el.getAttribute("data-i18n-aria");
       if (key) el.setAttribute("aria-label", t(key));
     });
     scope.querySelectorAll("[data-i18n-prompt]").forEach((el) => {
       const key = el.getAttribute("data-i18n-prompt");
-      if (key) el.dataset.prompt = STRINGS[key]?.zh || STRINGS[key]?.en || "";
+      if (key) {
+        const lang = getLanguage();
+        const langCode = lang === "en" ? "en" : "zh";
+        el.dataset.prompt =
+          STRINGS[key]?.[langCode] || STRINGS[key]?.en || STRINGS[key]?.zh || "";
+      }
     });
     const lang = getLanguage();
     document.documentElement.lang = lang === "en" ? "en" : "zh-CN";

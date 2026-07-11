@@ -10,7 +10,7 @@ from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.resume import SubAgentResumeState
 from secretary.agent.subagent.runner import SubAgentDeps, SubAgentRunner
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult, _coerce_to_tool_result
 
 
 class SpawnSubagentTool(Tool):
@@ -19,10 +19,12 @@ class SpawnSubagentTool(Tool):
         "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
         "Archetypes: explore (read-only), worker (read/write), verify (review), plan (read-only planning). "
-        "Optional goals[] runs up to 3 explore tasks in parallel (Lumina batch)."
+        "Optional goals[] runs up to 3 explore tasks in parallel (Lumina batch). "
+        "Required: exactly one of 'goal' (single task) or 'goals' (2-3 parallel explore tasks)."
     )
     needs_confirmation = False
     risk_level = "low"
+    read_only = False
 
     def __init__(
         self,
@@ -61,6 +63,14 @@ class SpawnSubagentTool(Tool):
                     "type": "string",
                     "description": "explore | worker | verify | plan, or a custom name from ~/.lumina/subagents/*.md",
                 },
+                "success_criteria": {
+                    "type": "string",
+                    "description": (
+                        "For verify archetype: machine-verifiable criteria, e.g. "
+                        "'pytest tests/test_foo.py passes' or 'file src/bar.py contains function baz'. "
+                        "Vague criteria like 'works' will be rejected."
+                    ),
+                },
                 "goals": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -71,12 +81,15 @@ class SpawnSubagentTool(Tool):
             "required": [],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
-        return self._runner.run_from_tool(
-            arguments,
-            self._spawn_context,
-            working_dir,
-            progress_callback=self._progress_callback,
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        return _coerce_to_tool_result(
+            self._runner.run_from_tool(
+                arguments,
+                self._spawn_context,
+                working_dir,
+                progress_callback=self._progress_callback,
+            ),
+            tool_name=self.name,
         )
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:

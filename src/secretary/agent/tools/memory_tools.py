@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 from secretary.memory.lumina_memory import LuminaMemory
 
 
@@ -14,6 +14,7 @@ class SearchMemoryTool(Tool):
     description = "Search local memory store for relevant information."
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -28,7 +29,7 @@ class SearchMemoryTool(Tool):
     def __init__(self, store: Any) -> None:
         self._store = store
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         query = arguments.get("query", "")
         limit = arguments.get("limit", 5)
         chunks = self._store.search(query, limit=limit)
@@ -51,6 +52,7 @@ class MemoryTool(Tool):
     )
     needs_confirmation = False
     risk_level = "low"
+    read_only = False
 
     def __init__(self, memory: LuminaMemory) -> None:
         self._memory = memory
@@ -78,7 +80,7 @@ class MemoryTool(Tool):
             "required": ["action", "target"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         try:
             return self._memory.mutate_memory(
                 str(arguments.get("action", "")),
@@ -87,7 +89,11 @@ class MemoryTool(Tool):
                 old_text=str(arguments.get("old_text", "")),
             )
         except ValueError as exc:
-            return f"Error: {exc}"
+            return ToolResult.failure(
+                f"Error: {exc}",
+                error_type="validation",
+                retryable=False,
+            )
 
 
 class SessionSearchTool(Tool):
@@ -95,6 +101,7 @@ class SessionSearchTool(Tool):
     description = "Search past conversation sessions for relevant messages."
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def __init__(self, memory: LuminaMemory) -> None:
         self._memory = memory
@@ -109,10 +116,14 @@ class SessionSearchTool(Tool):
             "required": ["query"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return "Error: empty query"
+            return ToolResult.failure(
+                "Error: empty query",
+                error_type="validation",
+                retryable=False,
+            )
         limit = int(arguments.get("limit", 8))
         results = self._memory.search_sessions(query, limit=limit)
         if not results:

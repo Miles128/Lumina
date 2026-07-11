@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 from secretary.core.types import ConnectorStatus, SourceKind
 from secretary.services.sync import SyncService
 
@@ -61,6 +61,7 @@ class ListConnectorsTool(Tool):
     )
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def __init__(self, sync_service: SyncService) -> None:
         self._sync_service = sync_service
@@ -71,7 +72,7 @@ class ListConnectorsTool(Tool):
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         return "查看连接器状态"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         health = self._sync_service.get_stored_health()
         if not health:
             return "暂无已注册的连接器。"
@@ -84,6 +85,7 @@ class ConnectorStatusTool(Tool):
     description = "Get sync status for one connector source (read-only)."
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def __init__(self, sync_service: SyncService) -> None:
         self._sync_service = sync_service
@@ -107,11 +109,15 @@ class ConnectorStatusTool(Tool):
         source = str(arguments.get("source", "")).strip()
         return f"查看连接器 {source or '状态'}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         source = parse_source_kind(str(arguments.get("source", "")))
         if source is None:
             known = ", ".join(sorted(_SOURCE_ALIASES))
-            return f"Error: unknown source. Known: {known}"
+            return ToolResult.failure(
+                f"Error: unknown source. Known: {known}",
+                error_type="validation",
+                retryable=False,
+            )
         for item in self._sync_service.get_stored_health():
             if item.source is source:
                 return _format_health(
@@ -121,7 +127,11 @@ class ConnectorStatusTool(Tool):
                     item_count=item.item_count,
                     last_sync_at=item.last_sync_at,
                 )
-        return f"Error: source {source.value} not found"
+        return ToolResult.failure(
+            f"Error: source {source.value} not found",
+            error_type="not_found",
+            retryable=False,
+        )
 
 
 class SyncSourceTool(Tool):
@@ -132,6 +142,7 @@ class SyncSourceTool(Tool):
     )
     needs_confirmation = True
     risk_level = "medium"
+    read_only = False
 
     def __init__(self, sync_service: SyncService) -> None:
         self._sync_service = sync_service
@@ -156,7 +167,7 @@ class SyncSourceTool(Tool):
         source = str(arguments.get("source", "all")).strip() or "all"
         return f"同步数据源：{source}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         raw = str(arguments.get("source", "")).strip().lower()
         include_browser = bool(arguments.get("include_browser_sources", False))
         if raw in {"", "all"}:
@@ -180,7 +191,11 @@ class SyncSourceTool(Tool):
         source = parse_source_kind(raw)
         if source is None:
             known = ", ".join(["all", *sorted(_SOURCE_ALIASES)])
-            return f"Error: unknown source. Known: {known}"
+            return ToolResult.failure(
+                f"Error: unknown source. Known: {known}",
+                error_type="validation",
+                retryable=False,
+            )
         result = self._sync_service.sync_source(source)
         return _format_health(
             result.source,

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from secretary.agent.tools.base import Tool
+from secretary.agent.tools.base import Tool, ToolResult
 
 
 class WebFetchTool(Tool):
@@ -16,6 +16,7 @@ class WebFetchTool(Tool):
     description = "Fetch and extract text content from a URL."
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -27,11 +28,15 @@ class WebFetchTool(Tool):
             "required": ["url"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         url = str(arguments.get("url", "")).strip()
         max_chars = int(arguments.get("max_chars", 3000) or 3000)
         if not url.startswith(("http://", "https://")):
-            return "Error: only http/https URLs are supported"
+            return ToolResult.failure(
+                "Error: only http/https URLs are supported",
+                error_type="validation",
+                retryable=False,
+            )
         try:
             from secretary.agent.github_trending_fetch import (
                 fetch_github_trending,
@@ -50,7 +55,11 @@ class WebFetchTool(Tool):
                 body = body[:max_chars] + "..."
             return body or "(empty response)"
         except Exception as exc:
-            return f"Error fetching URL: {exc}"
+            return ToolResult.failure(
+                f"Error fetching URL: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
 
 
 def _fetch_url(url: str) -> str:

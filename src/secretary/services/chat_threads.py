@@ -9,6 +9,7 @@ The thread records the currently displayed path via ``active_leaf_id``;
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -138,12 +139,17 @@ def _descendant_ids(thread: dict[str, Any], root_id: str) -> list[str]:
 class ChatThreadStore:
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._lock = threading.Lock()
 
     @property
     def path(self) -> Path:
         return self._path
 
     def load_document(self) -> dict[str, Any]:
+        with self._lock:
+            return self._load_document_locked()
+
+    def _load_document_locked(self) -> dict[str, Any]:
         if not self._path.exists():
             return {"current_id": "", "threads": []}
         payload = json.loads(self._path.read_text(encoding="utf-8"))
@@ -159,10 +165,14 @@ class ChatThreadStore:
                 migrated = True
         current_id = str(payload.get("current_id") or "")
         if migrated:
-            self.save_document(current_id=current_id, threads=threads)
+            self._save_document_locked(current_id=current_id, threads=threads)
         return {"current_id": current_id, "threads": threads}
 
     def save_document(self, *, current_id: str, threads: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._save_document_locked(current_id=current_id, threads=threads)
+
+    def _save_document_locked(self, *, current_id: str, threads: list[dict[str, Any]]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(
@@ -428,6 +438,121 @@ class ChatThreadStore:
             break
         return self.list_view()
 
+    def split_disconnected_chains(self, thread_id: str) -> dict[str, Any]:
+        """检测线程内的断档(多个根节点),把断开的后续对话链拆分到新线程。
+
+        当同一线程内出现多个 ``parent_id`` 为空的消息时,说明对话链断裂——
+        通常是用户在同一线程内开始了全新话题。此方法保留第一条链(原始线程),
+        把第 2 条及之后的每条独立链拆分到各自的新线程里,新线程标题取该链
+        首条用户消息。
+        """
+        document = self.load_document()
+        threads = document["threads"]
+        target_idx = -1
+        target: dict[str, Any] | None = None
+        for i, item in enumerate(threads):
+            if not isinstance(item, dict) or item.get("id") != thread_id:
+                continue
+            target = item
+            target_idx = i
+            break
+        if target is None:
+            return {"split_count": 0, "new_thread_ids": []}
+        messages = target.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return {"split_count": 0, "new_thread_ids": []}
+
+        # 找出所有根消息(parent_id 为空或指向不存在的消息)
+        msg_ids = {
+            m["id"] for m in messages if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]
+        }
+        root_user_msgs: list[dict[str, Any]] = []
+        for m in messages:
+            if not isinstance(m, dict) or m.get("role") != "user":
+                continue
+            pid = m.get("parent_id")
+            if not isinstance(pid, str) or not pid or pid not in msg_ids:
+                root_user_msgs.append(m)
+
+        if len(root_user_msgs) <= 1:
+            return {"split_count": 0, "new_thread_ids": []}
+
+        # 第一条链保留在原线程;其余的拆分出去。
+        # 为每条链收集所有后代消息(含根)。
+        children_map: dict[str, list[str]] = {}
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            pid = m.get("parent_id")
+            mid = m.get("id")
+            if isinstance(pid, str) and pid and isinstance(mid, str) and mid:
+                children_map.setdefault(pid, []).append(mid)
+
+        def collect_descendants(root_id: str) -> set[str]:
+            result: set[str] = set()
+            stack = [root_id]
+            while stack:
+                cid = stack.pop()
+                if cid in result:
+                    continue
+                result.add(cid)
+                stack.extend(children_map.get(cid, []))
+            return result
+
+        # 保留第一条链的消息 id 集合
+        first_chain_ids = collect_descendants(root_user_msgs[0]["id"])
+        # 原线程的 active_leaf_id 必须在第一条链里,否则选第一条链的最后一个消息
+        current_leaf = target.get("active_leaf_id", "")
+        if not isinstance(current_leaf, str) or current_leaf not in first_chain_ids:
+            # 找第一条链的最后一个消息(按 messages 顺序)
+            for m in reversed(messages):
+                if isinstance(m, dict) and m.get("id") in first_chain_ids:
+                    current_leaf = m.get("id", "")
+                    break
+
+        new_threads: list[dict[str, Any]] = []
+        new_thread_ids: list[str] = []
+        for root_msg in root_user_msgs[1:]:
+            chain_ids = collect_descendants(root_msg["id"])
+            chain_messages = [
+                m for m in messages if isinstance(m, dict) and m.get("id") in chain_ids
+            ]
+            if not chain_messages:
+                continue
+            # 新线程的 leaf:该链最后一条消息
+            chain_leaf = chain_messages[-1].get("id", "")
+            # 标题:首条用户消息
+            title = (root_msg.get("text") or "新对话")[:48]
+            new_thread_id = f"t_{uuid.uuid4().hex[:10]}"
+            now = datetime.now(UTC).isoformat()
+            new_thread = {
+                "id": new_thread_id,
+                "title": title,
+                "updatedAt": now,
+                "messages": chain_messages,
+                "active_leaf_id": chain_leaf,
+            }
+            new_threads.append(new_thread)
+            new_thread_ids.append(new_thread_id)
+
+        # 从原线程移除被拆分的消息
+        split_ids: set[str] = set()
+        for nt in new_threads:
+            for m in nt["messages"]:
+                if isinstance(m, dict) and isinstance(m.get("id"), str):
+                    split_ids.add(m["id"])
+        retained_messages = [
+            m for m in messages if not (isinstance(m, dict) and m.get("id") in split_ids)
+        ]
+        target["messages"] = retained_messages
+        target["active_leaf_id"] = current_leaf
+        # 在原线程后面插入新线程
+        for j, nt in enumerate(new_threads):
+            threads.insert(target_idx + 1 + j, nt)
+
+        self.save_document(current_id=document["current_id"], threads=threads)
+        return {"split_count": len(new_threads), "new_thread_ids": new_thread_ids}
+
     def thread_tree_view(self, thread_id: str) -> dict[str, Any]:
         """Return the conversation tree as *turn* nodes.
 
@@ -509,6 +634,8 @@ class ChatThreadStore:
                     {
                         "id": turn_id,
                         "parent_id": parent_id,
+                        "user_message_id": mid,
+                        "assistant_message_id": assistant.get("id") if assistant else "",
                         "user_preview": user_preview,
                         "assistant_preview": assistant_preview,
                         "has_assistant": assistant is not None,

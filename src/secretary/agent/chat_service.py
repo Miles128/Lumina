@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+import os
 import re
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -99,6 +102,22 @@ class ChatResult:
     grounding_note: str = ""
     files_read: list[str] | None = None
     confirmation_scope: str = ""
+    raw_reply: str = ""
+
+
+# Per-request context: isolates active thread/trace/parent across concurrent
+# reply() calls. FastAPI runs sync endpoints in a threadpool where each task
+# gets its own copied context, so concurrent conversations don't clobber
+# each other's state.
+_active_thread_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_thread_id", default="",
+)
+_active_trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_trace_id", default="",
+)
+_active_parent_message_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_parent_message_id", default="",
+)
 
 
 class ChatService:
@@ -141,6 +160,12 @@ class ChatService:
         self._parent_turn_resume: ParentTurnResumeState | None = None
         self._active_spawn_tool: SpawnSubagentTool | None = None
         self._prompt_gate = PromptGate(settings, agent_config_store)
+        self._split_checked_threads: set[str] = set()
+        self._history_lock = threading.Lock()
+        self._history_cache: list[dict[str, str]] | None = None
+        self._history_cache_time: float = 0.0
+        self._system_prompt_cache: str | None = None
+        self._system_prompt_cache_key: str = ""
         self._session_store = session_store or SessionStore()
         orchestrator = TurnOrchestrator(self._file_auth)
         self._turn_runner = turn_runner or TurnRunner(orchestrator, self._session_store)
@@ -256,7 +281,7 @@ class ChatService:
             self._pending_llm_config = llm_config
         if persist:
             self._persist_pause(
-                self._active_trace_id,
+                _active_trace_id_var.get(),
                 "confirmation",
                 pause_bundle_confirmation(pending=pending, messages=messages),
             )
@@ -265,7 +290,7 @@ class ChatService:
         with self._pending_lock:
             self._subagent_pending = state
         if persist:
-            self._persist_pause(self._active_trace_id, "subagent", pause_bundle_subagent(state))
+            self._persist_pause(_active_trace_id_var.get(), "subagent", pause_bundle_subagent(state))
 
     def _take_subagent_pending(self) -> SubAgentResumeState | None:
         with self._pending_lock:
@@ -277,7 +302,7 @@ class ChatService:
         with self._pending_lock:
             self._parent_turn_resume = state
         if persist:
-            self._persist_pause(self._active_trace_id, "parent_resume", pause_bundle_parent(state))
+            self._persist_pause(_active_trace_id_var.get(), "parent_resume", pause_bundle_parent(state))
 
     def _take_parent_turn_resume(self) -> ParentTurnResumeState | None:
         with self._pending_lock:
@@ -331,6 +356,9 @@ class ChatService:
         self._active_trace_id = trace_id.strip() if trace_id else ""
         self._active_parent_message_id = parent_message_id or ""
         self._turn_working_dir = self._resolve_turn_working_dir(working_dir)
+        _active_thread_id_var.set(self._active_thread_id)
+        _active_trace_id_var.set(self._active_trace_id)
+        _active_parent_message_id_var.set(self._active_parent_message_id)
         if attachments:
             from secretary.services.chat_uploads import format_attachments_block
 
@@ -476,18 +504,23 @@ class ChatService:
         trace_id: str | None = None,
     ) -> ChatResult:
         if thread_id:
-            self._active_thread_id = thread_id.strip()
-        self._active_trace_id = trace_id.strip() if trace_id else ""
+            tid = thread_id.strip()
+            self._active_thread_id = tid
+            _active_thread_id_var.set(tid)
+        _active_trace_id_var.set(trace_id.strip() if trace_id else "")
+        self._active_trace_id = _active_trace_id_var.get()
+        _active_parent_message_id_var.set("")
         self._active_parent_message_id = ""
-        self._restore_pause_from_store(self._active_trace_id)
+        self._restore_pause_from_store(_active_trace_id_var.get())
         sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
-        spawn_tool = self._active_spawn_tool
+        with self._pending_lock:
+            spawn_tool = self._active_spawn_tool
 
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
             self._append_history("system", reply)
-            self._clear_persisted_pause(self._active_trace_id)
+            self._clear_persisted_pause(_active_trace_id_var.get())
             return ChatResult(
                 reply=reply,
                 profile_excerpt="",
@@ -500,7 +533,17 @@ class ChatService:
         if grant_session_write:
             self._file_auth.grant_session_write_new()
 
-        if sub_state is not None and spawn_tool is not None:
+        if sub_state is not None:
+            if spawn_tool is None:
+                self._clear_persisted_pause(_active_trace_id_var.get())
+                reply = "子代理状态丢失，无法恢复。请重新发起请求。"
+                self._append_history("system", reply)
+                return ChatResult(
+                    reply=reply,
+                    profile_excerpt="",
+                    used_llm=False,
+                    memory_hits=0,
+                )
             return self._confirm_subagent_action(
                 sub_state,
                 spawn_tool,
@@ -518,7 +561,7 @@ class ChatService:
             temperature=0.7,
             working_dir=self._shell_working_dir(),
             progress_callback=progress_callback,
-            turn=self._active_turn(self._active_trace_id),
+            turn=self._active_turn(_active_trace_id_var.get()),
         )
 
         if result.pending_confirmation:
@@ -529,7 +572,7 @@ class ChatService:
             )
 
         if result.pending_confirmation is None:
-            self._clear_persisted_pause(self._active_trace_id)
+            self._clear_persisted_pause(_active_trace_id_var.get())
 
         safe_reply, _, _ = self._prepare_user_reply(
             result.reply,
@@ -608,7 +651,7 @@ class ChatService:
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
-                turn=self._active_turn(self._active_trace_id),
+                turn=self._active_turn(_active_trace_id_var.get()),
             )
             if (
                 result.pending_confirmation
@@ -798,13 +841,15 @@ class ChatService:
             )
             if progress_callback and stream_started:
                 progress_callback(ProgressEvent(kind="reply_end", iteration=1))
-            reply, verified, note = self._prepare_user_reply(reply, cleaned, llm_config)
+            raw_reply = reply
+            reply, verified, note = self._prepare_user_reply(raw_reply, cleaned, llm_config)
             self._memory.end_session(session_id, summary=reply[:200])
             self._append_history(cleaned, reply)
             self._save_to_session("assistant", reply)
             self._background_review.schedule(cleaned, reply, llm_config)
             return ChatResult(
                 reply=reply,
+                raw_reply=raw_reply,
                 profile_excerpt=profile_excerpt,
                 used_llm=True,
                 memory_hits=len(hits),
@@ -894,7 +939,7 @@ class ChatService:
                 temperature=self._temperature(),
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
-                turn=self._active_turn(self._active_trace_id),
+                turn=self._active_turn(_active_trace_id_var.get()),
                 cancel_check=cancel_check,
             )
             chat = self._finalize_agent_result(
@@ -1008,7 +1053,8 @@ class ChatService:
             light_mode=light_mode,
             llm_config=llm_config,
         )
-        self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None
+        with self._pending_lock:
+            self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None
 
         if profile is AgentProfile.PLAN:
             max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
@@ -1031,7 +1077,7 @@ class ChatService:
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
-                turn=self._active_turn(self._active_trace_id),
+                turn=self._active_turn(_active_trace_id_var.get()),
                 cancel_check=cancel_check,
             )
             if (
@@ -1105,8 +1151,9 @@ class ChatService:
         *,
         memory_hits: int,
     ) -> ChatResult:
+        raw_reply = result.reply
         safe_reply, grounding_verified, grounding_note = self._prepare_user_reply(
-            result.reply,
+            raw_reply,
             cleaned,
             llm_config,
             used_tools=result.used_tools,
@@ -1167,6 +1214,7 @@ class ChatService:
             grounding_note=grounding_note,
             files_read=result.files_read or None,
             confirmation_scope=confirmation_scope,
+            raw_reply=raw_reply,
         )
 
     def _prepare_user_reply(
@@ -1185,13 +1233,27 @@ class ChatService:
             return raw_reply, grounding_verified, grounding_note
 
         sanitized = prepare_user_facing_reply(raw_reply, user_message, llm_config)
-        return enforce_grounded_reply(
+        reply, verified, note = enforce_grounded_reply(
             sanitized,
             user_message,
             list(used_tools or []),
             grounding_verified=grounding_verified,
             grounding_note=grounding_note,
         )
+        return self._structure_reply(reply), verified, note
+
+    @staticmethod
+    def _structure_reply(reply: str) -> str:
+        """对最终回复做确定性的结构化兜底（不依赖 LLM 自觉）。"""
+        import re
+
+        if not reply:
+            return reply
+        # 压缩 3+ 连续换行为 2
+        reply = re.sub(r"\n{3,}", "\n\n", reply)
+        # 行尾空白清理
+        reply = "\n".join(line.rstrip() for line in reply.split("\n"))
+        return reply
 
     def _temperature(self) -> float:
         if self._agent_config_store is not None:
@@ -1229,7 +1291,23 @@ class ChatService:
         )
 
     def list_threads(self) -> dict[str, object]:
-        return self._thread_store.list_view()
+        # 加载对话历史时,自动检测并拆分每个线程内的断档链
+        view = self._thread_store.list_view()
+        threads = view.get("threads") or []
+        changed = False
+        for t in threads:
+            tid = t.get("id", "") if isinstance(t, dict) else ""
+            if not tid:
+                continue
+            if tid in self._split_checked_threads:
+                continue
+            result = self._thread_store.split_disconnected_chains(tid)
+            if result.get("split_count", 0) > 0:
+                changed = True
+            self._split_checked_threads.add(tid)
+        if changed:
+            view = self._thread_store.list_view()
+        return view
 
     def create_thread(self, *, title: str = "新对话") -> dict[str, object]:
         return self._thread_store.create_thread(title=title)
@@ -1267,8 +1345,33 @@ class ChatService:
         soul = load_soul(self._settings.resolved_data_dir())
         skills = self._skills.prompt_block()
         exec_skills = self._exec_skills.prompt_block()
+
+        # Cache the fixed prefix (soul + identity + skills + exec_skills)
+        # based on content hash to avoid rebuilding on every call.
+        cache_key = f"{soul}\x00{skills}\x00{exec_skills}"
+        if self._system_prompt_cache_key == cache_key and self._system_prompt_cache is not None:
+            prefix = self._system_prompt_cache
+        else:
+            prefix = (
+                f"{soul}\n\n"
+                f"{LUMINA_IDENTITY_SYSTEM_BLOCK}\n\n"
+                "## 已安装技能\n"
+                f"{skills}\n\n"
+                "## 可执行技能\n"
+                f"{exec_skills}\n\n"
+            )
+            self._system_prompt_cache = prefix
+            self._system_prompt_cache_key = cache_key
+
         memory_block = self._format_memory_block(hits)
         profile_block = profile_markdown.strip() or "暂无个人画像。用户尚未同步数据源。"
+
+        notes_path = self._settings.resolved_data_dir() / "NOTES.md"
+        notes_block = ""
+        if notes_path.exists():
+            notes_text = notes_path.read_text(encoding="utf-8").strip()
+            if notes_text:
+                notes_block = f"\n\n## 持久笔记（跨会话保留，可用 notes 工具更新）\n{notes_text[:4000]}"
 
         memory_snapshot = self._memory.prompt_snapshot()
         memory_section = ""
@@ -1292,6 +1395,10 @@ class ChatService:
             if self._response_style() == "brief"
             else f"- 语气档位：标准；在「{LUMINA_DEFAULT_STYLE}」基础上，先给结论，再补关键细节，避免啰嗦。\n"
         )
+        format_rule = (
+            "- 输出格式：长回答用 ## 分段；步骤用有序列表；命令、路径、文件名、变量名用 `行内代码`；"
+            "代码块标注语言（```python / ```bash 等）；关键结论可用 > 引用块强调\n"
+        )
         browser_rule = ""
         if agent_browser_available():
             browser_rule = (
@@ -1299,19 +1406,14 @@ class ChatService:
                 "browser_click/browser_fill；完成后 browser_close\n"
             )
 
-        return (
-            f"{soul}\n\n"
-            f"{LUMINA_IDENTITY_SYSTEM_BLOCK}\n\n"
-            "## 已安装技能\n"
-            f"{skills}\n\n"
-            "## 可执行技能\n"
-            f"{exec_skills}\n\n"
+        return prefix + (
             "## 关于用户的资料（用户画像与本地文档，描述用户本人，不是灵犀）\n"
             f"{profile_block[:6000]}\n\n"
             "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
             f"{memory_block}\n"
             f"{memory_section}"
-            f"{shibei_section}\n\n"
+            f"{shibei_section}"
+            f"{notes_block}\n\n"
             "## 对话规则\n"
             "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
             "- 用户画像、本地文档、本地记忆说的是用户；灵犀的风格、技术栈、自我介绍只说灵犀自己的，二者不要混用\n"
@@ -1345,6 +1447,7 @@ class ChatService:
             "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
             "- 不要分析用户情绪，直接回应具体问题\n"
             f"{style_rule}"
+            f"{format_rule}"
             "- 用户在本轮明确提供的个人信息，应在回复后写入 durable memory（USER.md）与用户画像\n"
             "- 完成复杂任务后，总结关键事实到 durable memory\n"
             "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
@@ -1418,10 +1521,14 @@ class ChatService:
         return MAX_HISTORY_TURNS * 2
 
     def _load_history(self) -> list[dict[str, str]]:
-        if self._active_thread_id:
-            thread_history = self._thread_store.agent_history(self._active_thread_id)
+        thread_id = _active_thread_id_var.get()
+        if thread_id:
+            thread_history = self._thread_store.agent_history(thread_id)
             if thread_history:
                 return thread_history
+        now = time.monotonic()
+        if self._history_cache is not None and (now - self._history_cache_time) < 5.0:
+            return list(self._history_cache)
         if not self._history_path.exists():
             return []
         raw = json.loads(self._history_path.read_text(encoding="utf-8"))
@@ -1440,27 +1547,33 @@ class ChatService:
                 if role == "assistant" and is_third_person_meta_reply(content):
                     continue
                 items.append({"role": role, "content": content.strip()})
+        self._history_cache = list(items)
+        self._history_cache_time = time.monotonic()
         return items
 
     def _append_history(self, user_message: str, assistant_message: str) -> None:
-        if self._active_thread_id:
+        thread_id = _active_thread_id_var.get()
+        if thread_id:
+            self._split_checked_threads.discard(thread_id)
             self._thread_store.append_turn(
-                self._active_thread_id,
+                thread_id,
                 user_message,
                 assistant_message,
-                parent_message_id=self._active_parent_message_id,
+                parent_message_id=_active_parent_message_id_var.get(),
             )
             self._maybe_refresh_thread_title()
             return
-        history = self._load_history()
-        history.append({"role": "user", "content": user_message[:MAX_MESSAGE_CHARS]})
-        history.append({"role": "assistant", "content": assistant_message[:MAX_MESSAGE_CHARS]})
-        history = history[-self._history_limit() :]
-        payload = {"updated_at": datetime.now(UTC).isoformat(), "messages": history}
-        self._history_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        with self._history_lock:
+            history = self._load_history()
+            history.append({"role": "user", "content": user_message[:MAX_MESSAGE_CHARS]})
+            history.append({"role": "assistant", "content": assistant_message[:MAX_MESSAGE_CHARS]})
+            history = history[-self._history_limit() :]
+            payload = {"updated_at": datetime.now(UTC).isoformat(), "messages": history}
+            self._history_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            self._history_cache = None
 
     def _maybe_refresh_thread_title(self) -> None:
         if not self._active_thread_id:
@@ -1481,7 +1594,13 @@ class ChatService:
             if sid:
                 return sid
         sid = str(uuid.uuid4())[:8]
-        session_path.write_text(sid, encoding="utf-8")
+        try:
+            fd = os.open(str(session_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            sid = session_path.read_text(encoding="utf-8").strip()
+            return sid or str(uuid.uuid4())[:8]
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(sid)
         return sid
 
     def _save_to_session(self, role: str, content: str) -> None:

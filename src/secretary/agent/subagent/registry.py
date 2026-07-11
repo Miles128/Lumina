@@ -54,8 +54,17 @@ WORKER_PROMPT = (
 VERIFY_PROMPT = (
     "You are a verification sub-agent for Lumina (read-only).\n"
     "Review the task using list_dir, file_read, read_document, search_files, "
-    "and search_memory.\n"
-    "Output: (1) Pass/Fail, (2) issues found, (3) suggested fixes.\n"
+    "and search_memory.\n\n"
+    "Success criteria must be machine-verifiable. Check:\n"
+    "- If a test was expected: does it exist and pass? (run shell if needed to verify)\n"
+    "- If a file was expected: does it exist with the expected content?\n"
+    "- If a function was expected: can you find it in the codebase?\n"
+    "- Vague criteria like 'works' or 'looks good' are NOT acceptable — specify what to check.\n\n"
+    "Output format:\n"
+    "1. Pass/Fail\n"
+    "2. Criteria checked (list each criterion and its result)\n"
+    "3. Issues found (if any)\n"
+    "4. Suggested fixes (if any)\n"
     "Do not modify files or spawn other agents."
 )
 
@@ -195,9 +204,17 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
     return tools
 
 
-def build_messages(*, goal: str, context: str, spec: ArchetypeSpec) -> list[dict[str, str]]:
+def build_messages(
+    *,
+    goal: str,
+    context: str,
+    spec: ArchetypeSpec,
+    success_criteria: str = "",
+) -> list[dict[str, str]]:
     context_block = context.strip() or "None."
     user_content = f"## Task\n{goal.strip()}\n\n## Context\n{context_block}"
+    if success_criteria:
+        user_content += f"\n\n## 成功标准（机器可验证）\n{success_criteria}"
     return [
         {"role": "system", "content": spec.system_prompt},
         {"role": "user", "content": user_content},

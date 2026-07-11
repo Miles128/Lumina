@@ -1,6 +1,6 @@
 # AGENTS.md — Lumina
 
-Local-first personal AI secretary: file access, memory, MCP, Feishu/reading/XHS sync, confirms before risky actions.
+Local-first Agent Harness: conversation orchestration, skill workflow orchestration, memory, MCP, file access. Confirms before risky actions.
 
 ## Quick start
 
@@ -37,5 +37,5 @@ tests/
 
 ## Agent workflows
 
-- Prefer minimal diffs; Lumina has many integrated subsystems (MCP, memory, Feishu).
+- Prefer minimal diffs; Lumina has many integrated subsystems (MCP, memory).
 - Run pytest before claiming API/agent loop changes are done.

@@ -7,9 +7,45 @@ import os
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.tools.base import Tool, _resolve_path
+from secretary.agent.tools.base import Tool, ToolResult, _resolve_path
 
 READABLE_MAX_BYTES = 2 * 1024 * 1024
+
+# 敏感路径模式：写入这些路径需要额外警告（不阻止，因已有 needs_confirmation 保护）
+_SENSITIVE_PATH_PATTERNS = (
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".docker",
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".profile",
+    ".gitconfig",
+    ".env",
+    ".npmrc",
+    ".pypirc",
+)
+
+
+def _sensitive_path_warning(path: Path) -> str | None:
+    """检查路径是否敏感，返回警告字符串（如敏感）或 None。
+
+    不阻止写入，仅附加警告提醒用户。已有 needs_confirmation=True 保护。
+    """
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        resolved = path
+    str_path = str(resolved)
+    # 系统目录
+    if str_path.startswith("/etc/") or str_path == "/etc":
+        return f"⚠️ 警告：写入系统目录 {path}，请格外谨慎。"
+    # home 下的敏感文件/目录
+    for pattern in _SENSITIVE_PATH_PATTERNS:
+        if pattern in str_path:
+            return f"⚠️ 警告：写入敏感路径 {path}（匹配 {pattern}），请确认操作意图。"
+    return None
 
 
 def _human_size(size: int) -> str:
@@ -26,6 +62,7 @@ class ListDirTool(Tool):
     description = "List files and directories in a given path. Returns names, types, and sizes."
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -38,7 +75,7 @@ class ListDirTool(Tool):
             "required": [],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         raw_path = arguments.get("path", ".")
         path = Path(raw_path)
         if not path.is_absolute():
@@ -46,9 +83,17 @@ class ListDirTool(Tool):
         path = path.resolve()
 
         if not path.exists():
-            return f"Error: path not found: {path}"
+            return ToolResult.failure(
+                f"Error: path not found: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
         if not path.is_dir():
-            return f"Error: not a directory: {path}"
+            return ToolResult.failure(
+                f"Error: not a directory: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
 
         recursive = arguments.get("recursive", False)
         pattern = str(arguments.get("pattern", "*") or "*")
@@ -117,9 +162,17 @@ class ListDirTool(Tool):
                     parts = [f"{ext}={count}" for ext, count in sorted(ext_counts.items())]
                     lines.insert(0, f"扩展名统计: {', '.join(parts)}")
         except PermissionError:
-            return f"Error: permission denied: {path}"
+            return ToolResult.failure(
+                f"Error: permission denied: {path}",
+                error_type="permission",
+                retryable=False,
+            )
         except Exception as exc:
-            return f"Error listing directory: {exc}"
+            return ToolResult.failure(
+                f"Error listing directory: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
 
         header = f"📂 {path} ({len(lines)} entries)"
         footer = (
@@ -143,6 +196,7 @@ class FileReadTool(Tool):
     )
     needs_confirmation = False
     risk_level = "low"
+    read_only = True
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -156,27 +210,48 @@ class FileReadTool(Tool):
             "required": ["path"],
         }
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         path = Path(arguments.get("path", ""))
         if not path.is_absolute():
             path = working_dir / path
         path = path.resolve()
 
         if not path.exists():
-            return f"Error: file not found: {path}"
+            return ToolResult.failure(
+                f"Error: file not found: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
         if not path.is_file():
-            return f"Error: not a file: {path}"
+            return ToolResult.failure(
+                f"Error: not a file: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
+
+        # 参数类型校验：LLM 可能传入字符串形式的整数（如 "5"），需显式转换
+        try:
+            offset = max(1, int(arguments.get("offset", 1))) - 1
+            limit = int(arguments.get("limit", 200))
+        except (TypeError, ValueError):
+            return ToolResult.failure(
+                "Error: offset/limit must be integers",
+                error_type="validation",
+                retryable=False,
+            )
 
         try:
             file_size = path.stat().st_size
             if file_size > READABLE_MAX_BYTES:
-                return f"Error: file too large ({_human_size(file_size)}), max {_human_size(READABLE_MAX_BYTES)}"
+                return ToolResult.failure(
+                    f"Error: file too large ({_human_size(file_size)}), max {_human_size(READABLE_MAX_BYTES)}",
+                    error_type="validation",
+                    retryable=False,
+                )
 
             encoding = arguments.get("encoding", "utf-8")
             content = path.read_text(encoding=encoding, errors="replace")
             lines = content.splitlines()
-            offset = max(1, arguments.get("offset", 1)) - 1
-            limit = arguments.get("limit", 200)
             selected = lines[offset : offset + limit]
             total_lines = len(lines)
             header = f"📄 {path} ({total_lines} lines, {_human_size(file_size)})"
@@ -185,9 +260,17 @@ class FileReadTool(Tool):
                 body += f"\n... ({total_lines - offset - limit} more lines)"
             return f"{header}\n{body}"
         except PermissionError:
-            return f"Error: permission denied: {path}"
+            return ToolResult.failure(
+                f"Error: permission denied: {path}",
+                error_type="permission",
+                retryable=False,
+            )
         except Exception as exc:
-            return f"Error reading file: {exc}"
+            return ToolResult.failure(
+                f"Error reading file: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
@@ -199,6 +282,7 @@ class FileWriteTool(Tool):
     description = "Write content to a file. REQUIRES user confirmation before executing."
     needs_confirmation = True
     risk_level = "medium"
+    read_only = False
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -224,11 +308,13 @@ class FileWriteTool(Tool):
             return f"📝 {action}文件 `{path}`（文件已存在，将被{'追加' if append else '覆盖'}）{size_info}"
         return f"📝 {action}新文件 `{path}`{size_info}"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         path = Path(arguments.get("path", ""))
         if not path.is_absolute():
             path = working_dir / path
-        content = arguments.get("content", "")
+        # 确保内容为字符串：LLM 可能传入非字符串值
+        content_raw = arguments.get("content", "")
+        content = content_raw if isinstance(content_raw, str) else str(content_raw)
         append = arguments.get("append", False)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,9 +323,24 @@ class FileWriteTool(Tool):
                     f.write(content)
             else:
                 path.write_text(content, encoding="utf-8")
-            return f"OK: wrote {len(content)} chars to {path}"
+            result = f"OK: wrote {len(content)} chars to {path}"
+            # 敏感路径附加警告（不阻止写入，因已有 needs_confirmation 保护）
+            warning = _sensitive_path_warning(path)
+            if warning:
+                result = f"{warning}\n{result}"
+            return result
+        except PermissionError:
+            return ToolResult.failure(
+                f"Error: permission denied: {path}",
+                error_type="permission",
+                retryable=False,
+            )
         except Exception as exc:
-            return f"Error writing file: {exc}"
+            return ToolResult.failure(
+                f"Error writing file: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
 
 
 class FileDeleteTool(Tool):
@@ -247,6 +348,7 @@ class FileDeleteTool(Tool):
     description = "Delete a file. Always requires user confirmation before executing."
     needs_confirmation = True
     risk_level = "high"
+    read_only = False
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -261,14 +363,32 @@ class FileDeleteTool(Tool):
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
         return f"🗑️ 删除文件 `{path}`"
 
-    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
         if not path.exists():
-            return f"Error: file not found: {path}"
+            return ToolResult.failure(
+                f"Error: file not found: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
         if not path.is_file():
-            return f"Error: not a file: {path}"
+            return ToolResult.failure(
+                f"Error: not a file: {path}",
+                error_type="not_found",
+                retryable=False,
+            )
         try:
             path.unlink()
             return f"OK: deleted {path}"
+        except PermissionError:
+            return ToolResult.failure(
+                f"Error: permission denied: {path}",
+                error_type="permission",
+                retryable=False,
+            )
         except Exception as exc:
-            return f"Error deleting file: {exc}"
+            return ToolResult.failure(
+                f"Error deleting file: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
