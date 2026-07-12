@@ -76,11 +76,7 @@ class ListDirTool(Tool):
         }
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
-        raw_path = arguments.get("path", ".")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = working_dir / path
-        path = path.resolve()
+        path = _resolve_path(str(arguments.get("path", ".")), working_dir)
 
         if not path.exists():
             return ToolResult.failure(
@@ -211,10 +207,7 @@ class FileReadTool(Tool):
         }
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
-        path = Path(arguments.get("path", ""))
-        if not path.is_absolute():
-            path = working_dir / path
-        path = path.resolve()
+        path = _resolve_path(str(arguments.get("path", "")), working_dir)
 
         if not path.exists():
             return ToolResult.failure(
@@ -296,9 +289,7 @@ class FileWriteTool(Tool):
         }
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
-        path = Path(arguments.get("path", ""))
-        if not path.is_absolute():
-            path = working_dir / path
+        path = _resolve_path(str(arguments.get("path", "")), working_dir)
         content = arguments.get("content", "")
         append = arguments.get("append", False)
         action = "追加" if append else "写入"
@@ -309,9 +300,7 @@ class FileWriteTool(Tool):
         return f"📝 {action}新文件 `{path}`{size_info}"
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
-        path = Path(arguments.get("path", ""))
-        if not path.is_absolute():
-            path = working_dir / path
+        path = _resolve_path(str(arguments.get("path", "")), working_dir)
         # 确保内容为字符串：LLM 可能传入非字符串值
         content_raw = arguments.get("content", "")
         content = content_raw if isinstance(content_raw, str) else str(content_raw)

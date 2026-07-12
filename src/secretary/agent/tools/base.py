@@ -91,7 +91,8 @@ def _coerce_to_tool_result(raw: str | ToolResult, tool_name: str = "") -> ToolRe
 
 
 def _resolve_path(raw: str, working_dir: Path) -> Path:
-    path = Path(raw or ".")
+    """Resolve a tool path against working_dir, expanding ``~`` / ``~user``."""
+    path = Path(raw or ".").expanduser()
     if not path.is_absolute():
         path = working_dir / path
     return path.resolve()
