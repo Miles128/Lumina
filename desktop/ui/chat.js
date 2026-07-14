@@ -6,7 +6,12 @@
   const typingEl = document.getElementById("typing");
   const typingTextEl = document.getElementById("typing-text");
   const progressEl = document.getElementById("agent-progress");
+  const progressToggleEl = document.getElementById("agent-progress-toggle");
+  const progressToggleLabelEl = document.getElementById("agent-progress-toggle-label");
+  const progressBodyEl = document.getElementById("agent-progress-body");
   const progressListEl = document.getElementById("agent-progress-list");
+  const progressRawEl = document.getElementById("agent-raw-output");
+  const progressRawSectionEl = document.getElementById("agent-raw-section");
   const subagentTreeEl = document.getElementById("subagent-tree");
   const pauseBtn = document.getElementById("btn-pause");
   const newThreadBtn = document.getElementById("btn-new-thread");
@@ -59,7 +64,11 @@
     hasSubagent: false,
     hasNetwork: false,
     hasThought: false,
+    hasRawOutput: false,
+    rawOutput: "",
+    stepCount: 0,
     panelVisible: false,
+    expanded: false,
   };
 
   // Conversation tree branching state
@@ -529,10 +538,11 @@
       activeTraceId = traceId;
       void window.SecretaryAPI.subscribeChatProgress(traceId, handleProgressEvent, controller.signal);
       const isForkSend = Boolean(pendingParentId);
+      const requestThreadId = currentThreadId || "";
       const chatBody = {
         message: trimmed,
         trace_id: traceId,
-        thread_id: currentThreadId || "",
+        thread_id: requestThreadId,
         parent_message_id: pendingParentId || "",
         working_dir: currentWorkspaceDir || "",
         attachments: sentAttachments,
@@ -560,9 +570,28 @@
       const syncRender = isForkSend;
       if (response.needs_confirmation) {
         clearStreamingBubble();
-        pendingActionId = response.confirmation_action_id;
-        appendConfirmation(response);
-        void syncThreadsFromServer({ render: syncRender });
+        // If the user switched/created another thread while waiting, do not
+        // paint the confirm UI onto the empty new chat (that produced the
+        // spurious "system / 好的，已取消操作" thread). Cancel against the
+        // original thread instead.
+        if (requestThreadId && requestThreadId !== currentThreadId) {
+          void window.SecretaryAPI.request(
+            "POST",
+            "/api/chat/confirm",
+            {
+              action_id: response.confirmation_action_id,
+              approved: false,
+              trace_id: createTraceId(),
+              thread_id: requestThreadId,
+            },
+            { timeoutMs: 15_000 },
+          ).catch(() => {});
+          void syncThreadsFromServer({ render: false });
+        } else {
+          pendingActionId = response.confirmation_action_id;
+          appendConfirmation(response);
+          void syncThreadsFromServer({ render: syncRender });
+        }
       } else if (streamingBubbleEl) {
         finalizeStreamingMessage(response.reply);
         appendGroundingMeta(response);
@@ -595,6 +624,7 @@
     if (!pendingActionId) return;
     const actionId = pendingActionId;
     pendingActionId = null;
+    const confirmThreadId = currentThreadId || "";
 
     const confirmRow = document.querySelector(".confirmation-row");
     if (confirmRow) {
@@ -621,7 +651,7 @@
           grant_permanent_read: Boolean(options.grantPermanentRead),
           grant_session_write: Boolean(options.grantSessionWrite),
           trace_id: traceId,
-          thread_id: currentThreadId || "",
+          thread_id: confirmThreadId,
         },
         {
           signal: controller.signal,
@@ -1056,11 +1086,31 @@
       hasSubagent: false,
       hasNetwork: false,
       hasThought: false,
+      hasRawOutput: false,
+      rawOutput: "",
+      stepCount: 0,
       panelVisible: false,
+      expanded: false,
     };
     if (subagentTreeEl) {
       subagentTreeEl.hidden = true;
       subagentTreeEl.innerHTML = "";
+    }
+    if (progressRawEl) {
+      progressRawEl.textContent = "";
+    }
+    if (progressRawSectionEl) {
+      progressRawSectionEl.hidden = true;
+    }
+    if (progressBodyEl) {
+      progressBodyEl.hidden = true;
+    }
+    if (progressToggleEl) {
+      progressToggleEl.hidden = true;
+      progressToggleEl.setAttribute("aria-expanded", "false");
+    }
+    if (progressToggleLabelEl) {
+      progressToggleLabelEl.textContent = "";
     }
     if (!progressListEl) return;
     progressListEl.hidden = false;
@@ -1077,8 +1127,63 @@
       progressSession.hasNetwork ||
       progressSession.hasSubagent ||
       progressSession.hasThought ||
-      progressSession.hasTurnTree
+      progressSession.hasTurnTree ||
+      progressSession.hasRawOutput
     );
+  }
+
+  function progressStepCount() {
+    if (progressSession.hasTurnTree) {
+      return Math.max(progressSession.turnNodes.size, progressSession.stepCount);
+    }
+    return Math.max(progressSession.bufferedItems.length, progressSession.stepCount);
+  }
+
+  function updateProgressToggleLabel() {
+    if (!progressToggleLabelEl) return;
+    const steps = progressStepCount();
+    if (steps > 0) {
+      progressToggleLabelEl.textContent = t("chat.progress.toggle.steps", { n: steps });
+      return;
+    }
+    if (progressSession.hasThought && progressSession.hasRawOutput) {
+      progressToggleLabelEl.textContent = t("chat.progress.toggle");
+      return;
+    }
+    if (progressSession.hasThought) {
+      progressToggleLabelEl.textContent = t("chat.progress.toggle.thinking");
+      return;
+    }
+    if (progressSession.hasRawOutput) {
+      progressToggleLabelEl.textContent = t("chat.progress.toggle.raw");
+      return;
+    }
+    progressToggleLabelEl.textContent = t("chat.progress.toggle");
+  }
+
+  function setProgressExpanded(expanded) {
+    progressSession.expanded = Boolean(expanded);
+    if (progressToggleEl) {
+      progressToggleEl.setAttribute("aria-expanded", progressSession.expanded ? "true" : "false");
+    }
+    if (progressBodyEl) {
+      progressBodyEl.hidden = !progressSession.expanded;
+    }
+  }
+
+  function renderRawOutput() {
+    if (!progressRawEl) return;
+    const text = String(progressSession.rawOutput || "").trim();
+    if (!text) {
+      if (progressRawSectionEl) progressRawSectionEl.hidden = true;
+      progressRawEl.textContent = "";
+      return;
+    }
+    if (progressRawSectionEl) progressRawSectionEl.hidden = false;
+    progressRawEl.textContent = text;
+    if (progressSession.expanded) {
+      progressRawEl.scrollTop = progressRawEl.scrollHeight;
+    }
   }
 
   function normalizeTurnStatus(event) {
@@ -1276,21 +1381,40 @@
   }
 
   function flushProgressPanel() {
-    if (!progressEl || !progressListEl || progressSession.panelVisible) return;
+    if (!progressEl || !progressListEl) return;
     if (!shouldShowProgressPanel()) return;
+    const firstShow = !progressSession.panelVisible;
     progressSession.panelVisible = true;
     progressEl.hidden = false;
-    progressListEl.innerHTML = "";
+    if (progressToggleEl) {
+      progressToggleEl.hidden = false;
+    }
+    updateProgressToggleLabel();
+    if (firstShow) {
+      // Multi-turn thinking / raw tokens stay collapsed until the user opens them.
+      setProgressExpanded(false);
+    } else {
+      setProgressExpanded(progressSession.expanded);
+    }
     if (progressSession.hasTurnTree) {
       renderTurnTree();
-      progressListEl.hidden = true;
-    } else {
+    } else if (subagentTreeEl) {
+      subagentTreeEl.hidden = true;
+      subagentTreeEl.innerHTML = "";
+    }
+    progressListEl.innerHTML = "";
+    if (progressSession.bufferedItems.length > 0) {
       progressListEl.hidden = false;
       for (const item of progressSession.bufferedItems) {
         progressListEl.appendChild(item);
       }
-      progressListEl.scrollTop = progressListEl.scrollHeight;
+      if (progressSession.expanded) {
+        progressListEl.scrollTop = progressListEl.scrollHeight;
+      }
+    } else {
+      progressListEl.hidden = true;
     }
+    renderRawOutput();
   }
 
     function appendProgressItem(event, label) {
@@ -1333,29 +1457,20 @@
     if (kind === "subagent_started" || kind === "subagent_finished" || event?.sub_run_id) {
       progressSession.hasSubagent = true;
     }
+    if (kind !== "thought") {
+      progressSession.stepCount += 1;
+    }
     if (Number(event?.schema_version || 0) >= 2 || event?.turn_id || event?.sub_run_id) {
       upsertTurnTreeNode(event, label);
       if (shouldShowProgressPanel()) {
-        if (!progressSession.panelVisible) {
-          flushProgressPanel();
-        } else {
-          progressEl.hidden = false;
-          progressListEl.hidden = true;
-          renderTurnTree();
-        }
+        flushProgressPanel();
       }
       return;
     }
     const item = createProgressListItem(event, label);
     progressSession.bufferedItems.push(item);
     if (shouldShowProgressPanel()) {
-      if (!progressSession.panelVisible) {
-        flushProgressPanel();
-      } else {
-        progressEl.hidden = false;
-        progressListEl.appendChild(item);
-        progressListEl.scrollTop = progressListEl.scrollHeight;
-      }
+      flushProgressPanel();
     }
   }
 
@@ -1365,6 +1480,7 @@
       return;
     }
     flushProgressPanel();
+    updateProgressToggleLabel();
   }
 
   function handleProgressEvent(event) {
@@ -1455,6 +1571,13 @@
     const text = streamingText.trim();
     if (!text) return;
     progressSession.hasThought = true;
+    if (progressSession.rawOutput) {
+      progressSession.rawOutput += `\n\n---\n\n${text}`;
+    } else {
+      progressSession.rawOutput = text;
+    }
+    progressSession.hasRawOutput = true;
+    renderRawOutput();
     appendProgressItem({ kind: "thought", detail: text }, t("chat.progress.thought"));
   }
 
@@ -1587,10 +1710,80 @@
 
   function renderMessageHtml(role, text) {
     if (role === "bot") {
+      const cardHtml = renderStructuredCardHtml(text);
+      if (cardHtml) return cardHtml;
       const askHtml = renderAskUserHtml(text);
       if (askHtml) return askHtml;
     }
     return renderMarkdown(text);
+  }
+
+  function parseCardPayload(source, prefix) {
+    const idx = source.indexOf(prefix);
+    if (idx === -1) return null;
+    let jsonPart = source.slice(idx + prefix.length).trim();
+    jsonPart = jsonPart.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    if (!jsonPart.startsWith("{")) {
+      const match = jsonPart.match(/\{[\s\S]*\}/);
+      if (match) jsonPart = match[0].trim();
+    }
+    try {
+      return JSON.parse(jsonPart);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function renderStructuredCardHtml(text) {
+    const source = String(text || "").trim();
+    if (source.includes("SUMMARY_CARD")) {
+      const payload = parseCardPayload(source, "SUMMARY_CARD");
+      if (!payload) return "";
+      const bullets = Array.isArray(payload.bullets) ? payload.bullets : [];
+      const status = escapeHtml(String(payload.status || "ok"));
+      const title = escapeHtml(String(payload.title || "Summary"));
+      const items = bullets
+        .map((item) => `<li>${escapeHtml(String(item))}</li>`)
+        .join("");
+      return `<div class="struct-card struct-card-summary" data-status="${status}">
+        <div class="struct-card-title">${title}</div>
+        <ul class="struct-card-bullets">${items}</ul>
+      </div>`;
+    }
+    if (source.includes("CODE_DIFF_CARD")) {
+      const payload = parseCardPayload(source, "CODE_DIFF_CARD");
+      if (!payload) return "";
+      const title = escapeHtml(String(payload.title || "Diff"));
+      const path = escapeHtml(String(payload.path || ""));
+      const diff = escapeHtml(String(payload.diff || ""));
+      return `<div class="struct-card struct-card-diff">
+        <div class="struct-card-title">${title}</div>
+        ${path ? `<div class="struct-card-path">${path}</div>` : ""}
+        <pre class="struct-card-diff-body"><code>${diff}</code></pre>
+      </div>`;
+    }
+    if (source.includes("REFERENCE_CARD")) {
+      const payload = parseCardPayload(source, "REFERENCE_CARD");
+      if (!payload) return "";
+      const title = escapeHtml(String(payload.title || "References"));
+      const refs = Array.isArray(payload.references) ? payload.references : [];
+      const items = refs
+        .map((ref) => {
+          const rTitle = escapeHtml(String(ref?.title || ref?.url || "link"));
+          const url = String(ref?.url || "").trim();
+          const snippet = escapeHtml(String(ref?.snippet || ""));
+          const link = url
+            ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${rTitle}</a>`
+            : rTitle;
+          return `<li>${link}${snippet ? `<div class="struct-card-snippet">${snippet}</div>` : ""}</li>`;
+        })
+        .join("");
+      return `<div class="struct-card struct-card-reference">
+        <div class="struct-card-title">${title}</div>
+        <ul class="struct-card-refs">${items}</ul>
+      </div>`;
+    }
+    return "";
   }
 
   function renderAskUserHtml(text) {
@@ -1886,9 +2079,15 @@
     const titleEl = document.getElementById("hero-title");
     const subEl = document.getElementById("hero-sub");
     if (!titleEl) return;
-    const g = window.LuminaLunar.getGreeting(new Date());
+    const now = new Date();
+    const g = window.LuminaLunar.getGreeting(now);
     titleEl.innerHTML = g.main;
-    if (subEl && g.sub) subEl.textContent = g.sub;
+    if (subEl) {
+      const term = window.LuminaLunar.getSolarTerm(now);
+      const lunarDay = window.LuminaLunar.lunarDayLabel(now);
+      const moon = window.LuminaLunar.moonPhaseName(now);
+      subEl.textContent = `${term || moon} · 农历${lunarDay}`;
+    }
   }
 
   // Walk parent_id chain from active_leaf_id back to root, then reverse.
@@ -2282,27 +2481,20 @@
     }
   }
 
+  function syncArchivedSidebarBtn() {
+    const btn = document.getElementById("btn-show-archived");
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", showArchived ? "true" : "false");
+    btn.title = showArchived ? "隐藏已归档" : "显示已归档";
+    btn.setAttribute("aria-label", btn.title);
+  }
+
   function ensureChatToolbar() {
     let toolbar = document.getElementById("chat-toolbar");
     if (!toolbar) {
       toolbar = document.createElement("div");
       toolbar.id = "chat-toolbar";
       toolbar.className = "chat-toolbar";
-      const label = document.createElement("label");
-      label.className = "archived-toggle";
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.id = "show-archived-toggle";
-      checkbox.checked = showArchived;
-      checkbox.addEventListener("change", () => {
-        showArchived = checkbox.checked;
-        renderCurrentThreadMessages();
-      });
-      const text = document.createElement("span");
-      text.textContent = "显示已归档";
-      label.appendChild(checkbox);
-      label.appendChild(text);
-      toolbar.appendChild(label);
       const mapBtn = document.createElement("button");
       mapBtn.type = "button";
       mapBtn.id = "btn-map-toggle";
@@ -2314,9 +2506,15 @@
         messagesEl.parentElement.insertBefore(toolbar, messagesEl);
       }
     }
-    const checkbox = toolbar.querySelector("#show-archived-toggle");
-    if (checkbox) checkbox.checked = showArchived;
+    toolbar.querySelector(".archived-toggle")?.remove();
+    syncArchivedSidebarBtn();
   }
+
+  document.getElementById("btn-show-archived")?.addEventListener("click", () => {
+    showArchived = !showArchived;
+    syncArchivedSidebarBtn();
+    renderCurrentThreadMessages();
+  });
 
   // Event delegation for message action buttons.
   messagesEl.addEventListener("click", (event) => {
@@ -2337,6 +2535,14 @@
       void switchSibling(msgId, "next");
     } else if (action === "cancel-fork") {
       cancelFork();
+    }
+  });
+
+  progressToggleEl?.addEventListener("click", () => {
+    if (!progressSession.panelVisible) return;
+    setProgressExpanded(!progressSession.expanded);
+    if (progressSession.expanded) {
+      scrollChatToBottom();
     }
   });
 

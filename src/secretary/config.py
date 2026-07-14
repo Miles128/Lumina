@@ -27,11 +27,11 @@ class Settings(BaseSettings):
     port: int = Field(default=8765, alias="SECRETARY_PORT")
     sync_interval_minutes: int = Field(default=20, alias="SECRETARY_SYNC_INTERVAL_MINUTES")
     auto_sync_enabled: bool = Field(default=True, alias="SECRETARY_AUTO_SYNC_ENABLED")
-    briefing_enabled: bool = Field(default=True, alias="SECRETARY_BRIEFING_ENABLED")
+    briefing_enabled: bool = Field(default=False, alias="SECRETARY_BRIEFING_ENABLED")
     briefing_hour: int = Field(default=8, alias="SECRETARY_BRIEFING_HOUR")
-    think_enabled: bool = Field(default=True, alias="SECRETARY_THINK_ENABLED")
+    think_enabled: bool = Field(default=False, alias="SECRETARY_THINK_ENABLED")
     think_interval_hours: int = Field(default=6, alias="SECRETARY_THINK_INTERVAL_HOURS")
-    memory_summary_enabled: bool = Field(default=True, alias="SECRETARY_MEMORY_SUMMARY_ENABLED")
+    memory_summary_enabled: bool = Field(default=False, alias="SECRETARY_MEMORY_SUMMARY_ENABLED")
     memory_summary_hour: int = Field(default=23, alias="SECRETARY_MEMORY_SUMMARY_HOUR")
 
     email_imap_host: str = Field(default="", alias="EMAIL_IMAP_HOST")
@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     )
     prompt_gate_min_confidence: float = Field(default=0.6, alias="PROMPT_GATE_MIN_CONFIDENCE")
     mcp_auto_filesystem: bool = Field(default=True, alias="MCP_AUTO_FILESYSTEM")
+
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
+    brave_api_key: str = Field(default="", alias="BRAVE_API_KEY")
+    bocha_api_key: str = Field(default="", alias="BOCHA_API_KEY")
+    serper_api_key: str = Field(default="", alias="SERPER_API_KEY")
+    serpapi_api_key: str = Field(default="", alias="SERPAPI_API_KEY")
+    bing_search_api_key: str = Field(default="", alias="BING_SEARCH_API_KEY")
+    perplexity_api_key: str = Field(default="", alias="PERPLEXITY_API_KEY")
 
     def resolved_data_dir(self) -> Path:
         expanded = self.data_dir.expanduser()

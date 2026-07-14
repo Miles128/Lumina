@@ -18,13 +18,14 @@
   pointer-events: auto;
   box-sizing: border-box;
   flex-shrink: 0;
+  -webkit-app-region: drag;
 }
 
 .chrome-drag {
   position: absolute;
   inset: 0;
   -webkit-app-region: drag;
-  pointer-events: auto;
+  pointer-events: none;
   z-index: 0;
 }
 
@@ -33,7 +34,7 @@
   position: relative;
   z-index: 1;
   pointer-events: auto;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .topbar-left {
@@ -186,6 +187,7 @@
   flex-direction: column;
   gap: 2px;
   z-index: 50;
+  -webkit-app-region: no-drag;
 }
 
 .topbar-menu button {

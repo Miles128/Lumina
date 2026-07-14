@@ -18,7 +18,9 @@ class SpawnSubagentTool(Tool):
     description = (
         "Delegate a focused sub-task to an isolated sub-agent. "
         "Returns a summary only; intermediate steps stay private. "
-        "Archetypes: explore (read-only), worker (read/write), verify (review), plan (read-only planning). "
+        "Archetypes: explore (read-only), worker (read/write + worktree isolation when git), "
+        "verify (review), plan (read-only planning). "
+        "archetype may be omitted — harness infers from the goal. "
         "Optional goals[] runs up to 3 explore tasks in parallel (Lumina batch). "
         "Required: exactly one of 'goal' (single task) or 'goals' (2-3 parallel explore tasks)."
     )
@@ -33,6 +35,7 @@ class SpawnSubagentTool(Tool):
     ) -> None:
         self._spawn_context = spawn_context
         self._progress_callback: Callable[[ProgressEvent], None] | None = None
+        self._cancel_check: Callable[[], bool] | None = None
         self._paused: SubAgentResumeState | None = None
         self._runner = SubAgentRunner(deps, on_paused=self._store_paused)
 
@@ -46,6 +49,9 @@ class SpawnSubagentTool(Tool):
 
     def bind_progress(self, callback: Callable[[ProgressEvent], None] | None) -> None:
         self._progress_callback = callback
+
+    def bind_cancel_check(self, callback: Callable[[], bool] | None) -> None:
+        self._cancel_check = callback
 
     def _parameters(self) -> dict[str, Any]:
         return {
@@ -61,7 +67,10 @@ class SpawnSubagentTool(Tool):
                 },
                 "archetype": {
                     "type": "string",
-                    "description": "explore | worker | verify | plan, or a custom name from ~/.lumina/subagents/*.md",
+                    "description": (
+                        "Optional. explore | worker | verify | plan, or a custom name from "
+                        "~/.lumina/subagents/*.md. Omit to let harness infer from the goal."
+                    ),
                 },
                 "success_criteria": {
                     "type": "string",
@@ -88,6 +97,7 @@ class SpawnSubagentTool(Tool):
                 self._spawn_context,
                 working_dir,
                 progress_callback=self._progress_callback,
+                cancel_check=self._cancel_check,
             ),
             tool_name=self.name,
         )

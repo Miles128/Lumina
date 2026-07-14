@@ -179,9 +179,12 @@ def pause_restore_parent(
         raise ValueError("invalid parent resume bundle")
     by_name = {tool.name: tool for tool in tools}
     tool_names = [str(name) for name in data.get("tool_names", []) if isinstance(name, str)]
+    missing = [name for name in tool_names if name not in by_name]
+    if missing:
+        raise ValueError(f"parent resume tools missing after restart: {', '.join(missing)}")
     return ParentTurnResumeState(
         messages_snapshot=[item for item in data.get("messages_snapshot", []) if isinstance(item, dict)],
-        tools=[by_name[name] for name in tool_names if name in by_name],
+        tools=[by_name[name] for name in tool_names],
         max_steps=int(data.get("max_steps") or 20),
         pending_step=pending_step,
         assistant_message=data.get("assistant_message")
@@ -345,6 +348,79 @@ class SessionStore:
             if isinstance(pauses, dict):
                 pauses.pop(trace_id, None)
             self._write_document({"turns": document.get("turns", {}), "pauses": pauses})
+
+    def prune_stale(
+        self,
+        *,
+        max_age_hours: float = 72,
+        max_turns: int = 200,
+    ) -> int:
+        """Drop old completed turns; never drop traces that still have pauses.
+
+        Returns number of turns removed from persistence.
+        """
+        if self._path is None:
+            return 0
+        cutoff = datetime.now(UTC).timestamp() - max_age_hours * 3600
+        removed = 0
+        with self._lock:
+            document = self._load_document()
+            turns_raw = document.get("turns", {})
+            pauses_raw = document.get("pauses", {})
+            if not isinstance(turns_raw, dict):
+                turns_raw = {}
+            if not isinstance(pauses_raw, dict):
+                pauses_raw = {}
+
+            survivors: list[tuple[str, float, dict[str, Any], bool]] = []
+            for trace_id, raw in turns_raw.items():
+                if not isinstance(raw, dict):
+                    continue
+                tid = str(trace_id)
+                has_pause = tid in pauses_raw
+                status = str(raw.get("status") or "")
+                started = str(raw.get("started_at") or "")
+                try:
+                    started_ts = datetime.fromisoformat(started.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    started_ts = datetime.now(UTC).timestamp()
+                if (
+                    not has_pause
+                    and status in {"completed", "failed", "cancelled"}
+                    and started_ts < cutoff
+                ):
+                    removed += 1
+                    self._turns.pop(tid, None)
+                    continue
+                survivors.append((tid, started_ts, raw, has_pause))
+
+            survivors.sort(key=lambda item: (item[3], item[1]), reverse=True)
+            final_turns: dict[str, Any] = {}
+            for tid, _ts, raw, has_pause in survivors:
+                if len(final_turns) >= max_turns and not has_pause:
+                    removed += 1
+                    self._turns.pop(tid, None)
+                    continue
+                final_turns[tid] = raw
+
+            # Always retain pause-only traces (no turn row yet / restart mid-confirm).
+            pauses_kept: dict[str, Any] = {}
+            for tid, payload in pauses_raw.items():
+                pauses_kept[tid] = payload
+                if tid not in final_turns:
+                    final_turns[tid] = {
+                        "turn_id": tid,
+                        "trace_id": tid,
+                        "thread_id": "",
+                        "user_message": "",
+                        "parent_turn_id": "",
+                        "child_id": "",
+                        "status": "paused",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "item_seq": 0,
+                    }
+            self._write_document({"turns": final_turns, "pauses": pauses_kept})
+        return removed
 
     def _load_document(self) -> dict[str, Any]:
         if self._path is None or not self._path.exists():

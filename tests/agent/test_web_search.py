@@ -111,8 +111,9 @@ def test_run_search_falls_back_when_primary_empty() -> None:
     def bing_hit(query: str, limit: int) -> list[SearchResult]:
         return [SearchResult(title="Bing hit", url="https://example.com", snippet="", engine="bing")]
 
-    with patch.dict(_ENGINES, {"duckduckgo": empty_ddg, "bing": bing_hit}):
-        results, engine = run_search("Python", "duckduckgo", 3)
+    with patch("secretary.agent.web_search.configured_api_engines", return_value=()):
+        with patch.dict(_ENGINES, {"duckduckgo": empty_ddg, "bing": bing_hit}):
+            results, engine = run_search("Python", "duckduckgo", 3)
 
     assert engine == "bing"
     assert len(results) == 1
@@ -128,13 +129,15 @@ def test_web_search_tool_uses_fallback(tmp_path: Path) -> None:
     def bing_hit(query: str, limit: int) -> list[SearchResult]:
         return [SearchResult(title="教程", url="https://example.com", snippet="简介", engine="bing")]
 
-    with patch.dict(_ENGINES, {"duckduckgo": empty_ddg, "bing": bing_hit}):
-        output = tool.execute({"query": "Python", "engine": "duckduckgo"}, tmp_path)
+    with patch("secretary.agent.web_search.configured_api_engines", return_value=()):
+        with patch.dict(_ENGINES, {"duckduckgo": empty_ddg, "bing": bing_hit}):
+            output = tool.execute({"query": "Python", "engine": "duckduckgo"}, tmp_path)
 
     assert "教程" in output
     assert "via bing" in output
 
 
 def test_run_search_unknown_engine_raises() -> None:
-    with pytest.raises(ValueError, match="unknown engine"):
-        run_search("Python", "yahoo", 3)
+    with patch("secretary.agent.web_search.configured_api_engines", return_value=()):
+        with pytest.raises(ValueError, match="unknown engine"):
+            run_search("Python", "yahoo", 3)

@@ -1,0 +1,11 @@
+{
+  "id": "archetype_router",
+  "kind": "archetype_router",
+  "cases": [
+    {"goal": "搜索项目里的配置文件", "expect": "explore"},
+    {"goal": "修改 src/foo.py 并修复 bug", "expect": "worker"},
+    {"goal": "验证 pytest 是否通过", "success_criteria": "pytest passes", "expect": "verify"},
+    {"goal": "规划一下实现步骤", "expect": "plan"},
+    {"goal": "随便看看", "explicit": "worker", "expect": "worker"}
+  ]
+}

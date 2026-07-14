@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +53,7 @@ class AgentConfigDocument(BaseModel):
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
     agent_profile: str = Field(default="auto", pattern="^(auto|build|ask|plan)$")
     shell_working_dir: str = ""
+    hooks: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ class McpServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     transport: str = "stdio"
+    headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = Field(default=120, ge=5, le=600)
     enabled: bool = True
 
@@ -64,6 +65,7 @@ class McpConfigStore:
                     "args": config.args,
                     "url": config.url,
                     "timeout": config.timeout,
+                    "has_headers": bool(config.headers),
                 }
             )
         return rows

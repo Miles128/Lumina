@@ -34,6 +34,8 @@ from secretary.agent.grounding import (
     verify_reply_against_evidence,
 )
 from secretary.agent.lifecycle_hooks import (
+    AfterToolContext,
+    AfterToolExecutionHook,
     BeforeModelCallHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
@@ -50,7 +52,7 @@ from secretary.agent.llm_client import (
     schemas_to_openai_tools,
 )
 from secretary.agent.llm_config import LlmConfig
-from secretary.agent.progress_events import ProgressEvent
+from secretary.agent.progress_events import ProgressEvent, emit_progress
 from secretary.agent.stop_hooks import (
     LoopSnapshot,
     MaxIterationsStopHook,
@@ -232,6 +234,7 @@ class AgentLoop:
         before_turn_hooks: list[BeforeTurnHook] | None = None,
         before_model_call_hooks: list[BeforeModelCallHook] | None = None,
         before_tool_execution_hooks: list[BeforeToolExecutionHook] | None = None,
+        after_tool_execution_hooks: list[AfterToolExecutionHook] | None = None,
     ) -> None:
         self._llm_config = llm_config
         self._tools = {t.name: t for t in (tools or _default_tools())}
@@ -252,6 +255,7 @@ class AgentLoop:
         self._before_turn_hooks = before_turn_hooks or []
         self._before_model_call_hooks = before_model_call_hooks or []
         self._before_tool_execution_hooks = before_tool_execution_hooks or []
+        self._after_tool_execution_hooks = after_tool_execution_hooks or []
         # Cache tool schemas once: tool set is immutable after init, so
         # [t.schema() for t in ...] and json.dumps need not run every loop step.
         self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in self._tools.values()]
@@ -324,7 +328,22 @@ class AgentLoop:
                     iteration=iteration,
                 )
             )
-            current_messages = compact_messages_if_needed(current_messages, self._llm_config)
+            compaction = compact_messages_if_needed(current_messages, self._llm_config)
+            current_messages = compaction.messages
+            if compaction.triggered:
+                self._emit_progress(
+                    ProgressEvent(
+                        kind="context_compacted",
+                        iteration=iteration,
+                        message=(
+                            f"上下文已压缩：{compaction.before_tokens}→"
+                            f"{compaction.after_tokens} tokens ({compaction.mode})"
+                        ),
+                        detail=compaction.to_detail(),
+                        prompt_tokens=compaction.before_tokens,
+                        completion_tokens=compaction.after_tokens,
+                    )
+                )
             payload = self._build_payload(current_messages, self._tool_schemas, native=self._native_tools_enabled)
             force_read = requires_forced_read_tool(turn_user_message, used_tools)
             needs_preflight = (
@@ -731,6 +750,8 @@ class AgentLoop:
                 )
                 if hasattr(tool, "bind_progress"):
                     tool.bind_progress(self._progress_callback)
+                if hasattr(tool, "bind_cancel_check"):
+                    tool.bind_cancel_check(self._cancel_check)
                 if self._is_cancelled():
                     return self._cancelled_result(steps, used_tools, step_idx)
                 # 全链路可观测性：工具调用计时
@@ -742,6 +763,13 @@ class AgentLoop:
                 # 外部数据不可信标记：对外部内容工具的返回加定界符
                 if result.success:
                     tool_output = _wrap_untrusted(tool_call.name, tool_output)
+                tool_output = self._run_after_tool_execution_hooks(
+                    snapshot,
+                    tool_call.name,
+                    tool_exec_args,
+                    tool_output,
+                    success=result.success,
+                )
                 used_tools.append(tool_call.name)
                 self._emit_progress(
                     ProgressEvent(
@@ -806,10 +834,13 @@ class AgentLoop:
             step = StepResult(thought=thought, tool_call=tool_call, tool_output=tool_output)
             steps.append(step)
 
-            from secretary.agent.p0_tools import format_user_input_reply, is_user_input_request
+            from secretary.agent.structured_cards import (
+                format_card_reply,
+                is_loop_short_circuit_output,
+            )
 
-            if is_user_input_request(tool_output):
-                clarify_reply = format_user_input_reply(tool_output, thought=thought)
+            if is_loop_short_circuit_output(tool_output):
+                clarify_reply = format_card_reply(tool_output, thought=thought)
                 reply = clarify_reply or thought
                 self._emit_progress(
                     ProgressEvent(
@@ -1201,7 +1232,46 @@ class AgentLoop:
                     )
             except Exception as exc:
                 logger.warning("BeforeToolExecution hook failed: %s", exc)
-        return HookDecision()
+        return HookDecision(
+            modified_arguments=ctx.arguments if ctx.arguments else None
+        )
+
+    def _run_after_tool_execution_hooks(
+        self,
+        snapshot: LoopSnapshot,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tool_output: str,
+        *,
+        success: bool,
+    ) -> str:
+        if not self._after_tool_execution_hooks:
+            return tool_output
+        output = tool_output
+        ctx = AfterToolContext(
+            snapshot=snapshot,
+            tool_name=tool_name,
+            arguments=dict(arguments),
+            tool_output=output,
+            success=success,
+            working_dir=self._working_dir,
+        )
+        for hook in self._after_tool_execution_hooks:
+            try:
+                decision = hook.after_tool_execution(ctx)
+                if decision.modified_output is not None:
+                    output = decision.modified_output
+                    ctx = AfterToolContext(
+                        snapshot=ctx.snapshot,
+                        tool_name=ctx.tool_name,
+                        arguments=ctx.arguments,
+                        tool_output=output,
+                        success=ctx.success,
+                        working_dir=ctx.working_dir,
+                    )
+            except Exception as exc:
+                logger.warning("AfterToolExecution hook failed: %s", exc)
+        return output
 
     def _sanitize_reply(self, reply: str, snapshot: LoopSnapshot) -> str:
         from secretary.agent.reply_rewriter import prepare_user_facing_reply
@@ -1240,12 +1310,7 @@ class AgentLoop:
         return on_delta
 
     def _emit_progress(self, event: ProgressEvent) -> None:
-        if self._progress_callback is None:
-            return
-        try:
-            self._progress_callback(event)
-        except Exception as exc:  # pragma: no cover - defensive callback safety
-            logger.debug("Progress callback failed: %s", exc)
+        emit_progress(self._progress_callback, event)
 
     def _invoke_model(
         self,
@@ -1379,6 +1444,8 @@ class AgentLoop:
                     )
                     if hasattr(tool, "bind_progress"):
                         tool.bind_progress(self._progress_callback)
+                    if hasattr(tool, "bind_cancel_check"):
+                        tool.bind_cancel_check(self._cancel_check)
                     output = tool.execute(paired_call.arguments, self._working_dir)
                     used_tools.append(paired_call.name)
                     self._emit_progress(

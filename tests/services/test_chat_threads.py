@@ -43,6 +43,22 @@ def test_thread_store_append_turn(tmp_path: Path) -> None:
     ]
 
 
+def test_append_assistant_message_skips_missing_thread_and_preserves_title(tmp_path: Path) -> None:
+    store = ChatThreadStore(tmp_path / "chat_threads.json")
+    created = store.create_thread(title="新对话")
+    thread_id = str(created["current_id"])
+    store.append_turn(thread_id, "hello", "world")
+
+    assert store.append_assistant_message("missing", "好的，已取消操作。") is False
+    assert store.append_assistant_message(thread_id, "好的，已取消操作。") is True
+
+    thread = next(t for t in store.list_view()["threads"] if t["id"] == thread_id)
+    assert thread["title"] != "system"
+    assert thread["messages"][-1]["role"] == "assistant"
+    assert thread["messages"][-1]["text"] == "好的，已取消操作。"
+    assert not any(m.get("text") == "system" for m in thread["messages"])
+
+
 def test_thread_store_create_set_current_and_delete(tmp_path: Path) -> None:
     store = ChatThreadStore(tmp_path / "chat_threads.json")
 

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
@@ -34,12 +35,46 @@ _TOOL_RESULT_CLEARED_PLACEHOLDER = "[Tool Result cleared — see summary above]"
 # Mixed CJK+English averages ~3 chars/token (CJK ~1.5 chars/token, English ~4).
 _CHARS_PER_TOKEN_FALLBACK = 3
 
+CompactionMode = Literal[
+    "none",
+    "clear_tools",
+    "llm_summary",
+    "rule_summary",
+    "truncate",
+]
+
 _COMPACT_SYSTEM = """你是 Agent 对话历史压缩器。将较早的对话与工具上下文压缩成一段简短摘要。
 要求：
 - 保留用户目标、已确认决策、关键事实、文件路径、工具结论
 - 删除重复、寒暄、失败重试细节
 - 输出不超过 {max_chars} 个字符
 - 直接输出摘要正文，不要 JSON、不要标题前缀"""
+
+
+@dataclass(frozen=True)
+class CompactionResult:
+    """Outcome of a compaction pass (messages + observability metrics)."""
+
+    messages: list[dict[str, Any]]
+    triggered: bool = False
+    mode: CompactionMode = "none"
+    before_tokens: int = 0
+    after_tokens: int = 0
+    tool_results_cleared: int = 0
+    truncated: bool = False
+
+    def to_detail(self) -> str:
+        return json.dumps(
+            {
+                "triggered": self.triggered,
+                "mode": self.mode,
+                "before_tokens": self.before_tokens,
+                "after_tokens": self.after_tokens,
+                "tool_results_cleared": self.tool_results_cleared,
+                "truncated": self.truncated,
+            },
+            ensure_ascii=False,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -95,18 +130,17 @@ def clear_old_tool_results(
     messages: list[dict[str, Any]],
     *,
     keep_tail: int = KEEP_TAIL_MESSAGES,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
     """Replace large tool results in deep history with a placeholder.
 
-    Only affects messages outside the tail window. Tool results within the
-    recent ``keep_tail`` messages are preserved unchanged. This runs before
-    full compaction to reduce token pressure without losing recent context.
+    Returns ``(messages, cleared_count)``.
     """
     if len(messages) <= keep_tail + 1:
-        return messages
+        return messages, 0
 
     result = list(messages)
     tail_start = len(result) - keep_tail
+    cleared = 0
 
     for i in range(tail_start):
         msg = result[i]
@@ -117,9 +151,10 @@ def clear_old_tool_results(
 
         # Native tool messages: role=tool
         if role == "tool" and len(content) > _TOOL_RESULT_CLEAR_THRESHOLD:
-            cleared = dict(msg)
-            cleared["content"] = _TOOL_RESULT_CLEARED_PLACEHOLDER
-            result[i] = cleared
+            cleared_msg = dict(msg)
+            cleared_msg["content"] = _TOOL_RESULT_CLEARED_PLACEHOLDER
+            result[i] = cleared_msg
+            cleared += 1
             continue
 
         # Text-mode tool results: user messages starting with "[Tool Result:"
@@ -127,11 +162,12 @@ def clear_old_tool_results(
             # Extract tool name for traceability
             first_line = content.split("\n", 1)[0]
             if len(content) > _TOOL_RESULT_CLEAR_THRESHOLD:
-                cleared = dict(msg)
-                cleared["content"] = f"{first_line}\n{_TOOL_RESULT_CLEARED_PLACEHOLDER}"
-                result[i] = cleared
+                cleared_msg = dict(msg)
+                cleared_msg["content"] = f"{first_line}\n{_TOOL_RESULT_CLEARED_PLACEHOLDER}"
+                result[i] = cleared_msg
+                cleared += 1
 
-    return result
+    return result, cleared
 
 
 def compact_messages_if_needed(
@@ -141,7 +177,7 @@ def compact_messages_if_needed(
     max_tokens: int = LOOP_CONTEXT_MAX_TOKENS,
     keep_tail: int = KEEP_TAIL_MESSAGES,
     max_chars: int | None = None,
-) -> list[dict[str, Any]]:
+) -> CompactionResult:
     """Return messages unchanged or with middle history replaced by a summary block.
 
     Token-based budgeting is primary. If `max_chars` is explicitly provided
@@ -155,7 +191,8 @@ def compact_messages_if_needed(
     pressure without losing recent context.
     """
     if not messages:
-        return messages
+        return CompactionResult(messages=messages)
+
     if max_chars is not None:
         # max_chars 优先级高于 max_tokens：显式传入 max_chars 时覆盖 max_tokens，
         # 以保持向后兼容（老调用方只传 max_chars）。
@@ -172,20 +209,37 @@ def compact_messages_if_needed(
     threshold = int(token_budget * COMPACT_THRESHOLD_RATIO)
 
     # Step 1: clear old tool results to reduce token pressure early.
-    messages = clear_old_tool_results(messages, keep_tail=keep_tail)
+    messages, cleared_count = clear_old_tool_results(messages, keep_tail=keep_tail)
 
     before_tokens = estimate_messages_tokens(messages)
     if before_tokens <= threshold:
-        return messages
+        mode: CompactionMode = "clear_tools" if cleared_count else "none"
+        return CompactionResult(
+            messages=messages,
+            triggered=cleared_count > 0,
+            mode=mode,
+            before_tokens=before_tokens,
+            after_tokens=before_tokens,
+            tool_results_cleared=cleared_count,
+        )
 
     system_msgs = [msg for msg in messages if msg.get("role") == "system"]
     non_system = [msg for msg in messages if msg.get("role") != "system"]
     if len(non_system) <= keep_tail + 1:
-        return messages
+        return CompactionResult(
+            messages=messages,
+            triggered=cleared_count > 0,
+            mode="clear_tools" if cleared_count else "none",
+            before_tokens=before_tokens,
+            after_tokens=before_tokens,
+            tool_results_cleared=cleared_count,
+        )
 
     head = non_system[:-keep_tail]
     tail = non_system[-keep_tail:]
-    summary = _summarize_block(head, llm_config, max_chars=max(1200, token_budget * 3 // 6))
+    summary, summary_mode = _summarize_block(
+        head, llm_config, max_chars=max(1200, token_budget * 3 // 6)
+    )
     compacted = [*system_msgs]
     compacted.append(
         {
@@ -201,13 +255,36 @@ def compact_messages_if_needed(
     # 压缩后消息已变，必须重新计算；复用该结果用于日志，避免重复编码。
     after_tokens = estimate_messages_tokens(compacted)
     if after_tokens > token_budget:
-        return _truncate_fallback(system_msgs, tail, max_tokens=token_budget)
+        truncated = _truncate_fallback(system_msgs, tail, max_tokens=token_budget)
+        trunc_tokens = estimate_messages_tokens(truncated)
+        logger.info(
+            "compacted agent context via truncate: %s -> %s tokens",
+            before_tokens,
+            trunc_tokens,
+        )
+        return CompactionResult(
+            messages=truncated,
+            triggered=True,
+            mode="truncate",
+            before_tokens=before_tokens,
+            after_tokens=trunc_tokens,
+            tool_results_cleared=cleared_count,
+            truncated=True,
+        )
     logger.info(
-        "compacted agent context: %s -> %s tokens",
+        "compacted agent context: %s -> %s tokens (mode=%s)",
         before_tokens,
         after_tokens,
+        summary_mode,
     )
-    return compacted
+    return CompactionResult(
+        messages=compacted,
+        triggered=True,
+        mode=summary_mode,
+        before_tokens=before_tokens,
+        after_tokens=after_tokens,
+        tool_results_cleared=cleared_count,
+    )
 
 
 def _summarize_block(
@@ -215,7 +292,7 @@ def _summarize_block(
     llm_config: LlmConfig | None,
     *,
     max_chars: int,
-) -> str:
+) -> tuple[str, CompactionMode]:
     if llm_config is not None:
         body = _format_messages_for_summary(messages)
         if body.strip():
@@ -236,10 +313,10 @@ def _summarize_block(
                     timeout=45.0,
                 ).strip()
                 if summary and len(summary) <= max_chars * 1.2:
-                    return summary[:max_chars]
+                    return summary[:max_chars], "llm_summary"
             except AgentError as exc:
                 logger.warning("LLM context compaction skipped: %s", exc)
-    return _rule_summary(messages, max_chars=max_chars)
+    return _rule_summary(messages, max_chars=max_chars), "rule_summary"
 
 
 def _truncate_text_by_tokens(

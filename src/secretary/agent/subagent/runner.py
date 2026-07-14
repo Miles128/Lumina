@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.delegation import DelegationResult
+from secretary.agent.delegation import DelegationResult, format_subagent_result
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, LoopResult
-from secretary.agent.progress_events import ProgressEvent, _archetype_display_name
+from secretary.agent.progress_events import ProgressEvent, _archetype_display_name, emit_progress
 from secretary.agent.subagent.context import SpawnContext
 from secretary.agent.subagent.policy import (
     MAX_PARALLEL_EXPLORE,
@@ -31,7 +31,6 @@ from secretary.agent.subagent.registry import (
     resolve_tools,
 )
 from secretary.agent.subagent.resume import SubAgentResumeState
-from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.file_auth import FileAuthService
@@ -66,12 +65,29 @@ class SubAgentRunner:
         working_dir: Path,
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> str:
         context = str(arguments.get("context", "")).strip()
-        archetype = str(arguments.get("archetype", "explore")).strip().lower() or "explore"
+        explicit_archetype = str(arguments.get("archetype", "")).strip().lower()
         parallel_goals = _parse_parallel_goals(arguments.get("goals"))
         goal = str(arguments.get("goal", "")).strip()
         success_criteria = str(arguments.get("success_criteria", "")).strip()
+        from secretary.agent.subagent.archetype_router import select_archetype
+
+        custom_names = [
+            name
+            for name in list_archetype_names(self._deps.lumina_dir)
+            if name not in {"explore", "worker", "verify", "plan"}
+        ]
+        if parallel_goals:
+            archetype = "explore"
+        else:
+            archetype = select_archetype(
+                goal,
+                explicit=explicit_archetype or None,
+                success_criteria=success_criteria,
+                custom_names=custom_names,
+            )
         if parallel_goals:
             if archetype != "explore":
                 return "Error: parallel goals are only supported for archetype 'explore'."
@@ -82,6 +98,7 @@ class SubAgentRunner:
                 working_dir=working_dir,
                 progress_callback=progress_callback,
                 success_criteria=success_criteria,
+                cancel_check=cancel_check,
             )
         if not goal:
             return "Error: spawn_subagent requires a non-empty goal."
@@ -125,6 +142,23 @@ class SubAgentRunner:
         wrapped_progress = self._wrap_progress(progress_callback, run_id, archetype)
         child_context = spawn_context.child_context()
 
+        child_working_dir = working_dir
+        isolation = "none"
+        worktree_path: Path | None = None
+        repo_root: Path | None = None
+        if archetype == "worker":
+            from secretary.agent.subagent.worktree import create_worktree, find_git_root
+
+            repo_root = find_git_root(working_dir)
+            if repo_root is not None:
+                base = None
+                if self._deps.lumina_dir is not None:
+                    base = self._deps.lumina_dir / "worktrees"
+                worktree_path = create_worktree(repo_root, run_id, base_dir=base)
+                if worktree_path is not None:
+                    child_working_dir = worktree_path
+                    isolation = "worktree"
+
         try:
             self._deps.memory.create_session(child_session_id)
             self._deps.memory.add_message(child_session_id, "user", goal[:MAX_MESSAGE_LEN])
@@ -132,7 +166,7 @@ class SubAgentRunner:
                 messages=messages,
                 tools=tools,
                 max_steps=spec.max_steps,
-                working_dir=working_dir,
+                working_dir=child_working_dir,
                 progress_callback=wrapped_progress,
                 run_id=run_id,
                 archetype=archetype,
@@ -141,6 +175,7 @@ class SubAgentRunner:
                 success_criteria=success_criteria,
                 child_session_id=child_session_id,
                 spawn_context=child_context,
+                cancel_check=cancel_check,
             )
             if isinstance(summary, SubAgentResumeState):
                 self._deps.memory.end_session(
@@ -170,12 +205,25 @@ class SubAgentRunner:
         else:
             success = not str(summary).startswith("Error:")
 
+        summary_text = str(summary)
+        if isolation == "worktree" and worktree_path is not None:
+            from secretary.agent.subagent.worktree import diff_stat
+
+            stat = diff_stat(worktree_path)
+            summary_text = (
+                f"{summary_text}\n\n"
+                f"[isolation=worktree]\n"
+                f"worktree_path={worktree_path}\n"
+                f"diff_stat:\n{stat}\n"
+                "Note: changes were NOT merged back; handle the worktree manually."
+            )
+
         self._emit(
             progress_callback,
             ProgressEvent(
                 kind="subagent_finished",
                 iteration=0,
-                message=str(summary)[:200],
+                message=summary_text[:200],
                 sub_run_id=run_id,
                 archetype=archetype,
                 goal=goal[:200],
@@ -183,7 +231,7 @@ class SubAgentRunner:
                 success=success,
             ),
         )
-        return str(summary)
+        return summary_text
 
     def resume_paused(
         self,
@@ -191,6 +239,7 @@ class SubAgentRunner:
         working_dir: Path,
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> str:
         """Continue a paused sub-agent after user confirmed a risky tool."""
         tools = resolve_tools(state.archetype, self._deps)
@@ -202,6 +251,7 @@ class SubAgentRunner:
             file_auth=self._deps.file_auth,
             progress_callback=wrapped,
             working_dir=working_dir,
+            cancel_check=cancel_check,
         )
 
         def _execute() -> LoopResult:
@@ -331,6 +381,7 @@ class SubAgentRunner:
         success_criteria: str = "",
         child_session_id: str = "",
         spawn_context: SpawnContext | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> str | SubAgentResumeState:
         loop = AgentLoop(
             self._deps.llm_config,
@@ -339,6 +390,7 @@ class SubAgentRunner:
             file_auth=self._deps.file_auth,
             progress_callback=progress_callback,
             working_dir=working_dir,
+            cancel_check=cancel_check,
         )
 
         def _execute() -> LoopResult | SubAgentResumeState:
@@ -432,6 +484,7 @@ class SubAgentRunner:
         working_dir: Path,
         progress_callback: Callable[[ProgressEvent], None] | None,
         success_criteria: str = "",
+        cancel_check: Callable[[], bool] | None = None,
     ) -> str:
         if spawn_context.depth >= MAX_SPAWN_DEPTH:
             return f"Error: spawn depth limit reached ({MAX_SPAWN_DEPTH})."
@@ -455,6 +508,7 @@ class SubAgentRunner:
                 spawn_context,
                 working_dir,
                 progress_callback=progress_callback,
+                cancel_check=cancel_check,
             )
 
         pool = ThreadPoolExecutor(max_workers=min(len(goals), MAX_PARALLEL_EXPLORE))
@@ -507,12 +561,7 @@ class SubAgentRunner:
         callback: Callable[[ProgressEvent], None] | None,
         event: ProgressEvent,
     ) -> None:
-        if callback is None:
-            return
-        try:
-            callback(event)
-        except Exception as exc:  # pragma: no cover
-            logger.debug("Sub-agent progress callback failed: %s", exc)
+        emit_progress(callback, event)
 
 
 MAX_MESSAGE_LEN = 2000

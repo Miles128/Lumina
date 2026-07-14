@@ -56,8 +56,8 @@ html, body {
 }
 
 .kb-badge[data-status="error"] {
-  color: #b42318;
-  background: #fef3f2;
+  color: #f87171;
+  background: color-mix(in srgb, #dc2626 16%, var(--bg-subtle));
 }
 
 .topbar-brand .logo-mark {
@@ -91,8 +91,8 @@ html, body {
 }
 
 .btn.primary {
-  background: var(--text);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
 }
 
 .btn.primary:hover:not(:disabled) { opacity: 0.88; }

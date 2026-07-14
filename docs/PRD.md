@@ -32,7 +32,7 @@
 - 多用户 / 云端后端 / 移动优先
 - 无需确认的全自动 Agent
 - LangGraph / 嵌入 Hermes·OpenCode·Pi runtime
-- IM 网关作为主 UI（FR-16 backlog）
+- IM 网关作为主 UI（FR-16 Deferred）
 - Orchestrator 作为独立 Profile（已移除；委派能力并入 **Build**）
 
 ---
@@ -77,7 +77,7 @@
 | 执行 | `shell` | 是* | 只读命令可免确认 |
 | 记忆 | `search_memory`, `session_search`, `memory` | 读：否 | Lumina SQLite + 会话记忆 + MD 写入 |
 | Shibei | `shibei_search`, `shibei_import`, `shibei_list_sources` | 否 | 语义 KB（设置开启时注入） |
-| 联网 | `web_search`, `web_fetch` | 否 | 多引擎降级；FR-29 API 化进行中 |
+| 联网 | `web_search`, `web_fetch` | 否 | API：Tavily/Brave/博查 + Serper/SerpAPI/Bing/Perplexity 预留；HTML 降级 |
 | 连接器 | **`list_connectors`**, **`connector_status`**, **`sync_source`** | sync：是 | Agent 可直接查状态/触发同步（Build） |
 | 协作 | `todo`, `skills_list`, `skill_view` | 否 | 待办与技能 |
 | 交互 | `clarify`, **`ask_user`** | 否 | 追问；`ask_user` 支持选项，前端可点选 |
@@ -157,9 +157,9 @@
 | 能力 | 状态 |
 |------|------|
 | MCP stdio | Done |
-| MCP HTTP/SSE | Planned (FR-15) |
+| MCP HTTP/SSE | **Deferred** (FR-15) |
 | 定位 UI | **已关闭**；天气走 `web_search` 默认 |
-| macOS 打包（需本机 Python） | Done；内嵌 Python Planned (FR-27) |
+| macOS 打包（需本机 Python） | Done；内嵌 Python **Deferred** (FR-27) |
 
 ---
 
@@ -261,13 +261,13 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | **FR-33** | **`glob_files` + `ask_user`** | P1 | **Done** |
 | **FR-34** | **Harness P0**（Turn/SessionStore/SSE v2） | P1 | **Done** |
 | **FR-35** | **Browser screenshot + Ask 路由** | P2 | **Done** |
-| FR-28 | Explore 便宜模型路由 | P2 | **Pending** |
-| FR-29 | Web search API（Brave/Tavily） | P2 | **Next round** |
-| FR-15 | MCP HTTP/SSE | P2 | Planned |
-| FR-27 | 打包内嵌 Python | P2 | Planned |
-| FR-16 | IM 网关 | P3 | Backlog |
+| FR-28 | Explore 便宜模型路由 | P2 | **Deferred**（往后放） |
+| FR-29 | Web search API（Tavily/Brave/博查 + Serper/SerpAPI/Bing/Perplexity 预留） | P2 | **Done** |
+| FR-15 | MCP HTTP/SSE | P2 | **Done**（stdio + SSE + Streamable HTTP） |
+| FR-27 | 打包内嵌 Python | P2 | **Deferred**（往后放） |
+| FR-16 | IM 网关 | P3 | **Deferred**（往后放） |
 | FR-36 | Shibei 空结果 UX | P1 | Done |
-| FR-37 | Git 只读工具 | P3 | Backlog（非常靠后） |
+| FR-37 | Git 只读工具 | P3 | **Deferred**（往后放） |
 | FR-38 | 前端 Turn 树 / 分支地图（紧凑节点 + 动态路径） | P2 | Done |
 | **FR-43** | **对话标题自动跟随最新提问** | **P2** | **Done** |
 | FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Done |
@@ -323,27 +323,31 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | **H1** | Turn 持久化（`turns.json` + pause/resume bundle） | **Done** | FR-41 |
 | **H2** | Context compaction（长 turn 历史压缩） | **Done** | FR-42 |
 | **H3** | **Auto profile**（规则路由 ask/plan/build） | **Done** | FR-40 |
+| **H4** | Eval harness + compaction 可观测 + hooks 接线 | **Done（MVP）** | F23 / FR-42+ |
+| **H5** | Worker worktree · archetype 路由 · 结构化卡片 | **Done（MVP）** | F24 / F25 |
 
 #### Paused / Deferred
 
 | # | 任务 | 决策 |
 |---|------|------|
-| — | CLI provider 端到端（FR-30d） | **不做**；先自研 harness |
+| — | CLI provider 端到端（FR-30d） | **Deferred**（往后放） |
 | — | Briefing/Think Shibei 优先 | **暂停** |
 | — | `mode: primary` 自定义主 Agent | **不做**；用 Auto 替代 |
-| — | FR-28 Explore 便宜模型 | **Pending** |
-| — | FR-29 Web search API | **下一轮** |
-| — | FR-37 Git 只读工具 | **非常靠后** |
+| — | FR-28 Explore 便宜模型 | **Deferred**（往后放） |
+| — | FR-15 MCP HTTP/SSE | **Done** |
+| — | FR-27 打包内嵌 Python | **Deferred**（往后放） |
+| — | FR-16 IM 网关 | **Deferred**（往后放） |
+| — | FR-37 Git 只读工具 | **Deferred**（往后放） |
 | — | E2E 扩展 | Backlog |
 
 #### Later · 平台（P2–P3）
 
 | # | 任务 | FR |
 |---|------|-----|
-| N10 | MCP HTTP/SSE | FR-15 |
-| N11 | 打包内嵌 Python | FR-27 |
+| N10 | MCP HTTP/SSE | FR-15（Done） |
+| N11 | 打包内嵌 Python | FR-27（Deferred） |
 | N13 | 定时 Agent / cron | Backlog |
-| N14 | IM 网关（飞书 bot） | FR-16 |
+| N14 | IM 网关（飞书 bot） | FR-16（Deferred） |
 
 #### Future · 自进化与 Agent 演进（P3 / Research）
 
@@ -352,9 +356,9 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | F20 | **Skill 自进化** | 基于用户反馈或执行失败自动更新/生成 SKILL.md / manifest.json + run.py |
 | F21 | **反思记忆（Reflexion-style）** | 将失败、用户纠正、成功模式写入长期记忆，供后续 turn 检索 |
 | F22 | **代码级自修复** | 在显式用户确认下，让子 Agent 修改 Lumina 自身源码并跑测试验证；默认关闭 |
-| F23 | **评测 harness（eval-driven）** | 为常见任务建立基准用例，用 eval 驱动 prompt/tool 迭代 |
-| F24 | **智能 archetype 选择** | 根据用户一次性任务描述，自动匹配 explore / worker / verify / plan 或自定义 subagent，不新增内置类型 |
-| F25 | **结构化输出卡片** | 复用 `ASK_USER_REQUEST` 标记协议，新增 `SUMMARY_CARD` / `CODE_DIFF_CARD` / `REFERENCE_CARD` 等语义卡片；走工具返回 → loop 短路 → 前端卡片渲染路径（不进流式 delta）；需前后端协同 |
+| F23 | **评测 harness（eval-driven）** | **Done（MVP）**：`tests/eval` 离线 golden cases |
+| F24 | **智能 archetype 选择** | **Done（MVP）**：`select_archetype` 规则路由 |
+| F25 | **结构化输出卡片** | **Done（MVP）**：`SUMMARY_CARD` / `CODE_DIFF_CARD` / `REFERENCE_CARD` + `emit_card` |
 
 ### 明确不做（近期）
 
@@ -394,7 +398,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | Sync 定位 | 可选；Agent 用 `sync_source`，UI 同步保留 |
 | CLI vs sub-agent | **CLI provider 不做**；轻量 explore → 内层 sub-agent |
 | 主 Agent 扩展 | **Auto** 替代 `mode: primary` 自定义 md |
-| Web search | 下一轮切 API（Brave/Tavily） |
+| Web search | **Done**：Tavily / Brave / 博查 API（env key）+ HTML 降级 |
 | Briefing/Think | 暂停；先 harness |
 | 打包 Python | v0.2 spike：sidecar venv |
 

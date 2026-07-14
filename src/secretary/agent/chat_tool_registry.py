@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from secretary.agent.agent_profile import AgentProfile, resolve_parent_tools
-from secretary.agent.cli_agent import CliAgentRunner, SpawnCliAgentTool
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.permission_guard import guard_tools_for_profile
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
@@ -19,7 +18,6 @@ from secretary.agent.tools.web import WebFetchTool
 from secretary.config import Settings
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.shibei_service import ShibeiService, shibei_ready_for_memory_read
 from secretary.services.todo_store import TodoStore
@@ -42,7 +40,6 @@ class ChatToolRegistry:
         mcp_manager: McpManager | None,
         shibei_service: ShibeiService | None,
         sync_service: SyncService | None,
-        cli_agent_config_store: CliAgentConfigStore,
         get_session_id: Callable[[], str],
         shell_working_dir: Callable[[], Path],
         temperature: Callable[[], float],
@@ -55,7 +52,6 @@ class ChatToolRegistry:
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
         self._sync_service = sync_service
-        self._cli_agent_config_store = cli_agent_config_store
         self._get_session_id = get_session_id
         self._shell_working_dir = shell_working_dir
         self._temperature = temperature
@@ -81,7 +77,6 @@ class ChatToolRegistry:
         llm_config: LlmConfig,
     ) -> tuple[list[Tool], object | None]:
         spawn_tool = self.make_spawn_tool(llm_config)
-        cli_spawn_tool = self.make_cli_spawn_tool()
 
         if profile is AgentProfile.BUILD:
             if filesystem_turn:
@@ -98,7 +93,6 @@ class ChatToolRegistry:
                 profile,
                 base_tools,
                 spawn_tool=spawn_tool,
-                cli_spawn_tool=cli_spawn_tool,
             )
         elif profile is AgentProfile.ASK:
             base_tools = self.append_browser_tools(
@@ -110,7 +104,6 @@ class ChatToolRegistry:
                 profile,
                 base_tools,
                 spawn_tool=None,
-                cli_spawn_tool=None,
             )
         else:
             base_tools = self.append_browser_tools(
@@ -122,7 +115,6 @@ class ChatToolRegistry:
                 profile,
                 base_tools,
                 spawn_tool=None,
-                cli_spawn_tool=None,
             )
         return guard_tools_for_profile(profile, tools), spawn_tool
 
@@ -169,6 +161,9 @@ class ChatToolRegistry:
             self._get_or_create_tool("clarify", ClarifyTool),
             self._get_or_create_tool("ask_user", AskUserTool),
         ]
+        from secretary.agent.structured_cards import EmitCardTool
+
+        tools.append(self._get_or_create_tool("emit_card", EmitCardTool))
         if self._sync_service is not None:
             from secretary.agent.tools.connector_tools import (
                 ConnectorStatusTool,
@@ -232,22 +227,6 @@ class ChatToolRegistry:
             temperature=min(self._temperature(), 0.5),
         )
         return SpawnSubagentTool(deps, spawn_context)
-
-    def make_cli_spawn_tool(self) -> SpawnCliAgentTool | None:
-        if not self._cli_agent_config_store.is_enabled():
-            return None
-        projects_dir: Path | None = None
-        raw = self._settings.projects_dir.strip()
-        if raw:
-            expanded = Path(raw).expanduser()
-            if expanded.is_dir():
-                projects_dir = expanded
-        runner = CliAgentRunner(
-            self._cli_agent_config_store,
-            projects_dir=projects_dir,
-            audit_dir=self._settings.resolved_data_dir() / "logs" / "cli-agent",
-        )
-        return SpawnCliAgentTool(runner, default_cwd=self._shell_working_dir())
 
     def append_browser_tools(
         self,

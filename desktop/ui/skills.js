@@ -239,6 +239,9 @@
 
   function bindToolbarEvents() {
     document.getElementById("btn-copy-all")?.addEventListener("click", copyAllSkills);
+    document.getElementById("btn-skills-empty-action")?.addEventListener("click", () => {
+      void loadSkills();
+    });
     document.getElementById("skill-search")?.addEventListener("input", (event) => {
       searchQuery = event.target.value;
       renderContent();
@@ -310,7 +313,15 @@
 
   function renderSkillCollection(items) {
     if (!items.length) {
-      return '<p class="muted skills-empty">没有匹配的技能</p>';
+      const voice = activeSource === "installed"
+        ? "还没有挂靠的技能。把常用工作流放进来，灵犀就能按需调用。"
+        : "这里暂时没有匹配的技能。换个筛选，或重新扫描技能目录。";
+      return `
+        <div class="skills-empty">
+          <p>${escapeHtml(voice)}</p>
+          <button class="btn-text" type="button" id="btn-skills-empty-action">重新扫描</button>
+        </div>
+      `;
     }
     if (viewMode === "card") {
       return `

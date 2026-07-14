@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from secretary.agent.turn_models import PROGRESS_SCHEMA_VERSION
+
+logger = logging.getLogger(__name__)
 
 ProgressKind = Literal[
     "turn_started",
@@ -13,6 +17,7 @@ ProgressKind = Literal[
     "pause_confirmation",
     "iteration_started",
     "iteration_completed",
+    "context_compacted",
     "tool_started",
     "tool_finished",
     "subagent_started",
@@ -49,6 +54,18 @@ class ProgressEvent:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     error_type: str = ""
+
+
+def emit_progress(
+    callback: Callable[[ProgressEvent], None] | None,
+    event: ProgressEvent,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception as exc:
+        logger.debug("progress callback failed: %s", exc)
 
 
 _ARCHETYPE_LABELS: dict[str, str] = {
@@ -109,6 +126,10 @@ def progress_event_label(event: ProgressEvent) -> str:
         return "本轮完成" if event.success else "本轮结束（待确认）"
     if event.kind == "pause_confirmation":
         return event.message.strip() or "等待确认"
+    if event.kind == "context_compacted":
+        if event.message.strip():
+            return prefix + event.message.strip()
+        return prefix + "上下文已压缩"
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"

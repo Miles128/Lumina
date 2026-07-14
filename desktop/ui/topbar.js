@@ -1,6 +1,10 @@
 (function () {
   "use strict";
 
+  const TOKEN_STATE_KEY = "lumina.token.usage.v1";
+  const APPROX_TOKEN_RATIO = 1.8;
+  const UI_PREFS_KEY = "lumina.ui.preferences.v1";
+
   const menuBtn = document.getElementById("btn-topbar-menu");
   const menuPanel = document.getElementById("topbar-menu");
   const tokenValueEl = document.getElementById("token-usage-value");
@@ -9,6 +13,12 @@
   const aboutPanel = document.getElementById("about-panel");
   const aboutBackdrop = document.getElementById("about-backdrop");
   const closeAboutBtn = document.getElementById("btn-close-about");
+
+  // Apply chrome prefs (theme included) even if menu nodes are missing.
+  applyUiPreferences(loadUiPreferences());
+  window.addEventListener("lumina:ui-preferences", (event) => {
+    applyUiPreferences(event.detail || loadUiPreferences());
+  });
 
   // Moon button must init even if other chrome nodes are missing.
   if (document.readyState === "loading") {
@@ -21,12 +31,7 @@
     return;
   }
 
-  const TOKEN_STATE_KEY = "lumina.token.usage.v1";
-  const APPROX_TOKEN_RATIO = 1.8;
-  const UI_PREFS_KEY = "lumina.ui.preferences.v1";
-
   let totalTokens = loadTokenState();
-  applyUiPreferences(loadUiPreferences());
   renderTokenUsage();
   loadActiveModel();
 
@@ -102,11 +107,6 @@
     totalTokens += delta;
     saveTokenState(totalTokens);
     renderTokenUsage();
-  });
-
-  window.addEventListener("lumina:ui-preferences", (event) => {
-    const prefs = event.detail || {};
-    applyUiPreferences(prefs);
   });
 
   window.addEventListener("lumina:language", () => {
@@ -203,18 +203,20 @@
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem(UI_PREFS_KEY);
-      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
       const parsed = JSON.parse(raw);
       const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
+      const theme = ["system", "light", "dark", "paper"].includes(parsed?.theme) ? parsed.theme : "system";
       return {
         density: parsed?.density === "compact" ? "compact" : "comfortable",
         messageWidth: ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
           ? parsed.messageWidth
           : "medium",
         language,
+        theme,
       };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium", language: "bi" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
     }
   }
 
@@ -223,10 +225,18 @@
     const width = ["narrow", "medium", "wide"].includes(prefs?.messageWidth)
       ? prefs.messageWidth
       : "medium";
+    const theme = ["system", "light", "dark", "paper"].includes(prefs?.theme) ? prefs.theme : "system";
     document.body.classList.toggle("ui-density-compact", density === "compact");
     document.body.classList.toggle("ui-width-narrow", width === "narrow");
     document.body.classList.toggle("ui-width-medium", width === "medium");
     document.body.classList.toggle("ui-width-wide", width === "wide");
+    if (window.LuminaTheme) {
+      window.LuminaTheme.apply(theme);
+    } else if (theme === "light" || theme === "dark" || theme === "paper") {
+      document.documentElement.setAttribute("data-theme", theme);
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
   }
 
   /* ===== 月相按钮 + 顶部信息条 ===== */

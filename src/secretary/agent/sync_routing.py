@@ -5,23 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from secretary.agent.grounding import is_personal_memory_question
-from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
+from secretary.core.types import ConnectorHealth, ConnectorStatus, SOURCE_LABELS, SourceKind
 from secretary.memory.db import MemoryStore
 from secretary.services.shibei_service import shibei_ready_for_memory_read
 
 if TYPE_CHECKING:
     from secretary.services.shibei_service import ShibeiService
     from secretary.services.sync import SyncService
-
-SOURCE_LABELS: dict[SourceKind, str] = {
-    SourceKind.FEISHU: "飞书",
-    SourceKind.EMAIL: "邮箱",
-    SourceKind.WEREAD: "微信读书",
-    SourceKind.XIAOHONGSHU: "小红书",
-    SourceKind.WEIXIN_OA: "微信公众号",
-    SourceKind.CLOUD_DRIVE: "云盘",
-    SourceKind.LOCAL_DOCUMENTS: "本地文档",
-}
 
 _SOURCE_MARKERS: dict[SourceKind, tuple[str, ...]] = {
     SourceKind.WEREAD: (

@@ -17,9 +17,8 @@
   let agentSoulPath = "";
   let durableMemoryMd = "";
   let durableUserMd = "";
-  let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
+  let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
   let mcpStatus = null;
-  let cliAgentStatus = null;
   let shibeiConfig = null;
   let backgroundTasks = null;
 
@@ -61,14 +60,13 @@
 
   async function loadSettings() {
     contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
-    const [platformList, profile, config, soul, durable, mcp, cliAgents, shibei, background] = await Promise.all([
+    const [platformList, profile, config, soul, durable, mcp, shibei, background] = await Promise.all([
       window.SecretaryAPI.request("GET", "/api/settings/platforms"),
       window.SecretaryAPI.request("GET", "/api/profile"),
       window.SecretaryAPI.request("GET", "/api/agent/config"),
       window.SecretaryAPI.request("GET", "/api/agent/soul"),
       window.SecretaryAPI.request("GET", "/api/memory/durable"),
       window.SecretaryAPI.request("GET", "/api/mcp/status").catch(() => null),
-      window.SecretaryAPI.request("GET", "/api/cli-agents/status").catch(() => null),
       window.SecretaryAPI.request("GET", "/api/shibei/config").catch(() => null),
       window.SecretaryAPI.request("GET", "/api/agent/background").catch(() => null),
     ]);
@@ -79,7 +77,6 @@
     durableMemoryMd = durable.memory_md || "";
     durableUserMd = durable.user_md || "";
     mcpStatus = mcp;
-    cliAgentStatus = cliAgents;
     shibeiConfig = shibei;
     backgroundTasks = background;
     uiPreferences = loadUiPreferences();
@@ -89,7 +86,7 @@
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
-      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_cli", "agent_shibei", "appearance", "about"].includes(activeKey)
+      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_shibei", "appearance", "about"].includes(activeKey)
     ) {
       activeKey = "agent_llm";
     }
@@ -109,11 +106,6 @@
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
       { key: "agent_mcp", label: t("settings.mcp"), status: mcpStatus?.tool_count ? "ready" : "not_configured" },
-      {
-        key: "agent_cli",
-        label: t("settings.cliAgents"),
-        status: cliAgentStatus?.active ? "ready" : "not_configured",
-      },
     ]) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -197,10 +189,6 @@
     }
     if (key === "agent_mcp") {
       renderAgentMcpPane();
-      return;
-    }
-    if (key === "agent_cli") {
-      renderAgentCliPane();
       return;
     }
     if (key === "agent_shibei") {
@@ -468,8 +456,8 @@
             <span>Agent 模式 · Profile</span>
             <select id="agent-profile">
               <option value="auto"${agentProfile === "auto" ? " selected" : ""}>Auto · 自动（推荐）</option>
-              <option value="build"${agentProfile === "build" ? " selected" : ""}>Build · 执行</option>
-              <option value="ask"${agentProfile === "ask" || agentProfile === "orchestrator" ? " selected" : ""}>Ask · 问答检索</option>
+              <option value="build"${agentProfile === "build" || agentProfile === "orchestrator" ? " selected" : ""}>Build · 执行</option>
+              <option value="ask"${agentProfile === "ask" ? " selected" : ""}>Ask · 问答检索</option>
               <option value="plan"${agentProfile === "plan" ? " selected" : ""}>Plan · 只读规划</option>
             </select>
           </label>
@@ -568,7 +556,7 @@
     const density = uiPreferences.density || "comfortable";
     const width = uiPreferences.messageWidth || "medium";
     const language = uiPreferences.language || "bi";
-    const theme = uiPreferences.theme || "light";
+    const theme = uiPreferences.theme || "system";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -579,6 +567,7 @@
           <label class="settings-field">
             <span>${escapeHtml(t("appearance.theme"))}</span>
             <select id="ui-theme">
+              <option value="system"${theme === "system" ? " selected" : ""}>${escapeHtml(t("appearance.theme.system"))}</option>
               <option value="light"${theme === "light" ? " selected" : ""}>${escapeHtml(t("appearance.theme.light"))}</option>
               <option value="dark"${theme === "dark" ? " selected" : ""}>${escapeHtml(t("appearance.theme.dark"))}</option>
               <option value="paper"${theme === "paper" ? " selected" : ""}>${escapeHtml(t("appearance.theme.paper"))}</option>
@@ -621,12 +610,10 @@
     const density = document.getElementById("ui-density")?.value || "comfortable";
     const messageWidth = document.getElementById("ui-message-width")?.value || "medium";
     const language = document.getElementById("ui-language")?.value || "bi";
-    const theme = document.getElementById("ui-theme")?.value || "light";
-    if (window.LuminaLocation) {
-      window.LuminaLocation.setEnabled(false);
-    }
+    const theme = document.getElementById("ui-theme")?.value || "system";
     uiPreferences = { density, messageWidth, language, theme };
     localStorage.setItem("lumina.ui.preferences.v1", JSON.stringify(uiPreferences));
+    window.LuminaTheme?.apply(theme);
     window.dispatchEvent(new CustomEvent("lumina:ui-preferences", { detail: uiPreferences }));
     window.dispatchEvent(new CustomEvent("lumina:language"));
     const feedback = document.getElementById("appearance-feedback");
@@ -638,17 +625,17 @@
   function loadUiPreferences() {
     try {
       const raw = localStorage.getItem("lumina.ui.preferences.v1");
-      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
+      if (!raw) return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
       const parsed = JSON.parse(raw);
       const density = parsed?.density === "compact" ? "compact" : "comfortable";
       const messageWidth = ["narrow", "medium", "wide"].includes(parsed?.messageWidth)
         ? parsed.messageWidth
         : "medium";
       const language = ["zh", "en", "bi"].includes(parsed?.language) ? parsed.language : "bi";
-      const theme = ["light", "dark", "paper"].includes(parsed?.theme) ? parsed.theme : "light";
+      const theme = ["system", "light", "dark", "paper"].includes(parsed?.theme) ? parsed.theme : "system";
       return { density, messageWidth, language, theme };
     } catch (_error) {
-      return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "light" };
+      return { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
     }
   }
 
@@ -883,7 +870,10 @@
             );
           })
           .join("")
-      : `<li class="muted">${escapeHtml(t("settings.mcp.empty"))}</li>`;
+      : `<li class="mcp-empty-state">
+          <span>${escapeHtml(t("settings.mcp.emptyVoice"))}</span>
+          <button class="btn-text" type="button" id="btn-mcp-empty-quickstart">${escapeHtml(t("settings.mcp.emptyAction"))}</button>
+        </li>`;
 
     contentEl.innerHTML = `
       <div class="settings-pane is-wide">
@@ -892,7 +882,7 @@
           <p>外部 MCP 服务器提供的工具，对话时 Agent 可直接调用。配置文件：<code>${escapeHtml(configPath)}</code></p>
         </header>
         <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · SDK ${status.available ? "可用" : "不可用"}</p>
-        <p class="platform-meta muted">需要 Node.js / npx · 仅支持 stdio 传输（URL 暂不可用）· 写入类 MCP 工具需用户确认</p>
+        <p class="platform-meta muted">支持 stdio（本地命令）与远程 URL（SSE / Streamable HTTP）· 写入类 MCP 工具需用户确认</p>
         ${status.last_error ? `<p class="platform-feedback error">${escapeHtml(status.last_error)}</p>` : ""}
 
         <h4 class="settings-subtitle">快速添加 · Quick start</h4>
@@ -907,16 +897,32 @@
         <h4 class="settings-subtitle">添加 MCP 服务器</h4>
         <div class="mcp-import-form">
           <label class="settings-field">
-            <span>名称（英文，如 filesystem）</span>
+            <span>名称（英文，如 filesystem / remote）</span>
             <input id="mcp-name" type="text" placeholder="filesystem" />
           </label>
           <label class="settings-field">
-            <span>启动命令</span>
+            <span>传输</span>
+            <select id="mcp-transport">
+              <option value="stdio" selected>stdio · 本地命令</option>
+              <option value="streamable_http">streamable_http · 远程</option>
+              <option value="sse">sse · 远程（旧）</option>
+            </select>
+          </label>
+          <label class="settings-field" id="mcp-command-field">
+            <span>启动命令（stdio）</span>
             <input id="mcp-command" type="text" placeholder="npx" />
           </label>
-          <label class="settings-field">
+          <label class="settings-field" id="mcp-args-field">
             <span>参数（空格分隔）</span>
             <input id="mcp-args" type="text" placeholder="-y @modelcontextprotocol/server-filesystem /Users/you" />
+          </label>
+          <label class="settings-field" id="mcp-url-field" hidden>
+            <span>远程 URL</span>
+            <input id="mcp-url" type="url" placeholder="https://example.com/mcp" />
+          </label>
+          <label class="settings-field" id="mcp-headers-field" hidden>
+            <span>Authorization（可选，写入 Bearer …）</span>
+            <input id="mcp-auth" type="text" placeholder="Bearer sk-…" autocomplete="off" />
           </label>
         </div>
         <div class="platform-actions">
@@ -938,7 +944,10 @@
     `;
     document.getElementById("btn-add-mcp")?.addEventListener("click", addMcpServer);
     document.getElementById("btn-mcp-quickstart-fs")?.addEventListener("click", quickstartFilesystemMcp);
+    document.getElementById("btn-mcp-empty-quickstart")?.addEventListener("click", quickstartFilesystemMcp);
     document.getElementById("btn-reload-mcp")?.addEventListener("click", reloadMcp);
+    document.getElementById("mcp-transport")?.addEventListener("change", syncMcpTransportFields);
+    syncMcpTransportFields();
     contentEl.querySelector(".mcp-server-list")?.addEventListener("click", (event) => {
       const btn = event.target.closest("[data-mcp-delete]");
       if (!btn) return;
@@ -946,97 +955,17 @@
     });
   }
 
-  function cliProviderLabel(name) {
-    const key = `settings.cli.provider.${name}`;
-    const label = t(key);
-    return label === key ? name : label;
-  }
-
-  function renderAgentCliPane() {
-    const status = cliAgentStatus || {};
-    const providers = Array.isArray(status.providers) ? status.providers : [];
-    const defaults = status.defaults || {};
-    const configPath = status.config_path || "~/.lumina/cli-agents.json";
-    const masterEnabled = Boolean(status.enabled);
-    const providerOptions = providers
-      .map(
-        (provider) =>
-          `<option value="${escapeAttr(provider.name)}"${defaults.provider === provider.name ? " selected" : ""}>${escapeHtml(cliProviderLabel(provider.name))}</option>`,
-      )
-      .join("");
-    const providerRows = providers.length
-      ? providers
-          .map((provider) => {
-            const name = provider.name || "";
-            const installLabel = provider.installed
-              ? t("settings.cli.installed")
-              : t("settings.cli.missing");
-            const installClass = provider.installed ? "ready" : "not_configured";
-            const cmdPreview = [provider.command, ...(provider.args || [])].join(" ").trim();
-            return (
-              `<li class="cli-provider-row">` +
-              `<label class="cli-provider-main settings-field-check">` +
-              `<input type="checkbox" data-cli-provider="${escapeAttr(name)}"${provider.enabled ? " checked" : ""}${masterEnabled ? "" : " disabled"} />` +
-              `<span><strong>${escapeHtml(cliProviderLabel(name))}</strong> · <span class="platform-status ${installClass}">${escapeHtml(installLabel)}</span></span>` +
-              `</label>` +
-              `<code class="cli-provider-cmd">${escapeHtml(cmdPreview)}</code>` +
-              `<button class="btn-text cli-provider-test" type="button" data-cli-test="${escapeAttr(name)}">${escapeHtml(t("settings.cli.test"))}</button>` +
-              `</li>`
-            );
-          })
-          .join("")
-      : "";
-
-    contentEl.innerHTML = `
-      <div class="settings-pane is-wide">
-        <header class="settings-pane-head">
-          <h3>${escapeHtml(t("settings.cliAgents"))}</h3>
-          <p>${escapeHtml(t("settings.cli.desc"))}</p>
-          <p class="platform-meta">配置文件：<code>${escapeHtml(configPath)}</code></p>
-        </header>
-        <p class="platform-meta">
-          <span class="platform-status ${status.active ? "ready" : "not_configured"}">${escapeHtml(status.active ? t("settings.cli.active") : t("settings.cli.inactive"))}</span>
-        </p>
-
-        <div class="settings-fields">
-          <label class="settings-field settings-field-check">
-            <input id="cli-master-enabled" type="checkbox"${masterEnabled ? " checked" : ""} />
-            <span>${escapeHtml(t("settings.cli.master"))}</span>
-          </label>
-          <label class="settings-field">
-            <span>${escapeHtml(t("settings.cli.defaultProvider"))}</span>
-            <select id="cli-default-provider"${masterEnabled ? "" : " disabled"}>${providerOptions}</select>
-          </label>
-        </div>
-
-        <h4 class="settings-subtitle">Providers</h4>
-        <ul class="cli-provider-list">${providerRows}</ul>
-
-        <div class="platform-actions">
-          <button class="btn-text save-btn" type="button" id="btn-save-cli-agents">${escapeHtml(t("settings.cli.save"))}</button>
-        </div>
-        <div id="cli-feedback" class="platform-feedback" hidden></div>
-      </div>
-    `;
-
-    document.getElementById("btn-save-cli-agents")?.addEventListener("click", saveCliAgentSettings);
-    document.getElementById("cli-master-enabled")?.addEventListener("change", (event) => {
-      const enabled = event.target.checked;
-      document.getElementById("cli-default-provider")?.toggleAttribute("disabled", !enabled);
-      contentEl.querySelectorAll("[data-cli-provider]").forEach((input) => {
-        input.toggleAttribute("disabled", !enabled);
-      });
-    });
-    contentEl.querySelector(".cli-provider-list")?.addEventListener("change", (event) => {
-      const input = event.target.closest("[data-cli-provider]");
-      if (!input) return;
-      void toggleCliProvider(input.getAttribute("data-cli-provider"), input.checked);
-    });
-    contentEl.querySelector(".cli-provider-list")?.addEventListener("click", (event) => {
-      const btn = event.target.closest("[data-cli-test]");
-      if (!btn) return;
-      void testCliProvider(btn.getAttribute("data-cli-test"));
-    });
+  function syncMcpTransportFields() {
+    const transport = document.getElementById("mcp-transport")?.value || "stdio";
+    const remote = transport !== "stdio";
+    const commandField = document.getElementById("mcp-command-field");
+    const argsField = document.getElementById("mcp-args-field");
+    const urlField = document.getElementById("mcp-url-field");
+    const headersField = document.getElementById("mcp-headers-field");
+    if (commandField) commandField.hidden = remote;
+    if (argsField) argsField.hidden = remote;
+    if (urlField) urlField.hidden = !remote;
+    if (headersField) headersField.hidden = !remote;
   }
 
   function renderAgentShibeiPane() {
@@ -1162,21 +1091,39 @@
   async function addMcpServer() {
     const feedback = document.getElementById("mcp-feedback");
     const name = document.getElementById("mcp-name")?.value.trim();
-    const command = document.getElementById("mcp-command")?.value.trim();
+    const transport = document.getElementById("mcp-transport")?.value || "stdio";
+    const command = document.getElementById("mcp-command")?.value.trim() || "";
     const argsRaw = document.getElementById("mcp-args")?.value.trim() || "";
     const args = argsRaw ? argsRaw.split(/\s+/).filter(Boolean) : [];
-    if (!name || !command) {
-      showFeedback(feedback, "error", "请填写名称和启动命令");
+    const url = document.getElementById("mcp-url")?.value.trim() || "";
+    const auth = document.getElementById("mcp-auth")?.value.trim() || "";
+    if (!name) {
+      showFeedback(feedback, "error", "请填写名称");
       return;
+    }
+    if (transport === "stdio" && !command) {
+      showFeedback(feedback, "error", "stdio 需要启动命令");
+      return;
+    }
+    if (transport !== "stdio" && !url) {
+      showFeedback(feedback, "error", "远程传输需要 URL");
+      return;
+    }
+    const payload = {
+      name,
+      transport,
+      enabled: true,
+      command: transport === "stdio" ? command : "",
+      args: transport === "stdio" ? args : [],
+      url: transport === "stdio" ? "" : url,
+      headers: {},
+    };
+    if (auth) {
+      payload.headers = { Authorization: auth.startsWith("Bearer ") ? auth : `Bearer ${auth}` };
     }
     showFeedback(feedback, "info", "正在保存并连接…");
     try {
-      mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/servers", {
-        name,
-        command,
-        args,
-        enabled: true,
-      });
+      mcpStatus = await window.SecretaryAPI.request("POST", "/api/mcp/servers", payload);
       renderNav();
       renderAgentMcpPane();
       showFeedback(document.getElementById("mcp-feedback"), "success", `已添加 ${name}，加载 ${mcpStatus.tool_count || 0} 个工具`);

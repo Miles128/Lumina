@@ -1,0 +1,5 @@
+{
+  "id": "ask_user_short_circuit",
+  "kind": "ask_user_short_circuit",
+  "expect_contains": ["ASK_USER_REQUEST", "Continue?"]
+}

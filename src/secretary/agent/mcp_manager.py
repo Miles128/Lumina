@@ -35,6 +35,16 @@ except ImportError:  # pragma: no cover - optional dependency
     McpToolDef = Any  # type: ignore[assignment,misc]
     _MCP_AVAILABLE = False
 
+try:
+    from mcp.client.sse import sse_client
+except ImportError:  # pragma: no cover
+    sse_client = None  # type: ignore[assignment]
+
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:  # pragma: no cover
+    streamable_http_client = None  # type: ignore[assignment]
+
 _NAME_SAFE = re.compile(r"[^a-zA-Z0-9_]+")
 
 _SKIP_SERVERS = frozenset({"filesystem"})
@@ -239,16 +249,21 @@ class McpManager:
         parts: list[str] = []
         for name in sorted(document.servers):
             cfg = document.servers[name]
-            if not cfg.enabled or not cfg.command:
+            if not cfg.enabled:
+                continue
+            if not cfg.command and not cfg.url:
                 continue
             parts.append(
                 "|".join(
                     [
                         name,
+                        cfg.transport or "stdio",
                         cfg.command,
                         " ".join(cfg.args),
+                        cfg.url,
                         str(cfg.timeout),
                         json.dumps(cfg.env, sort_keys=True, ensure_ascii=True),
+                        json.dumps(cfg.headers, sort_keys=True, ensure_ascii=True),
                     ]
                 )
             )
@@ -277,27 +292,24 @@ class McpManager:
         for name, config in document.servers.items():
             if not config.enabled:
                 continue
-            if config.command:
-                if shutil.which(config.command) is None:
-                    logger.warning("MCP server %s skipped: command not found (%s)", name, config.command)
-                    if self._last_error:
-                        self._last_error += f"; {name}: 未安装 ({config.command})"
-                    else:
-                        self._last_error = f"{name}: 未安装 ({config.command})"
-                    continue
-                try:
+            try:
+                if config.command:
+                    if shutil.which(config.command) is None:
+                        logger.warning(
+                            "MCP server %s skipped: command not found (%s)",
+                            name,
+                            config.command,
+                        )
+                        self._record_error(f"{name}: 未安装 ({config.command})")
+                        continue
                     await self._connect_stdio(name, config)
-                except Exception as exc:
-                    logger.warning("MCP server %s failed: %s", name, exc)
-                    if self._last_error:
-                        self._last_error += f"; {name}: {exc}"
-                    else:
-                        self._last_error = f"{name}: {exc}"
-                continue
-            if self._last_error:
-                self._last_error += f"; {name}: 暂不支持 URL 传输"
-            else:
-                self._last_error = f"{name}: 暂不支持 URL 传输"
+                elif config.url.strip():
+                    await self._connect_remote(name, config)
+                else:
+                    self._record_error(f"{name}: 缺少 command 或 url")
+            except Exception as exc:
+                logger.warning("MCP server %s failed: %s", name, exc)
+                self._record_error(f"{name}: {exc}")
         self._mark_connected()
 
     async def _connect_stdio(self, name: str, config: McpServerConfig) -> None:
@@ -314,34 +326,94 @@ class McpManager:
         stack = AsyncExitStack()
         try:
             read, write = await stack.enter_async_context(stdio_client(params))
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await session.initialize()
-            listed = await session.list_tools()
-            specs: list[_RegisteredMcpTool] = []
-            for item in listed.tools:
-                safe_tool = _safe_name(item.name)
-                specs.append(
-                    _RegisteredMcpTool(
-                        server_name=_safe_name(name),
-                        remote_name=str(item.name),
-                        tool_name=safe_tool,
-                        description=str(item.description or item.name),
-                        input_schema=dict(item.inputSchema or {}),
-                        timeout=config.timeout,
-                    )
-                )
-            runtime = _ServerRuntime(
-                name=name,
-                session=session,
-                tools=specs,
-                stack=stack,
-            )
-            self._runtimes[name] = runtime
-            for spec in specs:
-                self._bridge_tools.append(McpBridgeTool(self, spec))
+            await self._register_session(name, config, stack, read, write)
         except Exception:
             await self._close_stack(stack)
             raise
+
+    async def _connect_remote(self, name: str, config: McpServerConfig) -> None:
+        assert ClientSession is not None
+        transport = (config.transport or "streamable_http").strip().lower()
+        if transport in {"http", "streamable_http", "streamable-http"}:
+            transport = "streamable_http"
+        elif transport in {"sse", "http+sse"}:
+            transport = "sse"
+        else:
+            raise RuntimeError(f"不支持的传输: {config.transport}")
+
+        url = config.url.strip()
+        if not url:
+            raise RuntimeError("缺少 url")
+        headers = dict(config.headers or {})
+        stack = AsyncExitStack()
+        try:
+            if transport == "sse":
+                if sse_client is None:
+                    raise RuntimeError("当前 mcp 包不支持 SSE 客户端")
+                read, write = await stack.enter_async_context(
+                    sse_client(
+                        url,
+                        headers=headers or None,
+                        timeout=float(min(config.timeout, 30)),
+                        sse_read_timeout=float(config.timeout),
+                    )
+                )
+            else:
+                if streamable_http_client is None:
+                    raise RuntimeError("当前 mcp 包不支持 Streamable HTTP 客户端")
+                http_client = None
+                if headers:
+                    import httpx
+
+                    http_client = httpx.AsyncClient(
+                        headers=headers,
+                        follow_redirects=True,
+                        timeout=httpx.Timeout(config.timeout, read=config.timeout),
+                    )
+                    await stack.enter_async_context(http_client)
+                streams = await stack.enter_async_context(
+                    streamable_http_client(url, http_client=http_client)
+                )
+                read, write = streams[0], streams[1]
+            await self._register_session(name, config, stack, read, write)
+        except Exception:
+            await self._close_stack(stack)
+            raise
+
+    async def _register_session(
+        self,
+        name: str,
+        config: McpServerConfig,
+        stack: AsyncExitStack,
+        read: Any,
+        write: Any,
+    ) -> None:
+        assert ClientSession is not None
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        listed = await session.list_tools()
+        specs: list[_RegisteredMcpTool] = []
+        for item in listed.tools:
+            safe_tool = _safe_name(item.name)
+            specs.append(
+                _RegisteredMcpTool(
+                    server_name=_safe_name(name),
+                    remote_name=str(item.name),
+                    tool_name=safe_tool,
+                    description=str(item.description or item.name),
+                    input_schema=dict(item.inputSchema or {}),
+                    timeout=config.timeout,
+                )
+            )
+        runtime = _ServerRuntime(
+            name=name,
+            session=session,
+            tools=specs,
+            stack=stack,
+        )
+        self._runtimes[name] = runtime
+        for spec in specs:
+            self._bridge_tools.append(McpBridgeTool(self, spec))
 
     async def _async_call_tool(
         self,

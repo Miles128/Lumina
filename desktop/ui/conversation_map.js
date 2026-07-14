@@ -411,7 +411,11 @@
     }
   }
 
+  let toggleBound = false;
+
   function bindToggleButton() {
+    if (toggleBound) return;
+    toggleBound = true;
     document.addEventListener("click", (event) => {
       const btn = event.target.closest(".js-map-toggle");
       if (!btn) return;
@@ -439,4 +443,7 @@
       return isOpen;
     },
   };
+
+  // Self-init so a missing/blocked bootstrap call cannot silently disable the map button.
+  bindToggleButton();
 })();

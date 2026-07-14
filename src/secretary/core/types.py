@@ -15,6 +15,17 @@ class SourceKind(StrEnum):
     LOCAL_DOCUMENTS = "local_documents"
 
 
+SOURCE_LABELS: dict[SourceKind, str] = {
+    SourceKind.FEISHU: "飞书",
+    SourceKind.EMAIL: "邮箱",
+    SourceKind.WEREAD: "微信读书",
+    SourceKind.XIAOHONGSHU: "小红书",
+    SourceKind.WEIXIN_OA: "微信公众号",
+    SourceKind.CLOUD_DRIVE: "云盘",
+    SourceKind.LOCAL_DOCUMENTS: "本地文档",
+}
+
+
 class ConnectorStatus(StrEnum):
     READY = "ready"
     NOT_CONFIGURED = "not_configured"

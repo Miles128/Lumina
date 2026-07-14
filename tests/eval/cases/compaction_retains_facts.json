@@ -1,0 +1,5 @@
+{
+  "id": "compaction_retains_facts",
+  "kind": "compaction_retains_facts",
+  "must_keep": ["lumina-eval-secret.txt", "PASS_EVAL"]
+}

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, nativeImage, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, session, nativeImage, dialog, nativeTheme } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { spawn, exec } = require("child_process");
@@ -132,6 +132,10 @@ function attachWindowOpenHandler(win) {
   });
 }
 
+function windowBackgroundColor() {
+  return nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+}
+
 function createMainWindow() {
   if (mainWindow) {
     mainWindow.focus();
@@ -144,7 +148,8 @@ function createMainWindow() {
     minHeight: 720,
     title: "灵犀",
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 16 },
+    trafficLightPosition: { x: 14, y: 14 },
+    backgroundColor: windowBackgroundColor(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -170,6 +175,7 @@ function createKnowledgeWindow() {
     minWidth: 960,
     minHeight: 640,
     title: "Shibei · 知识库",
+    backgroundColor: windowBackgroundColor(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -304,6 +310,11 @@ app.whenReady().then(async () => {
   applyAppIcon();
   setupContentSecurityPolicy();
   setupGeolocationPermissions();
+  nativeTheme.on("updated", () => {
+    const color = windowBackgroundColor();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(color);
+    if (knowledgeWindow && !knowledgeWindow.isDestroyed()) knowledgeWindow.setBackgroundColor(color);
+  });
   await ensureBackend();
   createMainWindow();
 });

@@ -1,4 +1,4 @@
-"""Hermes-style three-layer memory system.
+"""Lumina three-layer memory system.
 
 Layer 1: MEMORY.md + USER.md (durable facts, frozen snapshot in system prompt)
 Layer 2: Session archive (all conversations in SQLite with FTS5)

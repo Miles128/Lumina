@@ -9,7 +9,7 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.core.types import ProfileSection, UserProfile
 from secretary.exceptions import AgentError
 from secretary.memory.db import MemoryStore
-from secretary.memory.profile import ProfileBuilder
+from secretary.memory.profile import ProfileBuilder, render_profile_markdown
 from secretary.services.local_documents_profiler import LocalDocumentsProfile
 
 
@@ -65,7 +65,7 @@ def _summarize_with_llm(rule_profile: UserProfile, llm_config: LlmConfig) -> Use
         )
 
     overview = "以下为基于同步数据生成的语义摘要，不含推测。"
-    markdown = _render_markdown(overview, sections)
+    markdown = render_profile_markdown(overview, sections)
     return UserProfile(
         generated_at=datetime.now(UTC),
         sections=sections,
@@ -83,18 +83,3 @@ def _extract_section(markdown: str, title: str) -> str:
     end = rest.find("\n## ")
     block = rest[:end] if end >= 0 else rest
     return block.strip()
-
-
-def _render_markdown(overview: str, sections: list[ProfileSection]) -> str:
-    lines = [
-        "# USER 画像",
-        "",
-        f"> 自动生成时间：{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
-        "",
-        "## 说明",
-        overview,
-        "",
-    ]
-    for section in sections:
-        lines.extend([f"## {section.title}", section.content, ""])
-    return "\n".join(lines).strip() + "\n"

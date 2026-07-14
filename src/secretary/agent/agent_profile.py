@@ -25,6 +25,7 @@ ASK_TOOL_NAMES = frozenset(
         "connector_status",
         "clarify",
         "ask_user",
+        "emit_card",
         "browser_open",
         "browser_snapshot",
         "browser_screenshot",
@@ -191,7 +192,7 @@ def profile_system_appendix(profile: AgentProfile) -> str:
         )
     return (
         "\n\n## Agent mode: Build\n"
-        "执行模式：读写、shell、同步连接器、子 Agent 与 CLI 委派均可用；危险操作需用户确认。"
+        "执行模式：读写、shell、同步连接器、子 Agent 均可用；危险操作需用户确认。"
     )
 
 
@@ -207,7 +208,6 @@ def resolve_parent_tools(
     tools: list[Tool],
     *,
     spawn_tool: Tool | None,
-    cli_spawn_tool: Tool | None = None,
 ) -> list[Tool]:
     """Filter parent-session tools by profile (OpenCode permission ruleset)."""
     by_name = {tool.name: tool for tool in tools}
@@ -216,8 +216,6 @@ def resolve_parent_tools(
         names = {tool.name for tool in ordered}
         if spawn_tool is not None and spawn_tool.name not in names:
             ordered.append(spawn_tool)
-        if cli_spawn_tool is not None and cli_spawn_tool.name not in names:
-            ordered.append(cli_spawn_tool)
         return ordered
 
     if profile is AgentProfile.BUILD:

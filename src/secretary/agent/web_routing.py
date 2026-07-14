@@ -138,15 +138,11 @@ def resolve_client_location(
     location_lat: float | None = None,
     location_lng: float | None = None,
 ) -> str | None:
-    """City from client hint or reverse-geocode coordinates."""
+    """City from client hint only; reverse-geocoding removed with location UI."""
     if location_city:
         city = location_city.strip().rstrip("市")
         if city:
             return city
-    if location_lat is not None and location_lng is not None:
-        from secretary.services.geolocation import reverse_geocode_city
-
-        return reverse_geocode_city(location_lat, location_lng)
     return None
 
 

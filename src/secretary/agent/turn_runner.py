@@ -135,6 +135,7 @@ class TurnRunner:
         working_dir: Path | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         turn: TurnContext | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         return self._orchestrator.run_confirmed_action(
@@ -145,6 +146,7 @@ class TurnRunner:
             temperature=temperature,
             working_dir=working_dir,
             progress_callback=wrapped,
+            cancel_check=cancel_check,
         )
 
     def resume_after_subagent(
@@ -158,6 +160,7 @@ class TurnRunner:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         on_subagent_paused: Callable[[Any], None] | None = None,
         turn: TurnContext | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         return self._orchestrator.resume_after_subagent(
@@ -168,4 +171,5 @@ class TurnRunner:
             working_dir=working_dir,
             progress_callback=wrapped,
             on_subagent_paused=on_subagent_paused,
+            cancel_check=cancel_check,
         )

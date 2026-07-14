@@ -383,6 +383,43 @@ class ChatThreadStore:
             target["title"] = heuristic_title(user_message)
         self.save_document(current_id=thread_id, threads=threads)
 
+    def append_assistant_message(self, thread_id: str, assistant_message: str) -> bool:
+        """Append a single assistant notice without inventing a fake user turn.
+
+        Returns False when the thread does not exist (does not create one).
+        """
+        text = assistant_message.strip()
+        if not thread_id or not text:
+            return False
+        document = self.load_document()
+        threads = document["threads"]
+        target: dict[str, Any] | None = None
+        for item in threads:
+            if isinstance(item, dict) and item.get("id") == thread_id:
+                target = item
+                break
+        if target is None:
+            return False
+        messages = target.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+        parent_id = target.get("active_leaf_id") or ""
+        assistant_node: dict[str, Any] = {
+            "id": _new_message_id(),
+            "parent_id": parent_id if isinstance(parent_id, str) else "",
+            "role": "assistant",
+            "text": text,
+            "archived": False,
+        }
+        messages.append(assistant_node)
+        if len(messages) > MAX_THREAD_MESSAGES:
+            messages = messages[-MAX_THREAD_MESSAGES:]
+        target["messages"] = messages
+        target["active_leaf_id"] = assistant_node["id"]
+        target["updatedAt"] = datetime.now(UTC).isoformat()
+        self.save_document(current_id=document["current_id"], threads=threads)
+        return True
+
     def maybe_refresh_title(
         self,
         thread_id: str,

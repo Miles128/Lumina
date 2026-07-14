@@ -48,6 +48,9 @@ class SearchResult:
         return {"title": self.title, "url": self.url, "snippet": self.snippet, "engine": self.engine}
 
 
+SearchFn = Callable[[str, int], list[SearchResult]]
+
+
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
@@ -71,13 +74,52 @@ def _query_prefers_chinese_engines(query: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", query))
 
 
+_API_ENGINE_NAMES = frozenset(
+    {"tavily", "brave", "bocha", "serper", "serpapi", "bing_api", "perplexity"}
+)
+# Populated lazily; tests may replace/patch this dict.
+_API_ENGINES: dict[str, SearchFn] = {}
+
+
+def configured_api_engines() -> tuple[str, ...]:
+    from secretary.agent.web_search_providers import configured_api_engines as _cfg
+
+    return _cfg()
+
+
+def _ensure_api_engines() -> dict[str, SearchFn]:
+    if not _API_ENGINES:
+        from secretary.agent.web_search_providers import make_api_search_fn
+
+        _API_ENGINES.update(
+            {
+                name: make_api_search_fn(name)
+                for name in (
+                    "tavily",
+                    "brave",
+                    "bocha",
+                    "serper",
+                    "serpapi",
+                    "bing_api",
+                    "perplexity",
+                )
+            }
+        )
+    return _API_ENGINES
+
+
 def fallback_engine_order(primary: str | None, query: str) -> list[str]:
-    """Engine try-order tuned for query language."""
+    """Engine try-order: configured APIs first, then HTML scrapers by language."""
+    from secretary.agent.web_search_providers import api_preference_order
+
     if _query_prefers_chinese_engines(query):
-        base = ["bing", "baidu", "sogou", "duckduckgo", "google"]
+        html = ["bing", "baidu", "sogou", "duckduckgo", "google"]
     else:
-        base = ["bing", "duckduckgo", "google", "sogou", "baidu"]
-    if primary and primary in _ENGINES:
+        html = ["bing", "duckduckgo", "google", "sogou", "baidu"]
+    api = api_preference_order(query, configured_api_engines())
+    base = api + [name for name in html if name not in api]
+    known = set(_ENGINES) | set(_API_ENGINE_NAMES)
+    if primary and primary in known:
         return [primary] + [name for name in base if name != primary]
     return list(base)
 
@@ -401,8 +443,6 @@ def _ddg_instant(query: str, limit: int) -> list[SearchResult]:
     return results[:limit]
 
 
-SearchFn = Callable[[str, int], list[SearchResult]]
-
 _ENGINES: dict[str, SearchFn] = {
     "bing": _bing,
     "duckduckgo": _ddg,
@@ -433,18 +473,32 @@ def run_search(query: str, engine: str, limit: int) -> tuple[list[SearchResult],
     if not cleaned_query:
         raise ValueError("empty search query")
 
+    api_engines = _ensure_api_engines()
+    all_engines: dict[str, SearchFn] = {**_ENGINES, **api_engines}
+    configured_apis = set(configured_api_engines())
+
     normalized = engine.lower().strip()
+    available_names = [
+        *_ENGINES.keys(),
+        *[name for name in _API_ENGINE_NAMES if name in configured_apis],
+        "auto",
+    ]
     if normalized == "auto":
         engines_to_try = fallback_engine_order(None, cleaned_query)
-    elif normalized not in _ENGINES:
-        available = ", ".join([*_ENGINES.keys(), "auto"])
+    elif normalized in _API_ENGINE_NAMES and normalized not in configured_apis:
+        available = ", ".join(available_names)
+        raise ValueError(f"unknown engine '{engine}'. Available: {available}")
+    elif normalized not in all_engines:
+        available = ", ".join(available_names)
         raise ValueError(f"unknown engine '{engine}'. Available: {available}")
     else:
         engines_to_try = fallback_engine_order(normalized, cleaned_query)
 
     errors: list[str] = []
     for name in engines_to_try:
-        search_fn = _ENGINES[name]
+        search_fn = all_engines.get(name)
+        if search_fn is None:
+            continue
         try:
             results = search_fn(cleaned_query, limit)
         except Exception as exc:
@@ -466,9 +520,8 @@ def run_search(query: str, engine: str, limit: int) -> tuple[list[SearchResult],
 class WebSearchTool(Tool):
     name = "web_search"
     description = (
-        "Search the web using multiple search engines. "
-        "Supports: bing (default), duckduckgo, google, baidu, sogou. "
-        "Can use multiple engines and merge results."
+        "Search the web. Prefer auto (API providers when configured: tavily/brave/bocha, "
+        "then HTML engines bing/duckduckgo/google/baidu/sogou)."
     )
     needs_confirmation = False
     risk_level = "low"
@@ -482,10 +535,26 @@ class WebSearchTool(Tool):
                 "engine": {
                     "type": "string",
                     "description": (
-                        "Search engine: auto (default, language-aware fallback), bing, "
-                        "duckduckgo, google, baidu, sogou, or all"
+                        "Search engine: auto (default), tavily, brave, bocha, serper, "
+                        "serpapi, bing_api, perplexity, bing, duckduckgo, google, baidu, "
+                        "sogou, or all"
                     ),
-                    "enum": ["auto", "bing", "duckduckgo", "google", "baidu", "sogou", "all"],
+                    "enum": [
+                        "auto",
+                        "tavily",
+                        "brave",
+                        "bocha",
+                        "serper",
+                        "serpapi",
+                        "bing_api",
+                        "perplexity",
+                        "bing",
+                        "duckduckgo",
+                        "google",
+                        "baidu",
+                        "sogou",
+                        "all",
+                    ],
                 },
                 "limit": {"type": "integer", "description": "Max results per engine (default 5)"},
             },
@@ -521,9 +590,13 @@ class WebSearchTool(Tool):
     def _search_all(self, query: str, limit: int) -> str | ToolResult:
         all_results: list[SearchResult] = []
         errors: list[str] = []
+        api_engines = _ensure_api_engines()
+        combined = {**_ENGINES, **api_engines}
 
         for name in fallback_engine_order(None, query):
-            fn = _ENGINES[name]
+            fn = combined.get(name)
+            if fn is None:
+                continue
             try:
                 results = fn(query, limit)
                 all_results.extend(results)
@@ -553,7 +626,14 @@ class WebSearchTool(Tool):
                 seen_urls.add(normalized)
                 deduped.append(result)
 
-        deduped.sort(key=lambda result: (result.engine == "bing", result.engine == "google"), reverse=True)
+        deduped.sort(
+            key=lambda result: (
+                result.engine in _API_ENGINE_NAMES,
+                result.engine == "bing",
+                result.engine == "google",
+            ),
+            reverse=True,
+        )
 
         header = f"🔍 '{query}' — {len(deduped)} results from {len({r.engine for r in deduped})} engines"
         if errors:

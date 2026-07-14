@@ -70,7 +70,6 @@ from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import BackgroundReviewService
 from secretary.services.chat_threads import ChatThreadStore
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.profile_service import ProfileService
 
@@ -132,7 +131,6 @@ class ChatService:
         file_auth: FileAuthService | None = None,
         mcp_manager: McpManager | None = None,
         shibei_service: ShibeiService | None = None,
-        cli_agent_config_store: CliAgentConfigStore | None = None,
         session_store: SessionStore | None = None,
         turn_runner: TurnRunner | None = None,
     ) -> None:
@@ -167,13 +165,17 @@ class ChatService:
         self._system_prompt_cache: str | None = None
         self._system_prompt_cache_key: str = ""
         self._session_store = session_store or SessionStore()
-        orchestrator = TurnOrchestrator(self._file_auth)
+        try:
+            self._session_store.prune_stale()
+        except Exception:
+            logger.debug("SessionStore prune skipped", exc_info=True)
+        orchestrator = TurnOrchestrator(
+            self._file_auth,
+            hooks_factory=self._build_loop_hooks,
+        )
         self._turn_runner = turn_runner or TurnRunner(orchestrator, self._session_store)
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
-        self._cli_agent_config_store = cli_agent_config_store or CliAgentConfigStore(
-            settings.resolved_data_dir() / "cli-agents.json",
-        )
         self._thread_store = ChatThreadStore(settings.resolved_data_dir() / "chat_threads.json")
         self._active_thread_id = ""
         self._active_trace_id = ""
@@ -188,7 +190,6 @@ class ChatService:
             mcp_manager=mcp_manager,
             shibei_service=shibei_service,
             sync_service=sync_service,
-            cli_agent_config_store=self._cli_agent_config_store,
             get_session_id=self._get_or_create_session_id,
             shell_working_dir=self._shell_working_dir,
             temperature=self._temperature,
@@ -237,15 +238,21 @@ class ChatService:
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
             return
-        try:
-            sub_state = None
-            if "confirmation" in loaded:
+        sub_state = None
+        if "confirmation" in loaded:
+            try:
                 pending, messages = pause_restore_confirmation(loaded["confirmation"])
                 self._set_pending(pending, messages, llm_config, persist=False)
-            if "subagent" in loaded:
+            except ValueError as exc:
+                logger.warning("confirmation pause restore failed: %s", exc)
+        if "subagent" in loaded:
+            try:
                 sub_state = pause_restore_subagent(loaded["subagent"], llm_config)
                 self._handle_subagent_paused(sub_state, persist=False)
-            if "parent_resume" in loaded:
+            except ValueError as exc:
+                logger.warning("subagent pause restore failed: %s", exc)
+        if "parent_resume" in loaded:
+            try:
                 tools = self._tool_registry.build_tools()
                 self._set_parent_turn_resume(
                     pause_restore_parent(
@@ -255,16 +262,16 @@ class ChatService:
                     ),
                     persist=False,
                 )
-            if "subagent" in loaded or "parent_resume" in loaded:
-                parent_session_id = (
-                    sub_state.parent_session_id if sub_state is not None else ""
-                )
-                self._active_spawn_tool = self._tool_registry.make_spawn_tool(
-                    llm_config,
-                    parent_session_id=parent_session_id or None,
-                )
-        except ValueError:
-            return
+            except ValueError as exc:
+                logger.warning("parent resume pause restore failed: %s", exc)
+        if sub_state is not None or self._parent_turn_resume is not None:
+            parent_session_id = (
+                sub_state.parent_session_id if sub_state is not None else ""
+            )
+            self._active_spawn_tool = self._tool_registry.make_spawn_tool(
+                llm_config,
+                parent_session_id=parent_session_id or None,
+            )
 
     def _set_pending(
         self,
@@ -343,9 +350,6 @@ class ChatService:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         thread_id: str | None = None,
         trace_id: str | None = None,
-        location_city: str | None = None,
-        location_lat: float | None = None,
-        location_lng: float | None = None,
         parent_message_id: str | None = None,
         working_dir: str | None = None,
         attachments: list[str] | None = None,
@@ -502,6 +506,7 @@ class ChatService:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         thread_id: str | None = None,
         trace_id: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ChatResult:
         if thread_id:
             tid = thread_id.strip()
@@ -519,7 +524,10 @@ class ChatService:
 
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
-            self._append_history("system", reply)
+            # Stale confirm (no pending): never invent a fake "system" user turn —
+            # that was creating empty threads titled "system" on deny/restart races.
+            if pending is not None:
+                self._append_assistant_notice(reply)
             self._clear_persisted_pause(_active_trace_id_var.get())
             return ChatResult(
                 reply=reply,
@@ -537,7 +545,7 @@ class ChatService:
             if spawn_tool is None:
                 self._clear_persisted_pause(_active_trace_id_var.get())
                 reply = "子代理状态丢失，无法恢复。请重新发起请求。"
-                self._append_history("system", reply)
+                self._append_assistant_notice(reply)
                 return ChatResult(
                     reply=reply,
                     profile_excerpt="",
@@ -550,6 +558,7 @@ class ChatService:
                 messages,
                 llm_config,
                 progress_callback=progress_callback,
+                cancel_check=cancel_check,
             )
 
         tools = self._tool_registry.build_tools()
@@ -562,6 +571,7 @@ class ChatService:
             working_dir=self._shell_working_dir(),
             progress_callback=progress_callback,
             turn=self._active_turn(_active_trace_id_var.get()),
+            cancel_check=cancel_check,
         )
 
         if result.pending_confirmation:
@@ -607,11 +617,13 @@ class ChatService:
         llm_config: LlmConfig,
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ChatResult:
         summary = spawn_tool._runner.resume_paused(
             state,
             self._shell_working_dir(),
             progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
         re_paused = spawn_tool.consume_paused()
         if re_paused is not None:
@@ -652,6 +664,7 @@ class ChatService:
                 progress_callback=progress_callback,
                 on_subagent_paused=self._handle_subagent_paused,
                 turn=self._active_turn(_active_trace_id_var.get()),
+                cancel_check=cancel_check,
             )
             if (
                 result.pending_confirmation
@@ -1232,6 +1245,11 @@ class ChatService:
         if is_user_input_request(raw_reply):
             return raw_reply, grounding_verified, grounding_note
 
+        from secretary.agent.structured_cards import is_structured_card_output
+
+        if is_structured_card_output(raw_reply):
+            return raw_reply, grounding_verified, grounding_note
+
         sanitized = prepare_user_facing_reply(raw_reply, user_message, llm_config)
         reply, verified, note = enforce_grounded_reply(
             sanitized,
@@ -1259,6 +1277,24 @@ class ChatService:
         if self._agent_config_store is not None:
             return self._agent_config_store.load().temperature
         return 0.7
+
+    def _build_loop_hooks(self, tools: list[Tool]):
+        from secretary.agent.hook_policies import HooksConfig, build_default_hooks
+        from secretary.agent.turn_orchestrator import LoopHookBundle
+
+        raw_hooks: dict[str, object] = {}
+        if self._agent_config_store is not None:
+            raw_hooks = dict(self._agent_config_store.load().hooks or {})
+        config = HooksConfig.from_mapping(raw_hooks)
+        profile = self._current_agent_profile()
+        # Hooks run without a turn message; auto resolves to build (full tools).
+        if profile is AgentProfile.AUTO:
+            profile = AgentProfile.BUILD
+        before, after = build_default_hooks(config, profile=profile, tools=tools)
+        return LoopHookBundle(
+            before_tool_execution=before,
+            after_tool_execution=after,
+        )
 
     def _resolve_turn_working_dir(self, working_dir: str | None) -> Path | None:
         raw = (working_dir or "").strip()
@@ -1451,7 +1487,7 @@ class ChatService:
             "- 用户在本轮明确提供的个人信息，应在回复后写入 durable memory（USER.md）与用户画像\n"
             "- 完成复杂任务后，总结关键事实到 durable memory\n"
             "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
-            "可用 goals 数组并行最多 2 个 explore；"
+            "可用 goals 数组并行最多 3 个 explore；"
             "子任务只回摘要，关键结论需你自行整合后再回复用户"
         ) + (
             f"\n\n{BROWSER_TOOL_GUIDANCE}" if agent_browser_available() else ""
@@ -1567,6 +1603,26 @@ class ChatService:
             history = self._load_history()
             history.append({"role": "user", "content": user_message[:MAX_MESSAGE_CHARS]})
             history.append({"role": "assistant", "content": assistant_message[:MAX_MESSAGE_CHARS]})
+            history = history[-self._history_limit() :]
+            payload = {"updated_at": datetime.now(UTC).isoformat(), "messages": history}
+            self._history_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            self._history_cache = None
+
+    def _append_assistant_notice(self, assistant_message: str) -> None:
+        """Record an assistant-only notice (cancel / error) without a fake user turn."""
+        text = assistant_message.strip()
+        if not text:
+            return
+        thread_id = _active_thread_id_var.get()
+        if thread_id:
+            self._thread_store.append_assistant_message(thread_id, text[:MAX_MESSAGE_CHARS])
+            return
+        with self._history_lock:
+            history = self._load_history()
+            history.append({"role": "assistant", "content": text[:MAX_MESSAGE_CHARS]})
             history = history[-self._history_limit() :]
             payload = {"updated_at": datetime.now(UTC).isoformat(), "messages": history}
             self._history_path.write_text(

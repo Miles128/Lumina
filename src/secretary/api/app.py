@@ -41,7 +41,6 @@ from secretary.services.chat_uploads import (
     copy_local_path,
     save_upload_bytes,
 )
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
@@ -99,9 +98,6 @@ class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=8000)
     trace_id: str = Field(default="", max_length=64)
     thread_id: str = Field(default="", max_length=64)
-    location_city: str = Field(default="", max_length=64)
-    location_lat: float | None = Field(default=None, ge=-90, le=90)
-    location_lng: float | None = Field(default=None, ge=-180, le=180)
     parent_message_id: str = Field(default="", max_length=64)
     working_dir: str = Field(default="", max_length=1024)
     attachments: list[str] = Field(default_factory=list, max_length=10)
@@ -139,15 +135,6 @@ class ChatThreadCreateRequest(BaseModel):
 
 class ChatThreadCurrentRequest(BaseModel):
     thread_id: str = Field(min_length=1, max_length=64)
-
-
-class LocationReverseRequest(BaseModel):
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
-
-
-class LocationReverseResponse(BaseModel):
-    city: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -189,21 +176,14 @@ class BriefingResponse(BaseModel):
 
 class McpServerUpsertRequest(BaseModel):
     name: str = Field(min_length=1, max_length=48)
-    command: str = Field(min_length=1)
+    command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    url: str = ""
+    transport: str = "stdio"
+    headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
     timeout: int = Field(default=120, ge=5, le=600)
-
-
-class CliAgentSettingsUpdateRequest(BaseModel):
-    enabled: bool | None = None
-    provider: str | None = None
-    needs_confirmation: bool | None = None
-
-
-class CliProviderToggleRequest(BaseModel):
-    enabled: bool
 
 
 class BackgroundTasksResponse(BaseModel):
@@ -422,7 +402,6 @@ def _init_services() -> dict[str, object]:
     file_auth = FileAuthService(settings.resolved_data_dir() / "file_auth.json")
     mcp_config_store = McpConfigStore(settings.resolved_data_dir() / "mcp.json")
     mcp_manager = McpManager(mcp_config_store)
-    cli_agent_config_store = CliAgentConfigStore(settings.resolved_data_dir() / "cli-agents.json")
     if settings.mcp_auto_filesystem:
         preferred_root: Path | None = None
         shell_raw = agent_config_store.load().shell_working_dir.strip()
@@ -445,7 +424,6 @@ def _init_services() -> dict[str, object]:
         file_auth=file_auth,
         mcp_manager=mcp_manager,
         shibei_service=shibei_service,
-        cli_agent_config_store=cli_agent_config_store,
         session_store=session_store,
         turn_runner=turn_runner,
     )
@@ -461,7 +439,6 @@ def _init_services() -> dict[str, object]:
         "chat_service": chat_service,
         "mcp_manager": mcp_manager,
         "mcp_config_store": mcp_config_store,
-        "cli_agent_config_store": cli_agent_config_store,
         "shibei_config_store": shibei_config_store,
         "shibei_service": shibei_service,
         "progress_hub": progress_hub,
@@ -578,52 +555,6 @@ def mcp_status(request: Request) -> dict[str, object]:
     return manager.status()
 
 
-@app.get("/api/cli-agents/status")
-def cli_agents_status(request: Request) -> dict[str, object]:
-    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
-    return store.status()
-
-
-@app.put("/api/cli-agents/settings")
-def cli_agents_update_settings(
-    request: Request,
-    body: CliAgentSettingsUpdateRequest,
-) -> dict[str, object]:
-    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
-    try:
-        store.update_defaults(
-            enabled=body.enabled,
-            provider=body.provider,
-            needs_confirmation=body.needs_confirmation,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return store.status()
-
-
-@app.put("/api/cli-agents/providers/{name}")
-def cli_agents_toggle_provider(
-    request: Request,
-    name: str,
-    body: CliProviderToggleRequest,
-) -> dict[str, object]:
-    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
-    try:
-        store.set_provider_enabled(name, body.enabled)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return store.status()
-
-
-@app.post("/api/cli-agents/providers/{name}/test")
-def cli_agents_test_provider(request: Request, name: str) -> dict[str, object]:
-    store: CliAgentConfigStore = request.app.state.cli_agent_config_store
-    result = store.test_provider(name)
-    status = store.status()
-    status["test"] = result
-    return status
-
-
 @app.post("/api/mcp/reload")
 def mcp_reload(request: Request) -> dict[str, object]:
     manager: McpManager = request.app.state.mcp_manager
@@ -641,16 +572,31 @@ def mcp_servers(request: Request) -> dict[str, object]:
 def mcp_upsert_server(request: Request, body: McpServerUpsertRequest) -> dict[str, object]:
     store: McpConfigStore = request.app.state.mcp_config_store
     manager: McpManager = request.app.state.mcp_manager
+    command = body.command.strip()
+    url = body.url.strip()
+    transport = (body.transport or "stdio").strip().lower() or "stdio"
+    if transport in {"http", "streamable-http"}:
+        transport = "streamable_http"
+    if not command and not url:
+        raise HTTPException(status_code=400, detail="需要 command（stdio）或 url（远程）")
+    if command and url:
+        raise HTTPException(status_code=400, detail="command 与 url 只能二选一")
+    if url and transport == "stdio":
+        transport = "streamable_http"
+    if command:
+        transport = "stdio"
     try:
         store.upsert_server(
             body.name.strip(),
             McpServerConfig(
-                command=body.command.strip(),
+                command=command,
                 args=body.args,
                 env=body.env,
+                url=url,
+                transport=transport,
+                headers=body.headers,
                 enabled=body.enabled,
                 timeout=body.timeout,
-                transport="stdio",
             ),
         )
     except ValueError as exc:
@@ -866,14 +812,6 @@ def identity_intro() -> dict[str, str]:
     return {"reply": get_identity_reply()}
 
 
-@app.post("/api/location/reverse")
-def reverse_location(body: LocationReverseRequest) -> LocationReverseResponse:
-    from secretary.services.geolocation import reverse_geocode_city
-
-    city = reverse_geocode_city(body.lat, body.lng) or ""
-    return LocationReverseResponse(city=city)
-
-
 @app.post("/api/chat")
 def chat(request: Request, body: ChatRequest) -> ChatResponse:
     chat_service: ChatService = _svc(request).chat_service
@@ -968,6 +906,7 @@ def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse
     trace_id = body.trace_id.strip()
     thread_id = body.thread_id.strip()
     progress = _build_progress_callback(request, trace_id)
+    cancel_event = begin_turn(trace_id) if trace_id else None
     if trace_id and request.app.state.session_store.get_turn(trace_id) is None:
         request.app.state.session_store.start_turn(
             trace_id=trace_id,
@@ -984,11 +923,14 @@ def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse
                 progress_callback=progress,
                 thread_id=thread_id or None,
                 trace_id=trace_id or None,
+                cancel_check=cancel_event.is_set if cancel_event is not None else None,
             )
         keep_turn = bool(result.pending_confirmation)
         return _to_chat_response(result, usage)
     finally:
         _finish_progress(request, trace_id, keep_turn=keep_turn)
+        if trace_id:
+            end_turn(trace_id)
 
 
 @app.delete("/api/chat/history")

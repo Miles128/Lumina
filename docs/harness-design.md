@@ -85,9 +85,21 @@ Harness（灵犀专有）
 - [x] Shibei 空结果 → 自动 import 或 UI 引导（v0.2 B1）
 - [x] **`spawn_cli_agent` 核心**（FR-30 30a）：config store、subprocess 摘要、确认流、SSE 进度
 - [x] CLI Agents 设置 UI（FR-30 30b）：默认关闭、Codex + Kimi provider
-- [ ] Explore 便宜模型路由（Cursor 做法）— **Pending**
+- [ ] Explore 便宜模型路由（Cursor 做法）— **Deferred**（往后放）
 - [x] ~~`~/.lumina/subagents/*.md` 支持 `mode: primary` 注册主 Agent~~ → **不做**；用 **Auto profile** 替代
-- [ ] CLI provider 端到端 — **Frozen**（先自研 harness）
+- [x] Web search API（Tavily / Brave / 博查 + Serper / SerpAPI / Bing Azure / Perplexity 预留）
+- [x] MCP HTTP/SSE / Streamable HTTP（FR-15）
+- [x] Harness harden：confirm/resume cancel · 父→子 cancel · shell 中途取消 · turns prune
+- [x] **Eval harness（F23）**：`tests/eval` 离线 golden cases
+- [x] **Compaction 可观测**：`CompactionResult` + SSE `context_compacted`
+- [x] **Worker worktree 隔离**：git worktree + diff 摘要回传（不自动 merge）
+- [x] **智能 archetype（F24）**：`select_archetype` 规则路由
+- [x] **结构化卡片（F25）**：`SUMMARY_CARD` / `CODE_DIFF_CARD` / `REFERENCE_CARD`
+- [x] **Hooks 权限层**：`AfterTool` + path/command 策略 + TurnOrchestrator 接线
+- [ ] CLI provider 端到端 — **Deferred**（往后放）
+- [ ] 打包内嵌 Python（FR-27）— **Deferred**（往后放）
+- [ ] IM 网关（FR-16）— **Deferred**（往后放）
+- [ ] Git 只读工具（FR-37）— **Deferred**（往后放）
 
 ---
 

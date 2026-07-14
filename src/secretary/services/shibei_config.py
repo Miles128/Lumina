@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,9 +11,11 @@ from pydantic import BaseModel
 
 from secretary.exceptions import SecretaryError
 
-_CANDIDATE_INSTALL_ROOTS = (
-    Path.home() / "Documents" / "Projects" / "shibei",
-    Path.home() / "Documents" / "My Projects" / "shibei",
+_env_root = os.environ.get("SHIBEI_INSTALL_ROOT", "").strip()
+_CANDIDATE_INSTALL_ROOTS: tuple[Path, ...] = (
+    (Path(_env_root).expanduser(),)
+    if _env_root
+    else (Path.home() / "Documents" / "My Projects" / "shibei",)
 )
 
 

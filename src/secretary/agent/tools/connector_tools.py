@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.tools.base import Tool, ToolResult
-from secretary.core.types import ConnectorStatus, SourceKind
+from secretary.core.types import ConnectorStatus, SOURCE_LABELS, SourceKind
 from secretary.services.sync import SyncService
 
 _SOURCE_ALIASES: dict[str, SourceKind] = {
@@ -20,16 +20,6 @@ _SOURCE_ALIASES: dict[str, SourceKind] = {
     "local_documents": SourceKind.LOCAL_DOCUMENTS,
 }
 
-_SOURCE_LABELS: dict[SourceKind, str] = {
-    SourceKind.FEISHU: "飞书",
-    SourceKind.EMAIL: "邮箱",
-    SourceKind.WEREAD: "微信读书",
-    SourceKind.XIAOHONGSHU: "小红书",
-    SourceKind.WEIXIN_OA: "微信公众号",
-    SourceKind.CLOUD_DRIVE: "云盘",
-    SourceKind.LOCAL_DOCUMENTS: "本地文档",
-}
-
 
 def parse_source_kind(raw: str) -> SourceKind | None:
     normalized = raw.strip().lower().replace("-", "_")
@@ -39,7 +29,7 @@ def parse_source_kind(raw: str) -> SourceKind | None:
 
 
 def _format_health(source: SourceKind, status: ConnectorStatus, message: str, *, inserted: int = 0, last_sync_at: datetime | None = None, item_count: int = 0) -> str:
-    label = _SOURCE_LABELS.get(source, source.value)
+    label = SOURCE_LABELS.get(source, source.value)
     sync_at = last_sync_at.astimezone(UTC).isoformat() if last_sync_at else "从未"
     lines = [
         f"- **{label}** (`{source.value}`)",

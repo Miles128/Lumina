@@ -19,12 +19,14 @@ from secretary.agent.web_search import (
 
 
 def test_fallback_engine_order_chinese_query() -> None:
-    order = fallback_engine_order(None, "杭州 今天天气")
+    with patch.object(web_search, "configured_api_engines", return_value=()):
+        order = fallback_engine_order(None, "杭州 今天天气")
     assert order[:3] == ["bing", "baidu", "sogou"]
 
 
 def test_fallback_engine_order_english_query() -> None:
-    order = fallback_engine_order(None, "OpenAI latest news")
+    with patch.object(web_search, "configured_api_engines", return_value=()):
+        order = fallback_engine_order(None, "OpenAI latest news")
     assert order[:2] == ["bing", "duckduckgo"]
 
 
@@ -79,9 +81,10 @@ def test_run_search_uses_instant_when_html_engines_empty() -> None:
             engine="duckduckgo_instant",
         )
     ]
-    with patch.dict(_ENGINES, {name: empty for name in _ENGINES}):
-        with patch.object(web_search, "_ddg_instant", return_value=instant_hit):
-            results, engine = run_search("杭州天气", "auto", 3)
+    with patch.object(web_search, "configured_api_engines", return_value=()):
+        with patch.dict(_ENGINES, {name: empty for name in _ENGINES}):
+            with patch.object(web_search, "_ddg_instant", return_value=instant_hit):
+                results, engine = run_search("杭州天气", "auto", 3)
     assert engine == "duckduckgo_instant"
     assert results[0].title == "Weather"
 

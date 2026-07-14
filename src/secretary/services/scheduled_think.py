@@ -34,12 +34,12 @@ class ScheduledThinkService:
     def __init__(
         self,
         settings: Settings,
-        hermes: LuminaMemory,
+        memory: LuminaMemory,
         profile_service: ProfileService,
         agent_config_store: AgentConfigStore,
     ) -> None:
         self._settings = settings
-        self._hermes = hermes
+        self._memory = memory
         self._profile_service = profile_service
         self._agent_config_store = agent_config_store
         self._state_path = settings.resolved_data_dir() / _STATE_FILE
@@ -63,7 +63,7 @@ class ScheduledThinkService:
             raise AgentError("未配置大模型，无法进行后台思考")
 
         profile = self._profile_service.get_view().markdown[:1200]
-        memory = self._hermes.prompt_snapshot() or ""
+        memory = self._memory.prompt_snapshot() or ""
         if not profile.strip() and not memory.strip():
             from secretary.memory.db import MemoryStore
 
@@ -74,7 +74,7 @@ class ScheduledThinkService:
                 return "skipped: no synced data"
 
         memory = memory or "(empty)"
-        recent = self._hermes.recent_session_messages(limit=30)
+        recent = self._memory.recent_session_messages(limit=30)
         recent_text = "\n".join(
             f"[{item['role']}] {item['content'][:200]}"
             for item in recent
@@ -137,7 +137,7 @@ class ScheduledThinkService:
                 target = str(item.get("target", "memory")).strip().lower()
                 if target not in {"memory", "user"}:
                     target = "memory"
-                self._hermes.mutate_memory(
+                self._memory.mutate_memory(
                     action,
                     target,
                     text=str(item.get("text", "")),

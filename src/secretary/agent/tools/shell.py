@@ -6,6 +6,8 @@ import os
 import re
 import shlex
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +118,12 @@ class ShellTool(Tool):
     read_only = False
     _MAX_OUTPUT_CHARS = 12_000
 
+    def __init__(self) -> None:
+        self._cancel_check: Callable[[], bool] | None = None
+
+    def bind_cancel_check(self, callback: Callable[[], bool] | None) -> None:
+        self._cancel_check = callback
+
     def _parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
@@ -142,37 +150,32 @@ class ShellTool(Tool):
         cwd = working_dir if working_dir.is_dir() else Path.home()
         env = os.environ.copy()
 
-        # Prefer shell=False for simple commands (safer).  Fall back to
-        # shell=True when the command contains pipes (which shlex.split
-        # cannot handle) or when the executable is a shell builtin.
         needs_shell = "|" in command
         for attempt in range(2):
             try:
                 if needs_shell:
-                    result = subprocess.run(
-                        command,
-                        shell=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                        cwd=str(cwd),
-                        env=env,
-                    )
+                    popen_kwargs: dict[str, Any] = {
+                        "args": command,
+                        "shell": True,
+                        "stdout": subprocess.PIPE,
+                        "stderr": subprocess.PIPE,
+                        "text": True,
+                        "cwd": str(cwd),
+                        "env": env,
+                    }
                 else:
-                    argv = shlex.split(command)
-                    result = subprocess.run(
-                        argv,
-                        shell=False,
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                        cwd=str(cwd),
-                        env=env,
-                    )
+                    popen_kwargs = {
+                        "args": shlex.split(command),
+                        "shell": False,
+                        "stdout": subprocess.PIPE,
+                        "stderr": subprocess.PIPE,
+                        "text": True,
+                        "cwd": str(cwd),
+                        "env": env,
+                    }
+                result = self._run_cancellable(popen_kwargs, timeout=timeout)
                 break
             except OSError:
-                # shell=False failed (e.g. shell builtin like "exit 3").
-                # Retry once with shell=True.
                 if attempt == 0 and not needs_shell:
                     needs_shell = True
                     continue
@@ -186,6 +189,12 @@ class ShellTool(Tool):
                     f"Error: command timed out after {timeout}s",
                     error_type="timeout",
                     retryable=True,
+                )
+            except _ShellCancelled:
+                return ToolResult.failure(
+                    "Error: command cancelled by user",
+                    error_type="cancelled",
+                    retryable=False,
                 )
             except Exception as exc:
                 return ToolResult.failure(
@@ -201,3 +210,53 @@ class ShellTool(Tool):
             output += f"\n[exit code: {result.returncode}]"
         output = output.strip() or "(no output)"
         return truncate_chars(output, self._MAX_OUTPUT_CHARS)
+
+    def _run_cancellable(
+        self,
+        popen_kwargs: dict[str, Any],
+        *,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[str]:
+        args = popen_kwargs.get("args")
+        if args is None:
+            args = ""
+        proc = subprocess.Popen(**popen_kwargs)
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                if self._cancel_check is not None:
+                    try:
+                        if self._cancel_check():
+                            proc.kill()
+                            proc.wait(timeout=2)
+                            raise _ShellCancelled()
+                    except _ShellCancelled:
+                        raise
+                    except Exception:
+                        pass
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                    raise subprocess.TimeoutExpired(args, timeout)
+                try:
+                    stdout, stderr = proc.communicate(timeout=min(0.25, remaining))
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=proc.returncode or 0,
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+
+
+class _ShellCancelled(Exception):
+    """Raised when shell is interrupted by cancel_check."""

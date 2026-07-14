@@ -481,3 +481,49 @@ def test_chat_service_thread_wrappers(tmp_path: Path) -> None:
     restored = service.restore_thread(linear_id, la1_id)
     for m in restored["threads"][0]["messages"]:
         assert m["archived"] is False
+
+
+def test_confirm_deny_does_not_create_system_user_turn(tmp_path: Path) -> None:
+    from secretary.agent.loop import PendingConfirmation
+
+    service = _build_chat_service(tmp_path)
+    created = service.create_thread(title="新对话")
+    thread_id = str(created["current_id"])
+    service._thread_store.append_turn(thread_id, "请执行命令", "需要确认后才能执行。")
+    pending = PendingConfirmation(
+        action_id="act_test",
+        tool_name="shell",
+        arguments={"command": "echo hi"},
+        description="执行命令",
+        risk_level="medium",
+        confirmation_kind="shell",
+    )
+    config = LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+    service._set_pending(pending, [{"role": "user", "content": "请执行命令"}], config, persist=False)
+
+    result = service.confirm_action(False, thread_id=thread_id)
+    assert "取消" in result.reply
+
+    thread = next(t for t in service.list_threads()["threads"] if t["id"] == thread_id)
+    roles_texts = [(m["role"], m["text"]) for m in thread["messages"]]
+    assert ("user", "system") not in roles_texts
+    assert any(role == "assistant" and "取消" in text for role, text in roles_texts)
+    assert thread["title"] != "system"
+
+
+def test_confirm_without_pending_does_not_pollute_empty_thread(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    created = service.create_thread(title="新对话")
+    thread_id = str(created["current_id"])
+
+    result = service.confirm_action(False, thread_id=thread_id)
+    assert "取消" in result.reply
+
+    thread = next(t for t in service.list_threads()["threads"] if t["id"] == thread_id)
+    assert thread["messages"] == []
+    assert thread["title"] == "新对话"

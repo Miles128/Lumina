@@ -113,15 +113,19 @@ class ProfileBuilder:
         return "以下为各数据源实际同步内容的摘要，不含推测。你可以在设置中直接编辑画像。"
 
     def _render_markdown(self, overview: str, sections: list[ProfileSection]) -> str:
-        lines = [
-            "# USER 画像",
-            "",
-            f"> 自动生成时间：{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
-            "",
-            "## 说明",
-            overview,
-            "",
-        ]
-        for section in sections:
-            lines.extend([f"## {section.title}", section.content, ""])
-        return "\n".join(lines).strip() + "\n"
+        return render_profile_markdown(overview, sections)
+
+
+def render_profile_markdown(overview: str, sections: list[ProfileSection]) -> str:
+    lines = [
+        "# USER 画像",
+        "",
+        f"> 自动生成时间：{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        "## 说明",
+        overview,
+        "",
+    ]
+    for section in sections:
+        lines.extend([f"## {section.title}", section.content, ""])
+    return "\n".join(lines).strip() + "\n"
