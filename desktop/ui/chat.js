@@ -939,7 +939,22 @@
       typingTextEl.textContent = statusText;
     }
     if (visible) {
+      typingStartAt = Date.now();
+      if (!typingTicker) {
+        typingTicker = window.setInterval(() => {
+          if (typingEl.hidden || !typingStartAt) return;
+          const elapsed = Date.now() - typingStartAt;
+          typingEl.classList.toggle("is-deep", elapsed > 5000);
+        }, 1000);
+      }
       scrollChatToBottom();
+    } else {
+      if (typingTicker) {
+        window.clearInterval(typingTicker);
+        typingTicker = null;
+      }
+      typingStartAt = 0;
+      typingEl.classList.remove("is-deep");
     }
   }
 
@@ -1201,7 +1216,6 @@
     const kind = String(event?.kind || "");
     if (kind.startsWith("turn_")) return "turn";
     if (kind.startsWith("subagent_")) return "subagent";
-    if (kind.startsWith("cli_agent_")) return "cli";
     if (kind === "pause_confirmation") return "pause";
     if (kind.startsWith("tool_")) return "tool";
     if (kind.startsWith("iteration_")) return "iteration";
@@ -1216,7 +1230,6 @@
     const iteration = Number(event?.iteration) || 0;
     if (kind.startsWith("turn_")) return turnId;
     if (kind.startsWith("subagent_")) return `sub:${subRunId || turnId}`;
-    if (kind.startsWith("cli_agent_")) return `cli:${subRunId || turnId}`;
     if (kind === "pause_confirmation") return `pause:${turnId}:${toolName || "confirm"}`;
     if (kind.startsWith("tool_")) {
       const parent = subRunId ? `sub:${subRunId}` : turnId;
@@ -1232,7 +1245,6 @@
     const subRunId = String(event?.sub_run_id || "").trim();
     if (kind.startsWith("turn_")) return "";
     if (kind.startsWith("tool_") && subRunId) return `sub:${subRunId}`;
-    if (kind.startsWith("cli_agent_")) return "";
     if (kind.startsWith("subagent_")) {
       const parentSubRunId = String(event?.parent_sub_run_id || "").trim();
       return parentSubRunId ? `sub:${parentSubRunId}` : turnId;
@@ -1436,9 +1448,7 @@
       kind === "tool_started" ||
       kind === "tool_finished" ||
       kind === "subagent_started" ||
-      kind === "subagent_finished" ||
-      kind === "cli_agent_started" ||
-      kind === "cli_agent_finished"
+      kind === "subagent_finished"
     ) {
       progressSession.hasTools = true;
     }

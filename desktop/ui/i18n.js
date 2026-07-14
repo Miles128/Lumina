@@ -28,6 +28,7 @@
     "chat.welcome": { en: "What to build today?", zh: "今天做点什么？" },
     "chat.placeholder": { en: "Message", zh: "输入消息" },
     "chat.processing": { en: "Working…", zh: "正在处理…" },
+    "chat.thinking": { en: "Thinking", zh: "思考中" },
     "chat.typing.understand": { en: "Understanding your question…", zh: "正在理解你的问题…" },
     "chat.typing.instant": { en: "Replying…", zh: "正在回复…" },
     "chat.typing.gather": { en: "Gathering relevant info…", zh: "正在整理相关信息…" },

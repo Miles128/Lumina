@@ -549,31 +549,49 @@ html, body {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 10px;
   padding: 14px 16px;
   background: var(--bg-subtle);
   border-radius: var(--radius-lg);
   width: fit-content;
 }
 
-.typing-dots {
-  display: inline-flex;
-  gap: 5px;
-}
-
-.typing-dots span {
-  width: 5px;
-  height: 5px;
+/* 光场呼吸 —— 替代原 typing-dots 三点 */
+.think-field {
+  position: relative;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: var(--text-tertiary);
-  animation: pulse 1.2s ease-in-out infinite;
+  background: radial-gradient(circle, var(--sig) 0%, var(--sig-soft) 45%, transparent 75%);
+  filter: blur(1px);
+  animation: think-breathe var(--pace-breathe) ease-in-out infinite;
+  flex-shrink: 0;
 }
 
-.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
-.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+.think-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sig);
+  box-shadow: var(--sig-glow);
+}
+
+@keyframes think-breathe {
+  0%, 100% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+/* 长时思考（>5s）—— 由 JS 添加 .is-deep 类触发 */
+.typing.is-deep .think-field {
+  animation-duration: var(--pace-breathe-deep);
+}
 
 .typing-text {
-  margin-left: 6px;
+  margin-left: 4px;
   color: var(--text-secondary);
   font-size: 13px;
 }
