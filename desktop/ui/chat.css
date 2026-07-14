@@ -596,6 +596,44 @@ html, body {
   font-size: 13px;
 }
 
+/* 输出态信号条 —— 流式输出进行中显示，结束淡出 */
+.bot-sig {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  height: 6px;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.bot-sig span {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text);
+  transform-origin: left;
+  animation: bot-sig-wave var(--pace-signal) ease-in-out infinite;
+}
+
+.bot-sig span:nth-child(1) { width: 24px; background: var(--sig); animation-delay: 0s; }
+.bot-sig span:nth-child(2) { width: 14px; animation-delay: 0.1s; }
+.bot-sig span:nth-child(3) { width: 20px; background: var(--sig); animation-delay: 0.2s; }
+.bot-sig span:nth-child(4) { width: 10px; animation-delay: 0.3s; }
+
+@keyframes bot-sig-wave {
+  0%, 100% { opacity: 0.3; transform: scaleX(0.7); }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+
+/* 流式结束后淡出信号条 */
+.message.bot:not(.streaming) .bot-sig {
+  opacity: 0;
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
 .typing-pause {
   border: 1px solid var(--line);
   border-radius: 999px;

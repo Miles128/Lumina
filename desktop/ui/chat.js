@@ -1540,7 +1540,7 @@
     streamingText = "";
     const row = document.createElement("div");
     row.className = "message bot streaming";
-    row.innerHTML = `<div class="bubble markdown"></div>`;
+    row.innerHTML = `<div class="bot-sig" aria-hidden="true"><span></span><span></span><span></span><span></span></div><div class="bubble markdown"></div>`;
     messagesEl.appendChild(row);
     streamingBubbleEl = row.querySelector(".bubble");
     scrollChatToBottom();
