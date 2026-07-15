@@ -12,6 +12,7 @@ from secretary.agent.subagent.policy import (
     BUILTIN_ARCHETYPES,
     EXPLORE_MAX_STEPS,
     PLAN_MAX_STEPS,
+    REFLECT_MAX_STEPS,
     VERIFY_MAX_STEPS,
     WORKER_MAX_STEPS,
 )
@@ -65,6 +66,35 @@ VERIFY_PROMPT = (
     "2. Criteria checked (list each criterion and its result)\n"
     "3. Issues found (if any)\n"
     "4. Suggested fixes (if any)\n"
+    "Do not modify files or spawn other agents."
+)
+
+REFLECT_PROMPT = (
+    "You are a reflection agent for Lumina (read-only).\n"
+    "Your job: analyze a failed turn and produce a structured lesson for future turns.\n\n"
+    "You have read-only tools. Use them ONLY if needed to confirm a specific fact "
+    "(e.g., read a file that was patched wrong). Do not explore broadly — max 4 steps.\n\n"
+    "Input context will include:\n"
+    "- failure_mode: why this turn was flagged as failed\n"
+    "- user_message: what the user wanted\n"
+    "- raw_reply: what the LLM produced\n"
+    "- tool_calls_summary: tools invoked and their outcomes\n"
+    "- verify_issues: (if applicable) issues found by verify sub-agent\n\n"
+    "Output STRICT JSON, nothing else:\n"
+    "{\n"
+    '  "failure_summary": "一句话总结失败本质（≤120 字符）",\n'
+    '  "root_cause": "根本原因（≤300 字符）",\n'
+    '  "lesson": "可迁移的教训，未来类似场景应如何避免（≤300 字符）",\n'
+    '  "related_files": ["相关文件路径（如有）"],\n'
+    '  "failure_tags": ["1-3 个标签，如 patch_error, shell_failure, scope_creep, wrong_abstraction"]\n'
+    "}\n\n"
+    "Rules:\n"
+    '- Be specific, not generic. "应更仔细" is useless; '
+    '"patch 前应先用 search_files 确认函数签名" is useful.\n'
+    "- Focus on actionable lessons, not blame.\n"
+    '- If the failure is genuinely uninformative (e.g., user just changed mind), '
+    'output {"failure_summary": "non-informative", "root_cause": "", "lesson": "", '
+    '"related_files": [], "failure_tags": []} and we will skip saving.\n'
     "Do not modify files or spawn other agents."
 )
 
@@ -123,6 +153,24 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
         )
     if normalized == "verify":
         return ArchetypeSpec(name="verify", max_steps=VERIFY_MAX_STEPS, system_prompt=VERIFY_PROMPT)
+    if normalized == "reflect":
+        return ArchetypeSpec(
+            name="reflect",
+            max_steps=REFLECT_MAX_STEPS,
+            system_prompt=REFLECT_PROMPT,
+            tool_names=frozenset(
+                {
+                    "list_dir",
+                    "file_read",
+                    "read_document",
+                    "search_files",
+                    "search_memory",
+                    "web_search",
+                    "web_fetch",
+                    "session_search",
+                }
+            ),
+        )
     if normalized == "plan":
         return ArchetypeSpec(
             name="plan",
