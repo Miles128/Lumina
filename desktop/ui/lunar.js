@@ -83,8 +83,8 @@
           <stop offset="100%" stop-color="#6b5e3e"/>
         </radialGradient>
         <radialGradient id="${uid}-dark" cx="42%" cy="36%" r="85%">
-          <stop offset="0%" stop-color="#2a2c36"/>
-          <stop offset="100%" stop-color="#101119"/>
+          <stop offset="0%" stop-color="#3a3d4a"/>
+          <stop offset="100%" stop-color="#1a1c24"/>
         </radialGradient>
         <radialGradient id="${uid}-shade" cx="50%" cy="50%" r="50%">
           <stop offset="58%" stop-color="#000" stop-opacity="0"/>
@@ -93,12 +93,12 @@
         <clipPath id="${uid}-c"><circle r="1"/></clipPath>
       </defs>
       <g clip-path="url(#${uid}-c)">
-        <circle r="1" fill="url(#${uid}-dark)" opacity="0.55"/>
+        <circle r="1" fill="url(#${uid}-dark)" opacity="0.85"/>
         ${lit ? `<path d="${lit}" fill="url(#${uid}-lit)"/>` : ""}
         ${craterMarks}
         <circle r="1" fill="url(#${uid}-shade)"/>
       </g>
-      <circle r="1" fill="none" stroke="#000" stroke-width="0.05" opacity="0.3"/>
+      <circle r="1" fill="none" stroke="#9aa0b0" stroke-width="0.04" opacity="0.4"/>
     </svg>`;
   }
 
