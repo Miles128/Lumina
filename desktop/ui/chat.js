@@ -4,7 +4,6 @@
   const welcome = document.getElementById("welcome");
   const messagesEl = document.getElementById("messages");
   const typingEl = document.getElementById("typing");
-  const typingTextEl = document.getElementById("typing-text");
   const progressEl = document.getElementById("agent-progress");
   const progressToggleEl = document.getElementById("agent-progress-toggle");
   const progressToggleLabelEl = document.getElementById("agent-progress-toggle-label");
@@ -22,7 +21,6 @@
   const mainScrollEl = document.querySelector(".chat-column .main");
   const agentModePicker = document.getElementById("agent-mode-picker");
   const agentModeBtn = document.getElementById("agent-mode-btn");
-  const agentModeLabel = document.getElementById("agent-mode-label");
   const agentModeMenu = document.getElementById("agent-mode-menu");
   const workspaceChip = document.getElementById("workspace-chip");
   const attachBtn = document.getElementById("attach-btn");
@@ -341,8 +339,10 @@
   }
 
   function renderAgentModeLabel() {
-    if (!agentModeLabel) return;
-    agentModeLabel.textContent = AGENT_MODE_LABELS[currentAgentMode] || "Build";
+    if (!agentModeBtn) return;
+    const label = AGENT_MODE_LABELS[currentAgentMode] || "Build";
+    agentModeBtn.setAttribute("data-mode", currentAgentMode);
+    agentModeBtn.setAttribute("data-tip", `Agent · ${label}`);
   }
 
   async function switchAgentMode(mode) {
@@ -367,9 +367,8 @@
     try {
       const config = await window.SecretaryAPI.request("GET", "/api/agent/config");
       const profile = String(config?.agent_profile || "auto").toLowerCase();
-      const normalized = profile === "orchestrator" ? "build" : profile;
-      if (AGENT_MODE_LABELS[normalized]) {
-        currentAgentMode = normalized;
+      if (AGENT_MODE_LABELS[profile]) {
+        currentAgentMode = profile;
       }
       currentWorkspaceDir = String(config?.shell_working_dir || "").trim();
     } catch (_error) {
@@ -886,7 +885,7 @@
     const riskBadge = riskLevel === "high" ? '<span class="risk-badge risk-high">高风险</span>' :
                       riskLevel === "medium" ? '<span class="risk-badge risk-medium">中风险</span>' : '';
     const scopeBadge = response.confirmation_scope === "subagent"
-      ? `<span class="scope-badge scope-subagent">${escapeHtml(t("chat.confirm.subagent"))}</span>`
+      ? `<span class="scope-badge scope-subagent">${LuminaUtils.escapeHtml(t("chat.confirm.subagent"))}</span>`
       : "";
 
     let actions = `
@@ -905,7 +904,7 @@
     row.innerHTML = `
       <div class="bubble confirm-bubble">
         <div class="confirm-text markdown">${renderMarkdown(replyText)}</div>
-        <div class="confirm-detail">${escapeHtml(description)}</div>
+        <div class="confirm-detail">${LuminaUtils.escapeHtml(description)}</div>
         ${scopeBadge}
         ${riskBadge}
         <div class="confirm-actions">${actions}</div>
@@ -933,11 +932,8 @@
 
   window.__luminaConfirm = handleConfirm;
 
-  function showTyping(visible, statusText = t("chat.processing")) {
+  function showTyping(visible) {
     typingEl.hidden = !visible;
-    if (typingTextEl) {
-      typingTextEl.textContent = statusText;
-    }
     if (visible) {
       typingStartAt = Date.now();
       if (!typingTicker) {
@@ -1322,7 +1318,7 @@
     const childrenHtml = children ? `<ul class="turn-tree-children">${children}</ul>` : "";
     return (
       `<li class="turn-tree-node depth-${depth} is-${escapeAttr(node.status)}">` +
-      `<div class="turn-tree-line">${escapeHtml(node.label)}</div>` +
+      `<div class="turn-tree-line">${LuminaUtils.escapeHtml(node.label)}</div>` +
       detail +
       childrenHtml +
       `</li>`
@@ -1750,10 +1746,10 @@
       const payload = parseCardPayload(source, "SUMMARY_CARD");
       if (!payload) return "";
       const bullets = Array.isArray(payload.bullets) ? payload.bullets : [];
-      const status = escapeHtml(String(payload.status || "ok"));
-      const title = escapeHtml(String(payload.title || "Summary"));
+      const status = LuminaUtils.escapeHtml(String(payload.status || "ok"));
+      const title = LuminaUtils.escapeHtml(String(payload.title || "Summary"));
       const items = bullets
-        .map((item) => `<li>${escapeHtml(String(item))}</li>`)
+        .map((item) => `<li>${LuminaUtils.escapeHtml(String(item))}</li>`)
         .join("");
       return `<div class="struct-card struct-card-summary" data-status="${status}">
         <div class="struct-card-title">${title}</div>
@@ -1763,9 +1759,9 @@
     if (source.includes("CODE_DIFF_CARD")) {
       const payload = parseCardPayload(source, "CODE_DIFF_CARD");
       if (!payload) return "";
-      const title = escapeHtml(String(payload.title || "Diff"));
-      const path = escapeHtml(String(payload.path || ""));
-      const diff = escapeHtml(String(payload.diff || ""));
+      const title = LuminaUtils.escapeHtml(String(payload.title || "Diff"));
+      const path = LuminaUtils.escapeHtml(String(payload.path || ""));
+      const diff = LuminaUtils.escapeHtml(String(payload.diff || ""));
       return `<div class="struct-card struct-card-diff">
         <div class="struct-card-title">${title}</div>
         ${path ? `<div class="struct-card-path">${path}</div>` : ""}
@@ -1775,15 +1771,15 @@
     if (source.includes("REFERENCE_CARD")) {
       const payload = parseCardPayload(source, "REFERENCE_CARD");
       if (!payload) return "";
-      const title = escapeHtml(String(payload.title || "References"));
+      const title = LuminaUtils.escapeHtml(String(payload.title || "References"));
       const refs = Array.isArray(payload.references) ? payload.references : [];
       const items = refs
         .map((ref) => {
-          const rTitle = escapeHtml(String(ref?.title || ref?.url || "link"));
+          const rTitle = LuminaUtils.escapeHtml(String(ref?.title || ref?.url || "link"));
           const url = String(ref?.url || "").trim();
-          const snippet = escapeHtml(String(ref?.snippet || ""));
+          const snippet = LuminaUtils.escapeHtml(String(ref?.snippet || ""));
           const link = url
-            ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${rTitle}</a>`
+            ? `<a href="${LuminaUtils.escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${rTitle}</a>`
             : rTitle;
           return `<li>${link}${snippet ? `<div class="struct-card-snippet">${snippet}</div>` : ""}</li>`;
         })
@@ -1816,17 +1812,17 @@
     if (!questions.length) return "";
 
     const intro = payload.context
-      ? `<p class="ask-user-context">${escapeHtml(payload.context)}</p>`
+      ? `<p class="ask-user-context">${LuminaUtils.escapeHtml(payload.context)}</p>`
       : "";
     const cards = questions
       .map((question, index) => {
-        const prompt = escapeHtml(String(question.prompt || `问题 ${index + 1}`));
+        const prompt = LuminaUtils.escapeHtml(String(question.prompt || `问题 ${index + 1}`));
         const options = Array.isArray(question.options) ? question.options : [];
         const optionButtons = options.length
           ? `<div class="ask-user-options">${options
               .map(
                 (option) =>
-                  `<button type="button" class="ask-user-option" data-ask-answer="${escapeAttr(String(option))}">${escapeHtml(String(option))}</button>`,
+                  `<button type="button" class="ask-user-option" data-ask-answer="${escapeAttr(String(option))}">${LuminaUtils.escapeHtml(String(option))}</button>`,
               )
               .join("")}</div>`
           : `<p class="ask-user-hint muted">请在下方输入框回复</p>`;
@@ -1848,14 +1844,7 @@
       return window.LuminaMarkdown.render(text);
     }
     const source = String(text || "");
-    return source ? `<p>${escapeHtml(source)}</p>` : "";
-  }
-
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+    return source ? `<p>${LuminaUtils.escapeHtml(source)}</p>` : "";
   }
 
   function reconcileMessageIds() {
@@ -2054,11 +2043,11 @@
         return (
           `<div class="thread-item-wrap${active}">` +
           `<button class="thread-item${active}" type="button" data-thread-id="${item.id}">` +
-          `<div class="thread-item-title">${escapeHtml(item.title || t("thread.new"))}</div>` +
-          `<div class="thread-item-preview">${escapeHtml(preview)}</div>` +
+          `<div class="thread-item-title">${LuminaUtils.escapeHtml(item.title || t("thread.new"))}</div>` +
+          `<div class="thread-item-preview">${LuminaUtils.escapeHtml(preview)}</div>` +
           `<div class="thread-item-time">${formatThreadTime(item.updatedAt)}</div>` +
           `</button>` +
-          `<button class="thread-item-delete" type="button" data-delete-thread-id="${item.id}" aria-label="${escapeHtml(t("thread.delete"))}">×</button>` +
+          `<button class="thread-item-delete" type="button" data-delete-thread-id="${item.id}" aria-label="${LuminaUtils.escapeHtml(t("thread.delete"))}">×</button>` +
           `</div>`
         );
       })

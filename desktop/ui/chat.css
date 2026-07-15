@@ -581,12 +581,6 @@ html, body {
   animation-duration: var(--pace-breathe-deep);
 }
 
-.typing-text {
-  margin-left: 4px;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
 /* 输出态信号条 —— 流式输出进行中显示，结束淡出 */
 .bot-sig {
   display: flex;
@@ -1273,37 +1267,41 @@ html, body {
 .agent-mode-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  border-radius: var(--radius);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
+  border-radius: 50%;
   cursor: pointer;
   line-height: 1;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background 0.12s;
 }
 
 .agent-mode-btn:hover {
   background: var(--control-hover);
-  color: var(--text);
 }
 
 .agent-mode-btn[aria-expanded="true"] {
   background: var(--control-active);
-  color: var(--text);
 }
 
-.agent-mode-caret {
-  transition: transform 0.12s;
+.agent-mode-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition: background 0.15s, box-shadow 0.15s;
 }
 
-.agent-mode-btn[aria-expanded="true"] .agent-mode-caret {
-  transform: rotate(180deg);
-}
+/* 模式颜色：auto 灰 / build 青 / ask 蓝 / plan 紫 */
+.agent-mode-btn[data-mode="auto"] .agent-mode-dot { background: var(--text-tertiary); }
+.agent-mode-btn[data-mode="build"] .agent-mode-dot { background: var(--sig); box-shadow: 0 0 6px var(--sig); }
+.agent-mode-btn[data-mode="ask"] .agent-mode-dot { background: #3b82f6; }
+.agent-mode-btn[data-mode="plan"] .agent-mode-dot { background: #8b5cf6; }
 
 .agent-mode-menu {
   position: absolute;
