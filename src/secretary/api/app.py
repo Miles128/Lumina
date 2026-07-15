@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from secretary.agent.chat_service import ChatResult, ChatService
 from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
 from secretary.agent.llm_config import resolve_llm_config
+from secretary.agent.mcp_builtin import build_builtin_registry
 from secretary.agent.mcp_manager import McpManager
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
@@ -25,9 +26,7 @@ from secretary.agent.session_store import SessionStore
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
 from secretary.agent.turn_cancel import begin_turn, end_turn, request_cancel
-from secretary.agent.turn_orchestrator import TurnOrchestrator
 from secretary.agent.turn_runner import TurnRunner
-from secretary.api.legacy_workspace import router as legacy_workspace_router
 from secretary.config import settings
 from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError
@@ -401,7 +400,11 @@ def _init_services() -> dict[str, object]:
     skill_manager = SkillManager(settings.resolved_data_dir())
     file_auth = FileAuthService(settings.resolved_data_dir() / "file_auth.json")
     mcp_config_store = McpConfigStore(settings.resolved_data_dir() / "mcp.json")
-    mcp_manager = McpManager(mcp_config_store)
+    # Build builtin MCP registry first (sync_service=None to avoid circular dep),
+    # then wire McpManager, then inject back into sync_service via setter.
+    builtin_registry = build_builtin_registry(settings=settings, sync_service=sync_service)
+    mcp_manager = McpManager(mcp_config_store, builtin_registry=builtin_registry)
+    sync_service.set_mcp_manager(mcp_manager)
     if settings.mcp_auto_filesystem:
         preferred_root: Path | None = None
         shell_raw = agent_config_store.load().shell_working_dir.strip()
@@ -413,7 +416,7 @@ def _init_services() -> dict[str, object]:
             mcp_manager.reload()
     progress_hub = ProgressHub()
     session_store = SessionStore(persistence_path=settings.resolved_data_dir() / "turns.json")
-    turn_runner = TurnRunner(TurnOrchestrator(file_auth), session_store)
+    turn_runner = TurnRunner(file_auth, session_store=session_store)
     chat_service = ChatService(
         settings,
         store,
@@ -463,13 +466,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         or settings.think_enabled
         or settings.memory_summary_enabled
     ):
-        briefing_service = BriefingService(settings, app.state.store)
+        briefing_service = BriefingService(
+            settings,
+            app.state.store,
+            shibei_service=app.state.shibei_service,
+        )
         memory = app.state.chat_service.memory
         think_service = ScheduledThinkService(
             settings,
             memory,
             app.state.profile_service,
             app.state.agent_config_store,
+            shibei_service=app.state.shibei_service,
         )
         memory_summarizer = MemorySummarizerService(
             settings,
@@ -518,9 +526,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.include_router(legacy_workspace_router)
-
 
 def _svc(request: Request) -> Any:
     return request.app.state
