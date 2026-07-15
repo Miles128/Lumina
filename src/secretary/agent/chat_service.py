@@ -1502,7 +1502,7 @@ class ChatService:
             if not refl_text:
                 continue
             try:
-                refl = json.loads(refl_text)
+                refl = json.loads(str(refl_text))
             except (json.JSONDecodeError, TypeError):
                 continue
             summary = str(refl.get("failure_summary", ""))

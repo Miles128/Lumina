@@ -50,7 +50,7 @@
 | Profile | 中文 | 用途 | 工具边界 |
 |---------|------|------|----------|
 | **auto** | 自动 | **默认**；系统按问题类型选 Ask/Plan/Build | 运行时解析为 ask/plan/build 之一 |
-| **build** | 执行 | 读写、同步、委派 | 全工具 + `spawn_subagent` + `spawn_cli_agent` |
+| **build** | 执行 | 读写、同步、委派 | 全工具 + `spawn_subagent` |
 | **ask** | 问答 | 检索与只读分析 | 只读：FS/记忆/Shibei/联网/浏览器/连接器状态/`ask_user` |
 | **plan** | 规划 | 出方案、拆步骤 | Ask 全套 + `todo` / `skills_*`；仍不写盘、不 shell |
 
@@ -59,8 +59,6 @@
 - 闲聊/记忆检索/light 路由 → 等效 **Ask**
 - 含「规划/方案/步骤/架构」且无写操作语义 → **Plan**
 - 含写/改/删/shell/同步/委派或 filesystem 问题 → **Build**
-
-**迁移：** 旧配置 `orchestrator` 自动映射为 `build`。
 
 配置：`~/.lumina/agent.json` → `"agent_profile": "auto|build|ask|plan"`，或聊天输入框旁模式切换。
 
@@ -81,7 +79,7 @@
 | 连接器 | **`list_connectors`**, **`connector_status`**, **`sync_source`** | sync：是 | Agent 可直接查状态/触发同步（Build） |
 | 协作 | `todo`, `skills_list`, `skill_view` | 否 | 待办与技能 |
 | 交互 | `clarify`, **`ask_user`** | 否 | 追问；`ask_user` 支持选项，前端可点选 |
-| 委派 | `spawn_subagent`, `spawn_cli_agent` | CLI：是 | 子 Agent / 外进程 CLI（Build） |
+| 委派 | `spawn_subagent` | 否 | 子 Agent（Build） |
 | MCP | `mcp_{server}_{tool}` | 视工具 | stdio 动态桥接 |
 | 浏览器 | `browser_*` | 否 | 按需注入；含 **`browser_screenshot`** |
 
@@ -109,7 +107,7 @@
 
 | 能力 | 状态 |
 |------|------|
-| AgentLoop（8 步 full / 3 步 light） | Done |
+| AgentLoop（20 步 full / 3 步 light） | Done |
 | **Build / Ask / Plan** profiles | **Done** |
 | **Auto profile**（规则路由 ask/plan/build） | **Done** |
 | **Turn 持久化**（`turns.json` + pause bundle） | **Done** |
@@ -119,7 +117,7 @@
 | SSE 流式 + 工具进度 | Done |
 | **Harness P0**：`TurnContext` · `SessionStore` · `TurnRunner` · SSE schema v2 | **Done** |
 | Sub-agent pause/resume + 进度树 | Done |
-| `spawn_cli_agent` 核心 + 设置 UI | Core Done |
+| `spawn_cli_agent` 核心 + 设置 UI | **Removed** |
 | **`ask_user` 结构化追问 + UI 选项** | **Done** |
 | Chat Markdown（markdown-it + DOMPurify） | Done |
 | 多线程持久化（`/api/chat/threads`） | Done |
@@ -194,12 +192,6 @@ spawn_subagent(worker) → file_write 需确认
   → UI 暂停 + 子 Agent 树 → Allow → resume → 摘要回父 Agent
 ```
 
-**CLI 委派（Build）**
-
-```
-spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要回 LLM
-```
-
 ---
 
 ## 7. System Architecture · 系统架构
@@ -252,7 +244,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | FR-24 | Sub-agent pause/resume + 树 UI | P1 | Done |
 | FR-25 | KB workspace UI | P1 | Done |
 | FR-26 | Chat Markdown | P1 | Done |
-| FR-30 | CLI Agent 委派 | P1 | **Frozen**（不做 provider 集成；保留核心代码） |
+| FR-30 | CLI Agent 委派 | P1 | **Removed**（功能整体删除） |
 | **FR-31** | **Build / Ask / Plan profiles** | P1 | **Done** |
 | **FR-40** | **Auto profile**（规则路由） | P1 | **Done** |
 | **FR-41** | **Turn 持久化** | P1 | **Done** |
@@ -271,21 +263,13 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | FR-38 | 前端 Turn 树 / 分支地图（紧凑节点 + 动态路径） | P2 | Done |
 | **FR-43** | **对话标题自动跟随最新提问** | **P2** | **Done** |
 | FR-39 | Plan 模式 PermissionGuard 硬拦截 | P2 | Done |
+| **FR-44** | **Background Review**（每轮对话后自动提取记忆） | **P1** | **Done** |
 
 ---
 
-## 9. CLI Agent Delegation · 外接 CLI（FR-30 · Frozen）
+## 9. CLI Agent Delegation · 外接 CLI（FR-30 · Removed）
 
-> **决策（2026-07）：不做 CLI provider 端到端集成。** 优先自研 harness（Turn 持久化、compaction、Auto profile）。`spawn_cli_agent` 核心代码保留，默认关闭，不设近期 roadmap 项。
-
-| Profile | `spawn_cli_agent` |
-|---------|-------------------|
-| **build** | 可用（确认后） |
-| **ask** / **plan** / **auto→ask/plan** | 禁用 |
-
-原则：父 Agent 只见 CLI **摘要 + 退出码**；stdout 全量落盘 `~/.lumina/logs/cli-agent/`。
-
-**明确不做：** codex/kimi/claude CLI provider 端到端测试与 prompt 调优（FR-30d 取消）。
+> **决策（2026-07）：CLI Agent 功能整体删除。** 优先自研 harness（Turn 持久化、compaction、Auto profile）。`spawn_cli_agent` 核心代码、配置、UI、测试均已移除。
 
 ---
 
@@ -310,7 +294,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 - **Build / Ask / Plan**（移除 Orchestrator）
 - **P0 工具**：`glob_files` · 连接器工具 · `ask_user`
 - **Browser**：`browser_screenshot` · Ask/Plan 调研路由
-- 多线程 API + UI、**分支地图**、动态标题、`spawn_cli_agent` 核心、Markdown 聊天
+- 多线程 API + UI、**分支地图**、动态标题、Markdown 聊天
 
 ---
 
@@ -330,7 +314,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 
 | # | 任务 | 决策 |
 |---|------|------|
-| — | CLI provider 端到端（FR-30d） | **Deferred**（往后放） |
+| — | CLI provider 端到端（FR-30d） | **Removed** |
 | — | Briefing/Think Shibei 优先 | **暂停** |
 | — | `mode: primary` 自定义主 Agent | **不做**；用 Auto 替代 |
 | — | FR-28 Explore 便宜模型 | **Deferred**（往后放） |
@@ -354,7 +338,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | # | 任务 | 说明 |
 |---|------|------|
 | F20 | **Skill 自进化** | 基于用户反馈或执行失败自动更新/生成 SKILL.md / manifest.json + run.py |
-| F21 | **反思记忆（Reflexion-style）** | 将失败、用户纠正、成功模式写入长期记忆，供后续 turn 检索 |
+| F21 | **反思记忆（Reflexion-style）** | **Done（MVP）**：失败 turn → reflect 子 agent → episodes 表扩展 → top-3 注入 system prompt |
 | F22 | **代码级自修复** | 在显式用户确认下，让子 Agent 修改 Lumina 自身源码并跑测试验证；默认关闭 |
 | F23 | **评测 harness（eval-driven）** | **Done（MVP）**：`tests/eval` 离线 golden cases |
 | F24 | **智能 archetype 选择** | **Done（MVP）**：`select_archetype` 规则路由 |
@@ -365,7 +349,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 - LangGraph 迁移
 - Pi / Hermes runtime 嵌入
 - Orchestrator 第三种 Profile 回归
-- CLI provider 集成（codex/kimi/claude 端到端）
+- CLI provider 集成（codex/kimi/claude 端到端，FR-30 已 Removed）
 - `~/.lumina/subagents/*.md` 的 `mode: primary` 第四种主 Agent
 - 恢复桌面定位（改由 MCP/定时任务覆盖）
 
@@ -384,6 +368,7 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 | Harness P0 | `turn_runner.py` · `session_store.py` · `turn_models.py` |
 | Turn 持久化 | `session_store.py`（`turns.json` + pause bundle） |
 | Context compaction | `context_compaction.py` |
+| 反思记忆 | `src/secretary/agent/reflection/` |
 | Auto profile | `agent_profile.py` · `effective_profile()` |
 | Chat UI | `desktop/ui/chat.js` · `chat.css` |
 | Harness 设计 | [harness-design.md](harness-design.md) |
@@ -396,10 +381,11 @@ spawn_cli_agent(provider=codex, goal=…) → [确认] → subprocess → 摘要
 |------|------|
 | 读记忆默认 | Shibei first；miss 再 `search_memory` |
 | Sync 定位 | 可选；Agent 用 `sync_source`，UI 同步保留 |
-| CLI vs sub-agent | **CLI provider 不做**；轻量 explore → 内层 sub-agent |
+| CLI vs sub-agent | **CLI Agent 已删除**；轻量 explore → 内层 sub-agent |
 | 主 Agent 扩展 | **Auto** 替代 `mode: primary` 自定义 md |
 | Web search | **Done**：Tavily / Brave / 博查 API（env key）+ HTML 降级 |
 | Briefing/Think | 暂停；先 harness |
+| Background Review | 活跃；每轮对话后 daemon 线程提取记忆，写入 memory/user 画像 |
 | 打包 Python | v0.2 spike：sidecar venv |
 
 ---
