@@ -350,17 +350,27 @@ class LuminaMemory:
         result: str,
         success: bool,
         tools_used: list[str],
+        *,
+        failure_mode: str | None = None,
+        reflection_text: str | None = None,
+        thread_id: str | None = None,
     ) -> None:
         with self._connect_session() as conn:
             conn.execute(
                 """
-                INSERT INTO episodes (episode_id, task, steps_json, result, success, tools_used, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO episodes (
+                    episode_id, task, steps_json, result, success, tools_used, created_at,
+                    failure_mode, reflection_text, thread_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(episode_id) DO UPDATE SET
                     steps_json=excluded.steps_json,
                     result=excluded.result,
                     success=excluded.success,
-                    tools_used=excluded.tools_used
+                    tools_used=excluded.tools_used,
+                    failure_mode=excluded.failure_mode,
+                    reflection_text=excluded.reflection_text,
+                    thread_id=excluded.thread_id
                 """,
                 (
                     episode_id,
@@ -370,35 +380,52 @@ class LuminaMemory:
                     1 if success else 0,
                     json.dumps(tools_used, ensure_ascii=False),
                     datetime.now(UTC).isoformat(),
+                    failure_mode,
+                    reflection_text,
+                    thread_id,
                 ),
             )
 
-    def search_episodes(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+    def search_episodes(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        success_only: bool | None = None,
+    ) -> list[dict[str, object]]:
         safe_query = _sanitize_fts(query)
+        if success_only is None:
+            success_clause = ""
+            success_params: list[int] = []
+        else:
+            success_clause = "AND e.success = ?"
+            success_params = [1 if success_only else 0]
         with self._connect_session() as conn:
             rows = conn.execute(
-                """
-                SELECT e.episode_id, e.task, e.result, e.success, e.tools_used, e.created_at
+                f"""
+                SELECT e.episode_id, e.task, e.result, e.success, e.tools_used, e.created_at,
+                       e.failure_mode, e.reflection_text, e.thread_id
                 FROM episodes_fts f
                 JOIN episodes e ON e.rowid = f.rowid
-                WHERE episodes_fts MATCH ?
+                WHERE episodes_fts MATCH ? {success_clause}
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (safe_query, limit),
+                [safe_query, *success_params, limit],
             ).fetchall()
         if not rows:
             pattern = f"%{query}%"
             with self._connect_session() as conn:
                 rows = conn.execute(
-                    """
-                    SELECT episode_id, task, result, success, tools_used, created_at
+                    f"""
+                    SELECT episode_id, task, result, success, tools_used, created_at,
+                           failure_mode, reflection_text, thread_id
                     FROM episodes
-                    WHERE task LIKE ? OR result LIKE ?
+                    WHERE (task LIKE ? OR result LIKE ?) {success_clause}
                     ORDER BY created_at DESC
                     LIMIT ?
                     """,
-                    (pattern, pattern, limit),
+                    [pattern, pattern, *success_params, limit],
                 ).fetchall()
         items: list[dict[str, object]] = [
             {
@@ -408,6 +435,9 @@ class LuminaMemory:
                 "success": bool(r["success"]),
                 "tools_used": str(r["tools_used"]),
                 "created_at": str(r["created_at"]),
+                "failure_mode": r["failure_mode"],
+                "reflection_text": r["reflection_text"],
+                "thread_id": r["thread_id"],
             }
             for r in rows
         ]

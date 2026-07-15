@@ -98,3 +98,41 @@ def test_episodes_fts_indexes_reflection_text(tmp_path: Path) -> None:
         fts_cols = {row["name"] for row in conn.execute("PRAGMA table_info(episodes_fts)")}
     assert "reflection_text" in fts_cols
     assert "failure_mode" in fts_cols
+
+
+def test_save_episode_with_reflection_fields(tmp_path):
+    """F21: save_episode must accept failure_mode, reflection_text, thread_id."""
+    mem = LuminaMemory(tmp_path)
+    mem.save_episode(
+        episode_id="ep1",
+        task="test task",
+        steps=[{"thought": "thinking", "tool": "file_read", "output": "ok"}],
+        result="result text",
+        success=False,
+        tools_used=["file_read"],
+        failure_mode="verify_failed",
+        reflection_text='{"failure_summary": "bad patch", "lesson": "check first"}',
+        thread_id="thread-1",
+    )
+    with mem._connect_session() as conn:
+        row = conn.execute("SELECT * FROM episodes WHERE episode_id = ?", ("ep1",)).fetchone()
+    assert row["success"] == 0
+    assert row["failure_mode"] == "verify_failed"
+    assert "bad patch" in row["reflection_text"]
+    assert row["thread_id"] == "thread-1"
+
+
+def test_search_episodes_success_only_filter(tmp_path):
+    """F21: search_episodes must support success_only filter."""
+    mem = LuminaMemory(tmp_path)
+    mem.save_episode("ep1", "deploy task", [], "done", True, ["shell"])
+    mem.save_episode("ep2", "deploy task", [], "failed", False, ["patch"],
+                     failure_mode="grounding_failed")
+    failures = mem.search_episodes("deploy", limit=5, success_only=False)
+    assert len(failures) == 1
+    assert failures[0]["episode_id"] == "ep2"
+    successes = mem.search_episodes("deploy", limit=5, success_only=True)
+    assert len(successes) == 1
+    assert successes[0]["episode_id"] == "ep1"
+    all_eps = mem.search_episodes("deploy", limit=5, success_only=None)
+    assert len(all_eps) == 2
