@@ -1,5 +1,6 @@
 """Tests for agent chat service."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -641,3 +642,63 @@ def test_finalize_agent_result_no_reflection_in_ask_profile(tmp_path: Path) -> N
     assert service._memory.save_episode.call_count == 1
     assert service._memory.save_episode.call_args.kwargs["success"] is True
     service._ensure_reflection_runner.assert_not_called()
+
+
+def test_build_system_prompt_includes_reflections_block(tmp_path: Path) -> None:
+    """F21: failed-turn reflections are injected into system prompt as ## 历史教训."""
+    service = _build_chat_service(tmp_path)
+    reflection = json.dumps(
+        {
+            "failure_summary": "build 阶段在 max_steps 内未完成",
+            "lesson": "下一步先缩小构建范围，分阶段执行",
+        },
+        ensure_ascii=False,
+    )
+    service._memory.save_episode(
+        episode_id="ep-refl-1",
+        task="帮我构建项目",
+        steps=[],
+        result="Build hit step limit",
+        success=False,
+        tools_used=["shell"],
+        failure_mode="max_steps_exhausted",
+        reflection_text=reflection,
+    )
+    prompt = service._build_system_prompt(
+        profile_markdown="", hits=[], user_message="帮我构建项目"
+    )
+    assert "## 历史教训" in prompt
+    assert "max_steps_exhausted" in prompt
+    assert "build 阶段在 max_steps 内未完成" in prompt
+
+
+def test_build_system_prompt_no_reflections_when_empty(tmp_path: Path) -> None:
+    """F21: empty episode store → no ## 历史教训 section."""
+    service = _build_chat_service(tmp_path)
+    prompt = service._build_system_prompt(
+        profile_markdown="", hits=[], user_message="随便问点啥"
+    )
+    assert "## 历史教训" not in prompt
+
+
+def test_build_system_prompt_skips_non_informative_reflections(tmp_path: Path) -> None:
+    """F21: reflection_text with failure_summary='non-informative' is skipped."""
+    service = _build_chat_service(tmp_path)
+    reflection = json.dumps(
+        {"failure_summary": "non-informative", "lesson": "no lesson"},
+        ensure_ascii=False,
+    )
+    service._memory.save_episode(
+        episode_id="ep-non-info",
+        task="帮我构建项目",
+        steps=[],
+        result="some result",
+        success=False,
+        tools_used=["shell"],
+        failure_mode="unknown",
+        reflection_text=reflection,
+    )
+    prompt = service._build_system_prompt(
+        profile_markdown="", hits=[], user_message="帮我构建项目"
+    )
+    assert "## 历史教训" not in prompt

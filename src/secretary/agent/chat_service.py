@@ -837,7 +837,7 @@ class ChatService:
         *,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
-        system_prompt = self._build_system_prompt(profile_markdown, hits)
+        system_prompt = self._build_system_prompt(profile_markdown, hits, user_message=cleaned)
         session_id = self._get_or_create_session_id()
         self._memory.create_session(session_id)
         self._save_to_session("user", cleaned)
@@ -952,7 +952,7 @@ class ChatService:
         if plan.search_query.strip() != cleaned.strip():
             appendix += f"\n- 若首轮检索不佳，可尝试关键词：{plan.search_query}"
 
-        system_prompt = self._build_system_prompt(profile_markdown, hits) + "\n\n" + appendix
+        system_prompt = self._build_system_prompt(profile_markdown, hits, user_message=cleaned) + "\n\n" + appendix
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         messages.extend(self._load_history())
         messages.append({"role": "user", "content": cleaned})
@@ -1036,7 +1036,8 @@ class ChatService:
             filesystem_turn=filesystem_turn,
         )
         system_prompt = (
-            self._build_system_prompt(profile_markdown, hits) + profile_system_appendix(profile)
+            self._build_system_prompt(profile_markdown, hits, user_message=cleaned)
+            + profile_system_appendix(profile)
         )
         session_id = self._get_or_create_session_id()
         self._memory.create_session(session_id)
@@ -1480,7 +1481,45 @@ class ChatService:
             return AgentProfile.AUTO
         return parse_agent_profile(self._agent_config_store.load().agent_profile)
 
-    def _build_system_prompt(self, profile_markdown: str, hits: list[MemoryChunk]) -> str:
+    def _build_reflections_block(self, user_message: str) -> str:
+        """F21: Retrieve top-3 relevant failed-turn reflections and format for prompt."""
+        if not user_message.strip():
+            return ""
+        try:
+            episodes = self._memory.search_episodes(
+                query=user_message,
+                limit=3,
+                success_only=False,
+            )
+        except Exception:
+            return ""
+        if not episodes:
+            return ""
+
+        lines = ["## 历史教训（按相关性检索，避免重蹈覆辙）"]
+        for ep in episodes:
+            refl_text = ep.get("reflection_text")
+            if not refl_text:
+                continue
+            try:
+                refl = json.loads(refl_text)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            summary = str(refl.get("failure_summary", ""))
+            lesson = str(refl.get("lesson", ""))
+            if not summary or summary == "non-informative":
+                continue
+            mode = ep.get("failure_mode") or "unknown"
+            entry = f"- [{mode}] {summary} → {lesson[:120]}"
+            lines.append(entry[:200])
+
+        if len(lines) == 1:
+            return ""
+        return "\n".join(lines) + "\n\n"
+
+    def _build_system_prompt(
+        self, profile_markdown: str, hits: list[MemoryChunk], user_message: str = ""
+    ) -> str:
         from secretary.agent.browser_tools import agent_browser_available
         from secretary.agent.web_research import BROWSER_TOOL_GUIDANCE
 
@@ -1548,6 +1587,8 @@ class ChatService:
                 "browser_click/browser_fill；完成后 browser_close\n"
             )
 
+        reflections_block = self._build_reflections_block(user_message)
+
         return prefix + (
             "## 关于用户的资料（用户画像与本地文档，描述用户本人，不是灵犀）\n"
             f"{profile_block[:6000]}\n\n"
@@ -1556,6 +1597,7 @@ class ChatService:
             f"{memory_section}"
             f"{shibei_section}"
             f"{notes_block}\n\n"
+            f"{reflections_block}"
             "## 对话规则\n"
             "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
             "- 用户画像、本地文档、本地记忆说的是用户；灵犀的风格、技术栈、自我介绍只说灵犀自己的，二者不要混用\n"
