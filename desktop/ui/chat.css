@@ -2776,13 +2776,30 @@ body.map-view-open .chat-column > .fork-banner {
 }
 
 .map-node.is-active rect {
-  stroke: var(--text-secondary);
-  stroke-width: 1.25;
-  fill: var(--bg-subtle);
+  stroke: var(--sig);
+  stroke-width: 1.5;
+  fill: var(--bg);
 }
 
 .map-node.is-leaf rect {
   stroke-width: 1.25;
+}
+
+.map-node.is-done rect {
+  fill: var(--text);
+  stroke: var(--text);
+}
+
+.map-node.is-done .map-node-q-label,
+.map-node.is-done .map-node-q-text,
+.map-node.is-done .map-node-a-label,
+.map-node.is-done .map-node-a-text {
+  fill: var(--bg);
+}
+
+.map-node.is-branch rect {
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
 }
 
 .map-node.is-archived rect {

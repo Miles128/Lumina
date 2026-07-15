@@ -286,10 +286,14 @@
       const isActive = activeSet.has(node.id) || Boolean(node.active);
       const isArchived = Boolean(node.archived);
       const isLeaf = node.id === activeLeafId;
+      // done: 在活跃路径上且非叶子（已完成的祖先节点）
+      const isDone = activeSet.has(node.id) && !isLeaf;
+      // branch: 不在活跃路径上的非叶子节点
+      const isBranch = !activeSet.has(node.id) && !isLeaf;
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute(
         "class",
-        `map-node${isActive ? " is-active" : ""}${isArchived ? " is-archived" : ""}${isLeaf ? " is-leaf" : ""}`,
+        `map-node${isActive ? " is-active" : ""}${isArchived ? " is-archived" : ""}${isLeaf ? " is-leaf" : ""}${isDone ? " is-done" : ""}${isBranch ? " is-branch" : ""}`,
       );
       g.setAttribute("transform", `translate(${pos.x + PAD}, ${pos.y + PAD})`);
       g.dataset.nodeId = node.id;
