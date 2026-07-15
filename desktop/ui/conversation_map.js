@@ -6,7 +6,7 @@
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   // Width +50% vs previous 144; taller card for up to 3 text lines.
-  const NODE_W = 216;
+  const NODE_W = 270;
   const NODE_H = 80;
   const PAD = 20;
   const LAYOUT_X_GAP = 28;
@@ -133,7 +133,7 @@
     if (!text) return [];
     const lines = [];
     // ~10px font in ~190px content width ≈ 18 CJK chars / line
-    const perLine = 18;
+    const perLine = 23;
     let rest = text;
     while (rest && lines.length < maxLines) {
       if (lines.length === maxLines - 1) {
