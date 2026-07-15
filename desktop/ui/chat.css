@@ -2855,3 +2855,21 @@ body.map-view-open .chat-column > .fork-banner {
   pointer-events: none;
 }
 
+/* ========== AI 在场视觉系统 · 动效降级 ========== */
+@media (prefers-reduced-motion: reduce) {
+  .think-field {
+    animation: none;
+    opacity: 0.7;
+  }
+
+  .bot-sig span {
+    animation: none;
+    opacity: 0.5;
+  }
+
+  .map-edge.is-active {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
+
