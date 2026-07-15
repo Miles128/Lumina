@@ -96,3 +96,29 @@ def test_ensure_loaded_is_idempotent_under_concurrency(mcp_store) -> None:
 
     assert calls["count"] == 1
     assert manager._loaded is True
+
+
+@pytest.fixture
+def mcp_manager_with_builtin(mcp_store):
+    from secretary.agent.mcp_builtin import build_builtin_registry
+
+    registry = build_builtin_registry(settings=None, sync_service=None)
+    return McpManager(mcp_store, builtin_registry=registry)
+
+
+def test_mcp_manager_exposes_builtin_tools(mcp_manager_with_builtin):
+    """McpManager.get_tools() must include builtin provider tools."""
+    tools = mcp_manager_with_builtin.get_tools()
+    names = {t.name for t in tools}
+    assert "mcp_feishu_status" in names
+    assert "mcp_feishu_fetch" in names
+
+
+def test_mcp_manager_call_builtin_tool(mcp_manager_with_builtin):
+    result = mcp_manager_with_builtin.call_tool("mcp_feishu_status", {})
+    assert "configured" in result
+
+
+def test_mcp_manager_status_includes_builtin(mcp_manager_with_builtin):
+    status = mcp_manager_with_builtin.status()
+    assert status["builtin_provider_count"] >= 6

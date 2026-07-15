@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.mcp_builtin import BuiltinMcpRegistry, _RegisteredTool
 from secretary.agent.tools.base import Tool, ToolResult, _coerce_to_tool_result
 from secretary.services.mcp_config import McpConfigStore, McpServerConfig
 
@@ -96,6 +97,43 @@ class McpBridgeTool(Tool):
         return f"MCP {self._spec.server_name}/{self._spec.tool_name}: {preview}"
 
 
+class BuiltinBridgeTool(Tool):
+    """Bridge tool exposing a builtin MCP provider tool to the AgentLoop.
+
+    Calls ``BuiltinMcpRegistry.call_tool`` directly (in-process, no subprocess),
+    returning a JSON-serialized string on success or a ``ToolResult`` on error.
+    """
+
+    def __init__(self, registry: BuiltinMcpRegistry, reg_tool: _RegisteredTool) -> None:
+        self._registry = registry
+        self._reg_tool = reg_tool
+        self.name = reg_tool.full_name
+        self.description = f"[MCP:builtin:{reg_tool.provider_name}] {reg_tool.spec.description}"
+        self.needs_confirmation = _needs_confirmation(reg_tool.tool_name)
+        self.read_only = not self.needs_confirmation
+        self.risk_level = "medium" if self.needs_confirmation else "low"
+
+    def _parameters(self) -> dict[str, Any]:
+        schema = dict(self._reg_tool.spec.input_schema or {})
+        if schema.get("type") != "object":
+            return {"type": "object", "properties": {}, "required": []}
+        return schema
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        result = self._registry.call_tool(self._reg_tool.full_name, arguments)
+        if isinstance(result, dict) and "error" in result:
+            return ToolResult.failure(
+                result["error"],
+                error_type="builtin_error",
+                retryable=False,
+            )
+        return json.dumps(result, ensure_ascii=False, default=str)
+
+    def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        preview = json.dumps(arguments, ensure_ascii=False)[:240]
+        return f"MCP builtin {self._reg_tool.provider_name}/{self._reg_tool.tool_name}: {preview}"
+
+
 @dataclass
 class _ServerRuntime:
     name: str
@@ -105,8 +143,14 @@ class _ServerRuntime:
 
 
 class McpManager:
-    def __init__(self, config_store: McpConfigStore) -> None:
+    def __init__(
+        self,
+        config_store: McpConfigStore,
+        *,
+        builtin_registry: BuiltinMcpRegistry | None = None,
+    ) -> None:
         self._config_store = config_store
+        self._builtin = builtin_registry or BuiltinMcpRegistry()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="lumina-mcp", daemon=True)
         self._thread.start()
@@ -131,7 +175,8 @@ class McpManager:
         return {
             "available": self.available,
             "loaded": self._loaded,
-            "tool_count": len(self._bridge_tools),
+            "tool_count": len(self._bridge_tools) + len(self._builtin.get_tools()),
+            "builtin_provider_count": len(self._builtin.list_providers()),
             "tools": [
                 {
                     "name": tool.name,
@@ -159,9 +204,17 @@ class McpManager:
         except Exception as exc:
             logger.warning("MCP get_tools degraded: %s", exc)
             self._record_error(f"get_tools: {exc}")
-        return [
+        remote_tools = [
             tool for tool in self._bridge_tools
             if not _should_skip_server(tool._spec.server_name)
+        ]
+        builtin_tools = self._build_builtin_bridge_tools()
+        return remote_tools + builtin_tools
+
+    def _build_builtin_bridge_tools(self) -> list[Tool]:
+        return [
+            BuiltinBridgeTool(self._builtin, reg_tool)
+            for reg_tool in self._builtin.get_tools()
         ]
 
     def reload(self, *, force: bool = True) -> None:
@@ -205,13 +258,29 @@ class McpManager:
     def call_tool(
         self,
         server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
+        tool_name: str | dict[str, Any] | None = None,
+        arguments: dict[str, Any] | None = None,
         *,
-        timeout: int,
-    ) -> str:
+        timeout: int = 60,
+    ) -> str | dict[str, Any]:
+        """Call an MCP tool. Supports two call forms:
+
+        - Remote: ``call_tool(server_name, tool_name, arguments, *, timeout)``
+        - Builtin: ``call_tool(full_name, arguments)`` — dispatches to the
+          builtin registry when ``full_name`` matches a registered provider tool.
+        """
+        # Builtin 2-arg form: call_tool(full_name, arguments)
+        if arguments is None and isinstance(tool_name, dict):
+            full_name = server_name
+            args = tool_name
+            if self._builtin.has_tool(full_name):
+                return self._builtin.call_tool(full_name, args)
+            raise RuntimeError(f"Unknown builtin tool (no 2-arg remote support): {full_name}")
+        # Remote 3-arg form: call_tool(server_name, tool_name, arguments, *, timeout)
+        assert tool_name is not None and arguments is not None
+        remote_name = tool_name if isinstance(tool_name, str) else str(tool_name)
         return self._run(  # type: ignore[no-any-return]
-            lambda: self._async_call_tool(server_name, tool_name, arguments),
+            lambda: self._async_call_tool(server_name, remote_name, arguments),
             timeout=timeout + 5,
         )
 
