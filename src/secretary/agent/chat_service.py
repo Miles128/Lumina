@@ -39,6 +39,7 @@ from secretary.agent.loop import LoopResult, PendingConfirmation
 from secretary.agent.p0_tools import is_user_input_request
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.prompt_gate import GateAction, GateDecision, PromptGate
+from secretary.agent.reflection import ReflectionRunner, ReflectionTrigger
 from secretary.agent.reply_rewriter import (
     prepare_user_facing_reply,
 )
@@ -59,9 +60,11 @@ from secretary.agent.subagent import SpawnSubagentTool
 from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
 from secretary.agent.turn_models import TurnContext
-from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
-from secretary.agent.turn_runner import TurnRunner
-from secretary.agent.web_routing import WebSearchPlan, resolve_web_search
+from secretary.agent.turn_runner import AgentTurnPlan, LoopHookBundle, TurnRunner
+from secretary.agent.web_routing import (
+    WebSearchPlan,
+    resolve_web_search_with_llm_fallback,
+)
 from secretary.config import Settings
 from secretary.core.types import MemoryChunk
 from secretary.exceptions import AgentError
@@ -150,6 +153,9 @@ class ChatService:
             profile_service=self._profile_service,
         )
         self._exec_skills = ExecutableSkillManager(settings.resolved_data_dir())
+        # F21: Reflexion — failure-triggered reflection memory
+        self._reflection_trigger = ReflectionTrigger(max_steps=20)
+        self._reflection_runner: ReflectionRunner | None = None
         self._pending: PendingConfirmation | None = None
         self._pending_messages: list[dict[str, str]] | None = None
         self._pending_llm_config: LlmConfig | None = None
@@ -158,6 +164,9 @@ class ChatService:
         self._parent_turn_resume: ParentTurnResumeState | None = None
         self._active_spawn_tool: SpawnSubagentTool | None = None
         self._prompt_gate = PromptGate(settings, agent_config_store)
+        from secretary.agent.web_routing import WebIntentRouter
+
+        self._web_intent_router = WebIntentRouter(settings, agent_config_store)
         self._split_checked_threads: set[str] = set()
         self._history_lock = threading.Lock()
         self._history_cache: list[dict[str, str]] | None = None
@@ -169,11 +178,11 @@ class ChatService:
             self._session_store.prune_stale()
         except Exception:
             logger.debug("SessionStore prune skipped", exc_info=True)
-        orchestrator = TurnOrchestrator(
+        self._turn_runner = turn_runner or TurnRunner(
             self._file_auth,
             hooks_factory=self._build_loop_hooks,
+            session_store=self._session_store,
         )
-        self._turn_runner = turn_runner or TurnRunner(orchestrator, self._session_store)
         self._mcp_manager = mcp_manager
         self._shibei_service = shibei_service
         self._thread_store = ChatThreadStore(settings.resolved_data_dir() / "chat_threads.json")
@@ -194,6 +203,18 @@ class ChatService:
             shell_working_dir=self._shell_working_dir,
             temperature=self._temperature,
         )
+
+    def _ensure_reflection_runner(self, llm_config: LlmConfig) -> ReflectionRunner:
+        """F21: Lazily create ReflectionRunner with current llm_config."""
+        if self._reflection_runner is None:
+            self._reflection_runner = ReflectionRunner(
+                llm_config=llm_config,
+                file_auth=self._file_auth,
+                memory_store=self._store,
+                memory=self._memory,
+                lumina_dir=self._settings.resolved_data_dir(),
+            )
+        return self._reflection_runner
 
     @property
     def memory(self) -> LuminaMemory:
@@ -334,9 +355,9 @@ class ChatService:
         return self._session_store
 
     @property
-    def _turn_orchestrator(self) -> TurnOrchestrator:
-        """Backward-compatible access for tests patching the inner orchestrator."""
-        return self._turn_runner.orchestrator
+    def _turn_orchestrator(self) -> TurnRunner:
+        """Backward-compatible access for tests patching the inner runner."""
+        return self._turn_runner
 
     def _active_turn(self, trace_id: str | None) -> TurnContext | None:
         if not trace_id:
@@ -391,9 +412,12 @@ class ChatService:
                     grounding_verified=True,
                 )
 
-        web_plan = resolve_web_search(
+        web_plan = resolve_web_search_with_llm_fallback(
             cleaned,
             history,
+            llm_router=self._web_intent_router
+            if self._settings.web_intent_router_enabled
+            else None,
         )
         if web_plan is not None:
             llm_config = resolve_llm_config(self._settings, self._agent_config_store)
@@ -1193,13 +1217,33 @@ class ChatService:
                 }
                 for s in result.steps
             ]
+            episode_success = (
+                result.grounding_verified
+                and not result.cancelled
+                and result.total_steps < self._reflection_trigger._max_steps
+            )
             self._memory.save_episode(
                 episode_id=episode_id,
                 task=cleaned[:500],
                 steps=steps_data,
                 result=safe_reply[:2000],
-                success=True,
+                success=episode_success,
                 tools_used=result.used_tools,
+            )
+
+        # F21: Trigger reflection on Build-profile failures (non-blocking)
+        if (
+            not result.pending_confirmation
+            and result.used_tools
+            and "build" in (profile_excerpt or "").lower()
+        ):
+            self._maybe_trigger_reflection(
+                signal_user_message=cleaned,
+                raw_reply=raw_reply,
+                loop_result=result,
+                turn_status="cancelled" if result.cancelled else "completed",
+                llm_config=llm_config,
+                thread_id=self._active_thread_id,
             )
 
         self._append_history(cleaned, safe_reply)
@@ -1229,6 +1273,69 @@ class ChatService:
             confirmation_scope=confirmation_scope,
             raw_reply=raw_reply,
         )
+
+    def _maybe_trigger_reflection(
+        self,
+        *,
+        signal_user_message: str,
+        raw_reply: str,
+        loop_result: LoopResult,
+        turn_status: str,
+        llm_config: LlmConfig,
+        thread_id: str,
+    ) -> None:
+        """F21: Evaluate failure signals and trigger reflection if matched."""
+        tool_call_history = self._extract_tool_call_history(loop_result)
+        signal = self._reflection_trigger.evaluate(
+            profile="build",
+            user_message=signal_user_message,
+            raw_reply=raw_reply,
+            loop_result=loop_result,
+            turn_status=turn_status,
+            tool_call_history=tool_call_history,
+        )
+        if signal is None:
+            return
+        try:
+            runner = self._ensure_reflection_runner(llm_config)
+            working_dir = self._turn_working_dir or Path.cwd()
+            reflection_json = runner.run(
+                signal,
+                working_dir=working_dir,
+                parent_session_id=self._get_or_create_session_id(),
+            )
+            if not reflection_json:
+                logger.debug("Reflection produced no output for mode=%s", signal.mode)
+                return
+            reflection_episode_id = f"refl_{uuid.uuid4().hex[:8]}"
+            self._memory.save_episode(
+                episode_id=reflection_episode_id,
+                task=signal_user_message[:500],
+                steps=[],
+                result=raw_reply[:2000],
+                success=False,
+                tools_used=loop_result.used_tools,
+                failure_mode=signal.mode,
+                reflection_text=reflection_json,
+                thread_id=thread_id or None,
+            )
+            logger.info("Reflection saved: mode=%s, episode=%s", signal.mode, reflection_episode_id)
+        except Exception as exc:
+            logger.warning("Reflection failed (non-blocking): %s", exc)
+
+    @staticmethod
+    def _extract_tool_call_history(result: LoopResult) -> list[dict[str, Any]]:
+        """Extract tool call summaries from LoopResult for reflection trigger."""
+        history: list[dict[str, Any]] = []
+        for step in result.steps:
+            if step.tool_call is None:
+                continue
+            history.append({
+                "name": step.tool_call.name,
+                "arguments": step.tool_call.arguments if hasattr(step.tool_call, "arguments") else {},
+                "output": (step.tool_output or "")[:500],
+            })
+        return history
 
     def _prepare_user_reply(
         self,
@@ -1278,9 +1385,8 @@ class ChatService:
             return self._agent_config_store.load().temperature
         return 0.7
 
-    def _build_loop_hooks(self, tools: list[Tool]):
+    def _build_loop_hooks(self, tools: list[Tool]) -> LoopHookBundle:
         from secretary.agent.hook_policies import HooksConfig, build_default_hooks
-        from secretary.agent.turn_orchestrator import LoopHookBundle
 
         raw_hooks: dict[str, object] = {}
         if self._agent_config_store is not None:

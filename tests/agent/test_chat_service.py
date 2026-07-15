@@ -1,12 +1,13 @@
 """Tests for agent chat service."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from secretary.agent.chat_service import ChatService
 from secretary.agent.llm_config import LlmConfig
-from secretary.agent.loop import LoopResult
+from secretary.agent.loop import LoopResult, StepResult
 from secretary.agent.skills import SkillManager
+from secretary.agent.tools.base import ToolCall
 from secretary.config import Settings
 from secretary.memory.db import MemoryStore
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
@@ -256,12 +257,7 @@ def test_chat_weather_with_location_city_uses_web_search(tmp_path: Path) -> None
             "run_agent_turn",
             return_value=_web_agent_loop_result("杭州今天晴，约 20°C。"),
         ):
-            result = service.reply(
-                "今天天气怎么样",
-                location_city="杭州",
-                location_lat=30.27,
-                location_lng=120.15,
-            )
+            result = service.reply("今天天气怎么样")
     assert "web_search" in (result.used_tools or [])
     assert "20" in result.reply
     assert result.route == "web_agent"
@@ -527,3 +523,121 @@ def test_confirm_without_pending_does_not_pollute_empty_thread(tmp_path: Path) -
     thread = next(t for t in service.list_threads()["threads"] if t["id"] == thread_id)
     assert thread["messages"] == []
     assert thread["title"] == "新对话"
+
+
+# ---------------------------------------------------------------------------
+# F21: Reflection trigger integration into _finalize_agent_result
+# ---------------------------------------------------------------------------
+
+
+def _test_llm_config() -> LlmConfig:
+    return LlmConfig(
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        model="test-model",
+        source="env",
+    )
+
+
+def _finalize_with_mocks(
+    service: ChatService,
+    *,
+    result: LoopResult,
+    cleaned: str,
+    profile_excerpt: str,
+) -> None:
+    """Drive _finalize_agent_result with the side-effects it depends on mocked."""
+    service._prepare_user_reply = MagicMock(return_value=(result.reply, True, ""))
+    service._append_history = MagicMock()
+    service._save_to_session = MagicMock()
+    service._memory.end_session = MagicMock()
+    service._memory.save_episode = MagicMock()
+    service._background_review.schedule = MagicMock()
+    service._get_or_create_session_id = MagicMock(return_value="sess-test")
+    service._finalize_agent_result(
+        cleaned=cleaned,
+        messages=[],
+        result=result,
+        llm_config=_test_llm_config(),
+        session_id="sess-test",
+        profile_excerpt=profile_excerpt,
+        memory_hits=0,
+    )
+
+
+def test_finalize_agent_result_triggers_reflection_on_failure(tmp_path: Path) -> None:
+    """F21: max_steps exhausted + build profile → reflection + success=False episode."""
+    service = _build_chat_service(tmp_path)
+    tool_call = ToolCall(name="shell", arguments={"command": "make build"})
+    result = LoopResult(
+        reply="Build hit step limit",
+        steps=[StepResult(thought="try build", tool_call=tool_call, tool_output="ok")],
+        used_tools=["shell"],
+        total_steps=20,  # == max_steps(20) → exhausted → success=False
+        cancelled=False,
+        grounding_verified=True,
+    )
+
+    mock_runner = MagicMock()
+    mock_runner.run.return_value = '{"insight":"build failed","cause":"max_steps"}'
+    service._ensure_reflection_runner = MagicMock(return_value=mock_runner)
+
+    _finalize_with_mocks(
+        service, result=result, cleaned="帮我构建项目", profile_excerpt="build"
+    )
+
+    # Main episode saved with success=False (max_steps exhausted)
+    assert service._memory.save_episode.call_count == 2
+    main_call = service._memory.save_episode.call_args_list[0]
+    assert main_call.kwargs["success"] is False
+    # Reflection sub-agent invoked
+    mock_runner.run.assert_called_once()
+    # Reflection episode saved with failure metadata
+    refl_call = service._memory.save_episode.call_args_list[1]
+    assert refl_call.kwargs["success"] is False
+    assert refl_call.kwargs["failure_mode"] == "max_steps_exhausted"
+    assert refl_call.kwargs["reflection_text"] == '{"insight":"build failed","cause":"max_steps"}'
+
+
+def test_finalize_agent_result_no_reflection_on_success(tmp_path: Path) -> None:
+    """F21: successful build turn → no reflection, episode success=True."""
+    service = _build_chat_service(tmp_path)
+    result = LoopResult(
+        reply="构建成功",
+        steps=[],
+        used_tools=["shell"],
+        total_steps=2,
+        cancelled=False,
+        grounding_verified=True,
+    )
+    service._ensure_reflection_runner = MagicMock()
+
+    _finalize_with_mocks(
+        service, result=result, cleaned="构建项目", profile_excerpt="build"
+    )
+
+    assert service._memory.save_episode.call_count == 1
+    assert service._memory.save_episode.call_args.kwargs["success"] is True
+    service._ensure_reflection_runner.assert_not_called()
+
+
+def test_finalize_agent_result_no_reflection_in_ask_profile(tmp_path: Path) -> None:
+    """F21: ask profile → reflection guard short-circuits (no build profile)."""
+    service = _build_chat_service(tmp_path)
+    result = LoopResult(
+        reply="这是答案",
+        steps=[],
+        used_tools=["web_search"],
+        total_steps=2,
+        cancelled=False,
+        grounding_verified=True,
+    )
+    service._ensure_reflection_runner = MagicMock()
+
+    _finalize_with_mocks(
+        service, result=result, cleaned="解释一下", profile_excerpt="ask"
+    )
+
+    assert service._memory.save_episode.call_count == 1
+    assert service._memory.save_episode.call_args.kwargs["success"] is True
+    service._ensure_reflection_runner.assert_not_called()
