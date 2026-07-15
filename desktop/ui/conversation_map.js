@@ -136,7 +136,12 @@
     const perLine = 18;
     let rest = text;
     while (rest && lines.length < maxLines) {
-      if (rest.length <= perLine || lines.length === maxLines - 1) {
+      if (lines.length === maxLines - 1) {
+        // 最后一行：超长则截断加省略号
+        lines.push(rest.length > perLine ? `${rest.slice(0, perLine - 1)}…` : rest);
+        break;
+      }
+      if (rest.length <= perLine) {
         lines.push(rest);
         break;
       }
