@@ -171,11 +171,25 @@ class ChatToolRegistry:
                 SyncSourceTool,
             )
 
+            builtin_registry = (
+                self._mcp_manager._builtin
+                if self._mcp_manager is not None
+                else None
+            )
             tools.extend(
                 [
-                    ListConnectorsTool(self._sync_service),
-                    ConnectorStatusTool(self._sync_service),
-                    SyncSourceTool(self._sync_service),
+                    ListConnectorsTool(
+                        registry=builtin_registry,
+                        sync_service=self._sync_service,
+                    ),
+                    ConnectorStatusTool(
+                        registry=builtin_registry,
+                        sync_service=self._sync_service,
+                    ),
+                    SyncSourceTool(
+                        self._sync_service,
+                        mcp_manager=self._mcp_manager,
+                    ),
                 ]
             )
         if self._mcp_manager is not None:
