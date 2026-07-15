@@ -2682,7 +2682,10 @@ body.ui-width-wide {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / var(--grid-size) var(--grid-size),
+    var(--bg-subtle);
   border-top: 1px solid var(--line);
   overflow: hidden;
 }
