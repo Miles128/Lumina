@@ -223,28 +223,43 @@ class LuminaMemory:
                     result TEXT,
                     success INTEGER NOT NULL DEFAULT 0,
                     tools_used TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    failure_mode TEXT,
+                    reflection_text TEXT,
+                    thread_id TEXT
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
                     episode_id UNINDEXED,
                     task,
                     result,
+                    failure_mode UNINDEXED,
+                    reflection_text,
                     content='episodes',
                     content_rowid='rowid'
                 );
 
                 CREATE TRIGGER IF NOT EXISTS ep_ai AFTER INSERT ON episodes BEGIN
-                    INSERT INTO episodes_fts(rowid, episode_id, task, result)
-                    VALUES (new.rowid, new.episode_id, new.task, new.result);
+                    INSERT INTO episodes_fts(rowid, episode_id, task, result, failure_mode, reflection_text)
+                    VALUES (new.rowid, new.episode_id, new.task, new.result, new.failure_mode, new.reflection_text);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS ep_ad AFTER DELETE ON episodes BEGIN
-                    INSERT INTO episodes_fts(episodes_fts, rowid, episode_id, task, result)
-                    VALUES ('delete', old.rowid, old.episode_id, old.task, old.result);
+                    INSERT INTO episodes_fts(episodes_fts, rowid, episode_id, task, result, failure_mode, reflection_text)
+                    VALUES ('delete', old.rowid, old.episode_id, old.task, old.result, old.failure_mode, old.reflection_text);
                 END;
                 """
             )
+            self._migrate_episodes_schema()
+
+    def _migrate_episodes_schema(self) -> None:
+        """Add F21 columns to existing episodes table (idempotent)."""
+        new_columns = ["failure_mode", "reflection_text", "thread_id"]
+        with self._connect_session() as conn:
+            existing = {row["name"] for row in conn.execute("PRAGMA table_info(episodes)")}
+            for col in new_columns:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE episodes ADD COLUMN {col} TEXT")
 
     def create_session(self, session_id: str) -> None:
         with self._connect_session() as conn:

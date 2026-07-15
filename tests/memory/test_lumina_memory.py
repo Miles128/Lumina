@@ -79,3 +79,22 @@ def test_import_from_hermes_no_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     memory = LuminaMemory(tmp_path / "lumina")
     assert memory.import_from_hermes() == {}
+
+
+def test_episodes_table_has_reflection_columns(tmp_path: Path) -> None:
+    """F21: episodes table must have failure_mode, reflection_text, thread_id columns."""
+    mem = LuminaMemory(tmp_path)
+    with mem._connect_session() as conn:
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(episodes)")}
+    assert "failure_mode" in cols
+    assert "reflection_text" in cols
+    assert "thread_id" in cols
+
+
+def test_episodes_fts_indexes_reflection_text(tmp_path: Path) -> None:
+    """F21: episodes_fts must index reflection_text for keyword search."""
+    mem = LuminaMemory(tmp_path)
+    with mem._connect_session() as conn:
+        fts_cols = {row["name"] for row in conn.execute("PRAGMA table_info(episodes_fts)")}
+    assert "reflection_text" in fts_cols
+    assert "failure_mode" in fts_cols
