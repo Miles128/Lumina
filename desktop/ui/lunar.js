@@ -59,9 +59,46 @@
     const phase = moonPhase(date);
     const lit = moonLitPath(phase);
     const s = size || 20;
-    return `<svg viewBox="-1.05 -1.05 2.1 2.1" width="${s}" height="${s}" aria-hidden="true">
-      <circle r="1" fill="var(--text-tertiary)" opacity="0.25"/>
-      ${lit ? `<path d="${lit}" fill="var(--accent)"/>` : ""}
+    const uid = "m" + Math.round(phase * 1000);
+    // 固定月海/陨石坑（x, y, r, opacity）—— 模拟真实月面纹理
+    const craters = [
+      [-0.28, -0.18, 0.14, 0.16],
+      [0.22, -0.32, 0.09, 0.13],
+      [0.08, 0.28, 0.16, 0.15],
+      [-0.42, 0.32, 0.08, 0.11],
+      [0.38, 0.12, 0.11, 0.14],
+      [-0.12, -0.42, 0.07, 0.10],
+      [0.45, -0.08, 0.06, 0.12],
+    ];
+    const craterMarks = craters
+      .map(([cx, cy, cr, co]) =>
+        `<circle cx="${cx}" cy="${cy}" r="${cr}" fill="#1a1410" opacity="${co}"/>`)
+      .join("");
+    return `<svg viewBox="-1.12 -1.12 2.24 2.24" width="${s}" height="${s}" aria-hidden="true">
+      <defs>
+        <radialGradient id="${uid}-lit" cx="36%" cy="30%" r="80%">
+          <stop offset="0%" stop-color="#fff8e4"/>
+          <stop offset="48%" stop-color="#ece0bc"/>
+          <stop offset="82%" stop-color="#a89868"/>
+          <stop offset="100%" stop-color="#6b5e3e"/>
+        </radialGradient>
+        <radialGradient id="${uid}-dark" cx="42%" cy="36%" r="85%">
+          <stop offset="0%" stop-color="#2a2c36"/>
+          <stop offset="100%" stop-color="#101119"/>
+        </radialGradient>
+        <radialGradient id="${uid}-shade" cx="50%" cy="50%" r="50%">
+          <stop offset="58%" stop-color="#000" stop-opacity="0"/>
+          <stop offset="100%" stop-color="#000" stop-opacity="0.45"/>
+        </radialGradient>
+        <clipPath id="${uid}-c"><circle r="1"/></clipPath>
+      </defs>
+      <g clip-path="url(#${uid}-c)">
+        <circle r="1" fill="url(#${uid}-dark)" opacity="0.55"/>
+        ${lit ? `<path d="${lit}" fill="url(#${uid}-lit)"/>` : ""}
+        ${craterMarks}
+        <circle r="1" fill="url(#${uid}-shade)"/>
+      </g>
+      <circle r="1" fill="none" stroke="#000" stroke-width="0.05" opacity="0.3"/>
     </svg>`;
   }
 
@@ -215,13 +252,10 @@
 
   /* ===== 导出 ===== */
   window.LuminaLunar = {
-    moonPhase,
-    moonAge,
     moonPhaseName,
     moonSVG,
     getSolarTerm,
     lunarDayLabel,
     getGreeting,
-    timeSegment,
   };
 })();

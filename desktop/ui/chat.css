@@ -61,15 +61,6 @@ html, body {
   pointer-events: auto;
 }
 
-/* Top bar (legacy non-float fallback) */
-.topbar {
-  justify-content: space-between;
-  width: 100%;
-  border-bottom: 1px solid var(--line);
-  padding-left: 16px;
-  padding-right: 16px;
-}
-
 .logo {
   font-size: 14px;
   font-weight: 600;
@@ -2741,6 +2732,7 @@ body.map-view-open .chat-column > .fork-banner {
   min-height: 0;
   overflow: auto;
   padding: 8px;
+  position: relative;
 }
 
 .map-status {
@@ -2774,6 +2766,36 @@ body.map-view-open .chat-column > .fork-banner {
   to { stroke-dashoffset: -10; }
 }
 
+/* 数据粒子：沿活跃路径流动的光点 */
+.map-particle {
+  fill: var(--sig);
+  filter: url(#map-glow);
+}
+
+/* 背景扫描线：缓慢扫过地图，雷达感 */
+.map-scroll::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--sig-faint) 49%,
+    var(--sig) 50%,
+    var(--sig-faint) 51%,
+    transparent 100%
+  );
+  opacity: 0.15;
+  animation: map-scan 6s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes map-scan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
 /* Nodes —— 无边框，用底色区分状态 */
 .map-node rect {
   fill: var(--bubble-user-bg);
@@ -2782,9 +2804,10 @@ body.map-view-open .chat-column > .fork-banner {
   transition: fill 0.15s, opacity 0.15s;
 }
 
-/* 当前活跃叶子 —— 青色淡底 */
+/* 当前活跃叶子 —— 青色淡底 + 发光 */
 .map-node.is-active rect {
   fill: var(--sig-faint);
+  filter: url(#map-glow);
 }
 
 /* 活跃路径祖先 —— 底色同默认，靠文字加重区分 */
@@ -2859,6 +2882,14 @@ body.map-view-open .chat-column > .fork-banner {
   .map-edge.is-active {
     animation: none;
     stroke-dasharray: none;
+  }
+
+  .map-particle {
+    display: none;
+  }
+
+  .map-scroll::before {
+    display: none;
   }
 }
 

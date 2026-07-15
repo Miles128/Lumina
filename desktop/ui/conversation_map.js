@@ -260,6 +260,19 @@
     svg.setAttribute("height", String(height));
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
+    // SVG defs: glow filter for active nodes
+    const defs = document.createElementNS(SVG_NS, "defs");
+    defs.innerHTML = `
+      <filter id="map-glow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge>
+          <feMergeNode in="blur"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    `;
+    svg.appendChild(defs);
+
     const byId = new Map();
     for (const n of nodes) byId.set(n.id, n);
 
@@ -282,7 +295,26 @@
         `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`,
       );
       line.setAttribute("class", `map-edge${isActive ? " is-active" : ""}`);
-      svg.appendChild(line);
+      if (isActive) {
+        const pathId = `map-edge-${pid}-${node.id}`;
+        line.setAttribute("id", pathId);
+        // 数据粒子：沿活跃路径流动的小光点
+        const particle = document.createElementNS(SVG_NS, "circle");
+        particle.setAttribute("class", "map-particle");
+        particle.setAttribute("r", "2.5");
+        const animate = document.createElementNS(SVG_NS, "animateMotion");
+        animate.setAttribute("dur", "1.8s");
+        animate.setAttribute("repeatCount", "indefinite");
+        animate.setAttribute("rotate", "auto");
+        const mpath = document.createElementNS(SVG_NS, "mpath");
+        mpath.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", `#${pathId}`);
+        animate.appendChild(mpath);
+        particle.appendChild(animate);
+        svg.appendChild(line);
+        svg.appendChild(particle);
+      } else {
+        svg.appendChild(line);
+      }
     }
 
     for (const node of nodes) {
