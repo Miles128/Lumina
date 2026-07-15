@@ -2761,9 +2761,16 @@ body.map-view-open .chat-column > .fork-banner {
   stroke-width: 1;
 }
 
+/* 活跃路径边 —— 信号流沿边流动 */
 .map-edge.is-active {
-  stroke: var(--text-secondary);
-  stroke-width: 1.25;
+  stroke: var(--sig);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  animation: edge-flow var(--pace-flow) linear infinite;
+}
+
+@keyframes edge-flow {
+  to { stroke-dashoffset: -10; }
 }
 
 /* Nodes (each node = one Q&A turn) */
