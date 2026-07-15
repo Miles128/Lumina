@@ -2772,30 +2772,6 @@ body.map-view-open .chat-column > .fork-banner {
   filter: url(#map-glow);
 }
 
-/* 背景扫描线：缓慢扫过地图，雷达感 */
-.map-scroll::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    var(--sig-faint) 49%,
-    var(--sig) 50%,
-    var(--sig-faint) 51%,
-    transparent 100%
-  );
-  opacity: 0.15;
-  animation: map-scan 6s linear infinite;
-  pointer-events: none;
-  z-index: 1;
-}
-
-@keyframes map-scan {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100%); }
-}
-
 /* Nodes —— 无边框，用底色区分状态 */
 .map-node rect {
   fill: var(--bubble-user-bg);
@@ -2885,10 +2861,6 @@ body.map-view-open .chat-column > .fork-banner {
   }
 
   .map-particle {
-    display: none;
-  }
-
-  .map-scroll::before {
     display: none;
   }
 }
