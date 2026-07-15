@@ -7,10 +7,10 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   // Width +50% vs previous 144; taller card for up to 3 text lines.
   const NODE_W = 216;
-  const NODE_H = 64;
+  const NODE_H = 80;
   const PAD = 20;
   const LAYOUT_X_GAP = 28;
-  const LAYOUT_Y_STEP = 92;
+  const LAYOUT_Y_STEP = 108;
   const LAYOUT_Y_OFFSET = 8;
   const PREVIEW_CHARS = 42;
   const TEXT_MAX_LINES = 3;
@@ -322,7 +322,7 @@
       const aLabel = document.createElementNS(SVG_NS, "text");
       aLabel.setAttribute("class", "map-node-a-label");
       aLabel.setAttribute("x", "8");
-      aLabel.setAttribute("y", "48");
+      aLabel.setAttribute("y", "58");
       aLabel.textContent = "答";
       g.appendChild(aLabel);
 
@@ -334,7 +334,7 @@
         g,
         "map-node-a-text",
         22,
-        48,
+        58,
         aLines.length ? aLines : [node.has_assistant ? "(灵犀)" : "（待回答）"],
       );
 
