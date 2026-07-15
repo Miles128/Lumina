@@ -554,10 +554,43 @@ def _finish_progress(request: Request, trace_id: str, *, keep_turn: bool = False
         request.app.state.session_store.clear_turn(trace_id)
 
 
+def _build_builtin_provider_summaries(manager: McpManager) -> list[dict[str, object]]:
+    """Build a status summary for each builtin MCP provider (connector).
+
+    Iterates the builtin registry and calls ``mcp_{name}_status`` on each
+    provider to read its stored health. Used by both ``/api/mcp/builtin``
+    and ``/api/mcp/status`` so the frontend can render the unified MCP pane
+    in a single fetch.
+    """
+    providers: list[dict[str, object]] = []
+    for p in manager._builtin.list_providers():
+        status = manager.call_tool(f"mcp_{p.name}_status", {})
+        if not isinstance(status, dict):
+            status = {}
+        providers.append({
+            "name": p.name,
+            "display_name": p.display_name,
+            "configured": status.get("configured", False),
+            "status": status.get("status", "unknown"),
+            "message": status.get("message", ""),
+            "item_count": status.get("item_count", 0),
+            "last_sync_at": status.get("last_sync_at"),
+        })
+    return providers
+
+
 @app.get("/api/mcp/status")
 def mcp_status(request: Request) -> dict[str, object]:
     manager: McpManager = request.app.state.mcp_manager
-    return manager.status()
+    data = manager.status()
+    data["builtin_providers"] = _build_builtin_provider_summaries(manager)
+    return data
+
+
+@app.get("/api/mcp/builtin")
+def mcp_builtin_providers(request: Request) -> dict[str, object]:
+    manager: McpManager = request.app.state.mcp_manager
+    return {"providers": _build_builtin_provider_summaries(manager)}
 
 
 @app.post("/api/mcp/reload")

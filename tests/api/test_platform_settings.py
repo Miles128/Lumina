@@ -44,3 +44,39 @@ def test_platform_settings_endpoint_is_fast() -> None:
     # CI runners cold-start the full FastAPI app (MCP, connectors); allow more headroom.
     limit = 15.0 if os.getenv("CI") else 3.0
     assert elapsed < limit
+
+
+def test_get_mcp_builtin_lists_providers() -> None:
+    client = TestClient(app)
+    resp = client.get("/api/mcp/builtin")
+    assert resp.status_code == 200
+    data = resp.json()
+    names = {p["name"] for p in data["providers"]}
+    assert "feishu" in names
+    assert "email" in names
+    for p in data["providers"]:
+        assert "display_name" in p
+        assert "configured" in p
+        assert "status" in p
+        assert "message" in p
+        assert "item_count" in p
+        assert "last_sync_at" in p
+
+
+def test_mcp_status_includes_builtin_providers() -> None:
+    client = TestClient(app)
+    resp = client.get("/api/mcp/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "builtin_provider_count" in data
+    assert isinstance(data["builtin_provider_count"], int)
+    assert data["builtin_provider_count"] >= 1
+    assert "builtin_providers" in data
+    assert isinstance(data["builtin_providers"], list)
+    assert len(data["builtin_providers"]) == data["builtin_provider_count"]
+    names = {p["name"] for p in data["builtin_providers"]}
+    assert "feishu" in names
+    for p in data["builtin_providers"]:
+        assert "display_name" in p
+        assert "configured" in p
+        assert "status" in p
