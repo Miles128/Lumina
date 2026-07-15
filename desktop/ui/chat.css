@@ -2752,6 +2752,7 @@ body.map-view-open .chat-column > .fork-banner {
 
 .map-svg {
   display: block;
+  margin: 0 auto;
 }
 
 /* Edges */
@@ -2773,50 +2774,35 @@ body.map-view-open .chat-column > .fork-banner {
   to { stroke-dashoffset: -10; }
 }
 
-/* Nodes (each node = one Q&A turn) */
+/* Nodes —— 无边框，用底色区分状态 */
 .map-node rect {
-  fill: var(--bg);
-  stroke: var(--line);
-  stroke-width: 1;
+  fill: var(--bubble-user-bg);
+  stroke: none;
   cursor: pointer;
-  transition: fill 0.12s, stroke 0.12s;
+  transition: fill 0.15s, opacity 0.15s;
 }
 
+/* 当前活跃叶子 —— 青色淡底 */
 .map-node.is-active rect {
-  stroke: var(--sig);
-  stroke-width: 1.5;
-  fill: var(--bg);
+  fill: var(--sig-faint);
 }
 
-.map-node.is-leaf rect {
-  stroke-width: 1.25;
-}
-
+/* 活跃路径祖先 —— 底色同默认，靠文字加重区分 */
 .map-node.is-done rect {
-  fill: var(--text);
-  stroke: var(--text);
+  fill: var(--bubble-user-bg);
 }
 
-.map-node.is-done .map-node-q-label,
-.map-node.is-done .map-node-q-text,
-.map-node.is-done .map-node-a-label,
-.map-node.is-done .map-node-a-text {
-  fill: var(--bg);
-}
-
+/* 非活跃分支 —— 半透明弱化 */
 .map-node.is-branch rect {
-  stroke-dasharray: 4 3;
-  opacity: 0.7;
+  opacity: 0.55;
 }
 
 .map-node.is-archived rect {
-  opacity: 0.45;
-  stroke-dasharray: 3 3;
+  opacity: 0.35;
 }
 
 .map-node:hover rect {
-  fill: var(--bg-subtle);
-  stroke: var(--text-tertiary);
+  fill: var(--line);
 }
 
 .map-node-q-label,
@@ -2829,7 +2815,7 @@ body.map-view-open .chat-column > .fork-banner {
 }
 
 .map-node-a-label {
-  fill: var(--accent, #2563eb);
+  fill: var(--text-tertiary);
 }
 
 .map-node-q-text,
@@ -2840,18 +2826,21 @@ body.map-view-open .chat-column > .fork-banner {
   user-select: none;
 }
 
-.map-node.is-archived .map-node-q-text,
-.map-node.is-archived .map-node-a-text {
-  fill: var(--text-tertiary);
-}
-
+/* 活跃路径节点文字加重 */
+.map-node.is-done .map-node-q-text,
+.map-node.is-done .map-node-a-text,
 .map-node.is-active .map-node-q-text,
 .map-node.is-active .map-node-a-text {
   fill: var(--text);
 }
 
+.map-node.is-archived .map-node-q-text,
+.map-node.is-archived .map-node-a-text {
+  fill: var(--text-tertiary);
+}
+
 .map-node-badge {
-  fill: var(--accent, #2563eb);
+  fill: var(--sig);
   pointer-events: none;
 }
 
