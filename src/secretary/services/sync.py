@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from secretary.config import Settings
 from secretary.connectors.base import BaseConnector
@@ -37,13 +38,19 @@ class SyncService:
         store: MemoryStore,
         *,
         shibei_service: ShibeiService | None = None,
+        mcp_manager: Any | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._shibei_service = shibei_service
+        self._mcp_manager = mcp_manager
         self._connectors = build_connectors(self._settings)
         self._local_docs = LocalDocumentsPlatform(self._settings)
         self._local_profiler = LocalDocumentsProfiler(self._settings)
+
+    def set_mcp_manager(self, mcp_manager: Any) -> None:
+        """Inject McpManager after construction to break circular dependency."""
+        self._mcp_manager = mcp_manager
 
     def list_connectors(self) -> list[BaseConnector]:
         return list(self._connectors)
@@ -67,6 +74,11 @@ class SyncService:
     def sync_source(self, source: SourceKind) -> SyncResult:
         if source is SourceKind.LOCAL_DOCUMENTS:
             return self._sync_local_documents()
+        if (
+            self._mcp_manager is not None
+            and self._mcp_manager._builtin.has_tool(f"mcp_{source.value}_fetch")
+        ):
+            return self._sync_via_mcp(source)
         connector = self._get_connector(source)
         if not connector.is_configured():
             health = ConnectorHealth(
@@ -96,6 +108,38 @@ class SyncService:
             )
             inserted = 0
 
+        self._store.update_sync_state(health)
+        return SyncResult(source=source, inserted=inserted, health=health)
+
+    def _sync_via_mcp(self, source: SourceKind) -> SyncResult:
+        """Pull data via builtin MCP fetch tool and upsert chunks."""
+        raw = self._mcp_manager.call_tool(f"mcp_{source.value}_fetch", {})
+        if isinstance(raw, dict) and "error" in raw:
+            health = ConnectorHealth(
+                source=source,
+                status=ConnectorStatus.ERROR,
+                message=raw["error"],
+            )
+            self._store.update_sync_state(health)
+            return SyncResult(source=source, inserted=0, health=health)
+        chunks = [
+            MemoryChunk(
+                chunk_id=c["chunk_id"],
+                source=SourceKind(c["source"]),
+                title=c["title"],
+                content=c["content"],
+                metadata=c.get("metadata", {}),
+            )
+            for c in raw.get("chunks", [])
+        ]
+        inserted = self._store.upsert_chunks(chunks)
+        health = ConnectorHealth(
+            source=source,
+            status=ConnectorStatus.READY,
+            message=f"通过 MCP 同步 {inserted} 条",
+            last_sync_at=datetime.now(UTC),
+            item_count=len(chunks),
+        )
         self._store.update_sync_state(health)
         return SyncResult(source=source, inserted=inserted, health=health)
 
