@@ -1,4 +1,7 @@
-"""Semantic compression for durable MEMORY.md / USER.md when near size limits."""
+"""Semantic compression for durable MEMORY.md when near size limits.
+
+USER.md 已退役；用户事实由 ProfileService 管理，不在本服务范围内。
+"""
 
 from __future__ import annotations
 
@@ -8,11 +11,7 @@ from collections.abc import Callable
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
-from secretary.memory.lumina_memory import (
-    MEMORY_MD_MAX_CHARS,
-    USER_MD_MAX_CHARS,
-    LuminaMemory,
-)
+from secretary.memory.lumina_memory import MEMORY_MD_MAX_CHARS, LuminaMemory
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ _COMPRESS_THRESHOLD = 0.88
 _COMPRESS_SYSTEM = """你是持久记忆压缩器。将下面的记忆文本压缩到更短，但必须保留所有稳定、可复用的事实。
 要求：
 - 删除重复、近义冗余、过时临时信息
-- 保留用户个人信息、偏好、长期目标、重要结论
+- 保留任务、项目、环境类稳定事实与重要结论
 - 输出长度不超过 {max_chars} 个字符（中文按字计）
 - 直接输出压缩后的全文，不要解释、不要 JSON"""
 
@@ -33,22 +32,13 @@ class MemoryCompressionService:
     def compress_if_needed(self, llm_config: LlmConfig | None) -> bool:
         if llm_config is None:
             return False
-        changed = False
-        changed |= self._compress_target(
+        return self._compress_target(
             llm_config,
             read=self._memory.read_memory_md,
             write=self._memory.write_memory_md,
             max_chars=MEMORY_MD_MAX_CHARS,
             label="MEMORY.md",
         )
-        changed |= self._compress_target(
-            llm_config,
-            read=self._memory.read_user_md,
-            write=self._memory.write_user_md,
-            max_chars=USER_MD_MAX_CHARS,
-            label="USER.md",
-        )
-        return changed
 
     def _compress_target(
         self,
