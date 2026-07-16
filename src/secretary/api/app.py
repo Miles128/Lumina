@@ -1049,10 +1049,7 @@ def restore_chat_thread(
 def get_durable_memory(request: Request) -> dict[str, str]:
     chat_service: ChatService = _svc(request).chat_service
     memory = chat_service.memory
-    return {
-        "memory_md": memory.read_memory_md(),
-        "user_md": memory.read_user_md(),
-    }
+    return {"memory_md": memory.read_memory_md()}
 
 
 @app.put("/api/memory/durable")
@@ -1063,29 +1060,26 @@ def update_durable_memory(
     memory = chat_service.memory
     if "memory_md" in body:
         memory.write_memory_md(body["memory_md"])
-    if "user_md" in body:
-        memory.write_user_md(body["user_md"])
-    return {
-        "memory_md": memory.read_memory_md(),
-        "user_md": memory.read_user_md(),
-    }
+    return {"memory_md": memory.read_memory_md()}
 
 
 @app.post("/api/memory/import-hermes")
 def import_memory_from_hermes(request: Request) -> dict[str, object]:
-    """One-shot import of Hermes MEMORY.md/USER.md into ~/.lumina/memories/."""
+    """One-shot import of Hermes MEMORY.md into ~/.lumina/memories/.
+
+    USER.md 已退役，不再导入；用户事实请通过 /api/profile 编辑。
+    """
     chat_service: ChatService = _svc(request).chat_service
     memory = chat_service.memory
     imported = memory.import_from_hermes()
     if not imported:
         raise HTTPException(
             status_code=404,
-            detail="未找到可导入的 Hermes 记忆文件（~/.hermes/MEMORY.md 或 USER.md）",
+            detail="未找到可导入的 Hermes 记忆文件（~/.hermes/MEMORY.md）",
         )
     return {
         "imported": imported,
         "memory_md": memory.read_memory_md(),
-        "user_md": memory.read_user_md(),
     }
 
 
