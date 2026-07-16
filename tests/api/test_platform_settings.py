@@ -80,3 +80,34 @@ def test_mcp_status_includes_builtin_providers() -> None:
         assert "display_name" in p
         assert "configured" in p
         assert "status" in p
+
+
+def test_platform_settings_endpoint_exposes_mcp_provider_flag() -> None:
+    client = TestClient(app)
+    resp = client.get("/api/settings/platforms")
+    assert resp.status_code == 200
+    cards = resp.json()
+    by_source = {card["source"]: card for card in cards}
+
+    # 6 个 connector 平台应标记为 mcp_provider=True
+    mcp_sources = {
+        "feishu",
+        "email",
+        "weread",
+        "xiaohongshu",
+        "weixin_oa",
+        "cloud_drive",
+    }
+    for source in mcp_sources:
+        assert source in by_source, f"missing platform card: {source}"
+        card = by_source[source]
+        assert "mcp_provider" in card, f"{source} card missing mcp_provider field"
+        assert card["mcp_provider"] is True, (
+            f"{source} should be marked mcp_provider=True"
+        )
+
+    # LOCAL_DOCUMENTS 不应标记为 mcp_provider
+    assert "local_documents" in by_source
+    assert by_source["local_documents"]["mcp_provider"] is False, (
+        "local_documents should not be marked as mcp_provider"
+    )

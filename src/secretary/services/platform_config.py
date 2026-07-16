@@ -60,6 +60,7 @@ class PlatformDefinition:
     kind: str
     setup_hint: str
     fields: tuple[PlatformField, ...]
+    mcp_provider: bool = False
 
 
 PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
@@ -70,6 +71,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
         kind="cli",
         setup_hint="终端执行 `lark-cli auth login` 完成用户授权",
         fields=(),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.EMAIL,
@@ -83,6 +85,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
             PlatformField("imap_user", "邮箱账号", placeholder="you@example.com"),
             PlatformField("imap_password", "密码 / 授权码", field_type="password"),
         ),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.WEREAD,
@@ -91,6 +94,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
         kind="cli",
         setup_hint="Chrome 登录微信读书，终端执行 `autocli doctor` 确认可用",
         fields=(),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.XIAOHONGSHU,
@@ -99,6 +103,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
         kind="cli",
         setup_hint="Chrome 登录小红书，终端执行 `autocli doctor` 确认可用",
         fields=(),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.WEIXIN_OA,
@@ -107,6 +112,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
         kind="form",
         setup_hint="每行填写一篇公众号文章链接",
         fields=(PlatformField("urls", "文章链接", field_type="textarea", placeholder="https://mp.weixin.qq.com/s/..."),),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.CLOUD_DRIVE,
@@ -122,6 +128,7 @@ PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
                 placeholder="/Users/you/BaiduNetdisk",
             ),
         ),
+        mcp_provider=True,
     ),
     PlatformDefinition(
         source=SourceKind.LOCAL_DOCUMENTS,

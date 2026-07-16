@@ -213,6 +213,7 @@ class PlatformCardResponse(BaseModel):
     status: str
     status_message: str
     fields: list[PlatformFieldResponse]
+    mcp_provider: bool = False
 
 
 class PlatformUpdateRequest(BaseModel):
@@ -1527,6 +1528,7 @@ def _build_platform_cards(request: Request) -> list[PlatformCardResponse]:
                 status=status,
                 status_message=message,
                 fields=fields,
+                mcp_provider=definition.mcp_provider,
             )
         )
     return cards
