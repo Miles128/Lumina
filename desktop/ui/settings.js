@@ -86,7 +86,18 @@
     profileIsUserEdited = Boolean(profile.is_user_edited);
     if (
       !platforms.some((item) => item.source === activeKey) &&
-      !["profile", "agent_llm", "agent_soul", "agent_memory", "agent_mcp", "agent_shibei", "appearance", "about"].includes(activeKey)
+      ![
+        "profile",
+        "agent_llm",
+        "agent_soul",
+        "agent_memory",
+        "agent_mcp",
+        "agent_shibei",
+        "tools_mcp",
+        "tools_skills",
+        "appearance",
+        "about",
+      ].includes(activeKey)
     ) {
       activeKey = "agent_llm";
     }
@@ -97,73 +108,88 @@
   function renderNav() {
     navEl.innerHTML = "";
 
+    // 组 1:Agent
     const agentGroup = document.createElement("div");
     agentGroup.className = "settings-nav-group";
-    agentGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.agent"))}</div>`;
-
+    agentGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.agent"))}</div>`;
     for (const item of [
       { key: "agent_llm", label: t("settings.llm"), status: agentConfig?.status || "not_configured" },
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
-      { key: "agent_mcp", label: t("settings.mcp"), status: mcpStatus?.tool_count ? "ready" : "not_configured" },
     ]) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `settings-nav-item${activeKey === item.key ? " active" : ""}`;
-      btn.dataset.key = item.key;
-      btn.innerHTML = `
-        <span>${escapeHtml(item.label)}</span>
-        <span class="status-dot ${item.status}" aria-hidden="true"></span>
-      `;
-      btn.addEventListener("click", () => selectTab(item.key));
-      agentGroup.appendChild(btn);
+      agentGroup.appendChild(buildNavItem(item));
     }
     navEl.appendChild(agentGroup);
 
+    // 组 2:工具与扩展(MCP + Skill 入口,6 个 connector 已收敛为 MCP 内置 provider)
+    const toolsGroup = document.createElement("div");
+    toolsGroup.className = "settings-nav-group";
+    toolsGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.tools"))}</div>`;
+    toolsGroup.appendChild(
+      buildNavItem({
+        key: "tools_mcp",
+        label: t("settings.mcp"),
+        status: mcpStatus?.tool_count ? "ready" : "not_configured",
+      }),
+    );
+    toolsGroup.appendChild(
+      buildNavItem({
+        key: "tools_skills",
+        label: t("settings.skills"),
+        status: "ready",
+      }),
+    );
+    navEl.appendChild(toolsGroup);
+
+    // 组 3:知识库(Shibei + 本地文档;connector 已归到 MCP 内置 provider)
     const knowledgeGroup = document.createElement("div");
     knowledgeGroup.className = "settings-nav-group";
-    knowledgeGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.knowledge"))}</div>`;
-    const shibeiBtn = document.createElement("button");
-    shibeiBtn.type = "button";
-    shibeiBtn.className = `settings-nav-item${activeKey === "agent_shibei" ? " active" : ""}`;
-    shibeiBtn.dataset.key = "agent_shibei";
-    shibeiBtn.innerHTML = `
-      <span>${escapeHtml(t("settings.shibei"))}</span>
-      <span class="status-dot ${shibeiConfig?.status || "not_configured"}" aria-hidden="true"></span>
-    `;
-    shibeiBtn.addEventListener("click", () => selectTab("agent_shibei"));
-    knowledgeGroup.appendChild(shibeiBtn);
-    for (const platform of platforms) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `settings-nav-item${platform.source === activeKey ? " active" : ""}`;
-      btn.dataset.key = platform.source;
-      btn.innerHTML = `
-        <span>${escapeHtml(platform.name)}</span>
-        <span class="status-dot ${platform.status}" aria-hidden="true"></span>
-      `;
-      btn.addEventListener("click", () => selectTab(platform.source));
-      knowledgeGroup.appendChild(btn);
+    knowledgeGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.knowledge"))}</div>`;
+    knowledgeGroup.appendChild(
+      buildNavItem({
+        key: "agent_shibei",
+        label: t("settings.shibei"),
+        status: shibeiConfig?.status || "not_configured",
+      }),
+    );
+    // 本地文档保留在知识库组(走 LocalDocumentsProfiler,不改造为 MCP provider)
+    const localDocs = platforms.find((p) => p.source === "local_documents");
+    if (localDocs) {
+      knowledgeGroup.appendChild(
+        buildNavItem({
+          key: localDocs.source,
+          label: localDocs.name,
+          status: localDocs.status,
+        }),
+      );
     }
     navEl.appendChild(knowledgeGroup);
 
+    // 组 4:个人
     const personalGroup = document.createElement("div");
     personalGroup.className = "settings-nav-group";
-    personalGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.personal"))}</div>`;
+    personalGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.personal"))}</div>`;
     for (const item of [
       { key: "profile", label: t("settings.profile") },
       { key: "appearance", label: t("settings.appearance") },
       { key: "about", label: t("settings.about") },
     ]) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `settings-nav-item${activeKey === item.key ? " active" : ""}`;
-      btn.dataset.key = item.key;
-      btn.innerHTML = `<span>${escapeHtml(item.label)}</span>`;
-      btn.addEventListener("click", () => selectTab(item.key));
-      personalGroup.appendChild(btn);
+      personalGroup.appendChild(buildNavItem(item));
     }
     navEl.appendChild(personalGroup);
+  }
+
+  function buildNavItem(item) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `settings-nav-item${activeKey === item.key ? " active" : ""}`;
+    btn.dataset.key = item.key;
+    const dot = item.status
+      ? `<span class="status-dot ${item.status}" aria-hidden="true"></span>`
+      : "";
+    btn.innerHTML = `<span>${escapeHtml(item.label)}</span>${dot}`;
+    btn.addEventListener("click", () => selectTab(item.key));
+    return btn;
   }
 
   function selectTab(key) {
@@ -187,12 +213,17 @@
       renderAgentMemoryPane();
       return;
     }
-    if (key === "agent_mcp") {
-      renderAgentMcpPane();
+    if (key === "agent_mcp" || key === "tools_mcp") {
+      // agent_mcp 保留为 tools_mcp 的别名,兼容旧 activeKey / 旧调用点
+      renderToolsMcpPane();
       return;
     }
     if (key === "agent_shibei") {
       renderAgentShibeiPane();
+      return;
+    }
+    if (key === "tools_skills") {
+      renderToolsSkillsPane();
       return;
     }
     if (key === "profile") {
