@@ -16,7 +16,6 @@
   let agentSoul = "";
   let agentSoulPath = "";
   let durableMemoryMd = "";
-  let durableUserMd = "";
   let uiPreferences = { density: "comfortable", messageWidth: "medium", language: "bi", theme: "system" };
   let mcpStatus = null;
   let shibeiConfig = null;
@@ -75,7 +74,6 @@
     agentSoul = soul.markdown || "";
     agentSoulPath = soul.path || "";
     durableMemoryMd = durable.memory_md || "";
-    durableUserMd = durable.user_md || "";
     mcpStatus = mcp;
     shibeiConfig = shibei;
     backgroundTasks = background;
@@ -108,7 +106,7 @@
   function renderNav() {
     navEl.innerHTML = "";
 
-    // 组 1:Agent
+    // 组 1:Agent(LLM / SOUL / 记忆 / 画像——画像与持久记忆同属 Agent 的"自我认知"层)
     const agentGroup = document.createElement("div");
     agentGroup.className = "settings-nav-group";
     agentGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.agent"))}</div>`;
@@ -116,6 +114,7 @@
       { key: "agent_llm", label: t("settings.llm"), status: agentConfig?.status || "not_configured" },
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
+      { key: "profile", label: t("settings.profile") },
     ]) {
       agentGroup.appendChild(buildNavItem(item));
     }
@@ -165,12 +164,11 @@
     }
     navEl.appendChild(knowledgeGroup);
 
-    // 组 4:个人
+    // 组 4:个人(外观 + 关于;个人画像已并入 Agent 组,与持久记忆并列)
     const personalGroup = document.createElement("div");
     personalGroup.className = "settings-nav-group";
     personalGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.personal"))}</div>`;
     for (const item of [
-      { key: "profile", label: t("settings.profile") },
       { key: "appearance", label: t("settings.appearance") },
       { key: "about", label: t("settings.about") },
     ]) {
@@ -846,7 +844,7 @@
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
           <h3>持久记忆</h3>
-          <p>灵犀使用 MEMORY.md（环境与项目事实）与 USER.md（用户偏好与画像），每次对话开始时注入系统提示。Agent 也可通过 memory 工具自动更新。</p>
+          <p>灵犀使用 MEMORY.md 记录任务/项目/环境事实与每日会话摘要，每次对话开始时注入系统提示。Agent 也可通过 memory 工具自动更新。用户个人事实（姓名/偏好/习惯等）请编辑"个人画像"。</p>
         </header>
         <div class="platform-meta">
           <p>后台思考：${thinkInfo}</p>
@@ -854,11 +852,7 @@
         </div>
         <label class="settings-field" for="durable-memory-editor">
           <span>MEMORY.md（环境与项目事实，最多 2200 字）</span>
-          <textarea id="durable-memory-editor" class="profile-editor" rows="10">${escapeHtml(durableMemoryMd)}</textarea>
-        </label>
-        <label class="settings-field" for="durable-user-editor">
-          <span>USER.md（用户偏好与画像，最多 1375 字）</span>
-          <textarea id="durable-user-editor" class="profile-editor" rows="8">${escapeHtml(durableUserMd)}</textarea>
+          <textarea id="durable-memory-editor" class="profile-editor" rows="14">${escapeHtml(durableMemoryMd)}</textarea>
         </label>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-save-durable-memory">保存</button>
@@ -1303,84 +1297,16 @@
     }
   }
 
-  async function saveCliAgentSettings() {
-    const feedback = document.getElementById("cli-feedback");
-    const enabled = Boolean(document.getElementById("cli-master-enabled")?.checked);
-    const provider = document.getElementById("cli-default-provider")?.value || "codex";
-    try {
-      cliAgentStatus = await window.SecretaryAPI.request("PUT", "/api/cli-agents/settings", {
-        enabled,
-        provider,
-      });
-      renderNav();
-      renderAgentCliPane();
-      showFeedback(document.getElementById("cli-feedback"), "success", t("settings.cli.saved"));
-    } catch (error) {
-      showFeedback(feedback, "error", t("settings.cli.saveFailed", { error: error.message }));
-    }
-  }
-
-  async function toggleCliProvider(name, enabled) {
-    const trimmed = String(name || "").trim();
-    if (!trimmed) return;
-    const feedback = document.getElementById("cli-feedback");
-    try {
-      cliAgentStatus = await window.SecretaryAPI.request(
-        "PUT",
-        `/api/cli-agents/providers/${encodeURIComponent(trimmed)}`,
-        { enabled: Boolean(enabled) },
-      );
-      renderNav();
-      const rowStatus = document.querySelector(`[data-cli-provider="${CSS.escape(trimmed)}"]`)
-        ?.closest(".cli-provider-row")
-        ?.querySelector(".platform-status");
-      if (rowStatus) {
-        rowStatus.className = `platform-status ${cliAgentStatus.active ? "ready" : "not_configured"}`;
-      }
-    } catch (error) {
-      showFeedback(feedback, "error", t("settings.cli.saveFailed", { error: error.message }));
-      renderAgentCliPane();
-    }
-  }
-
-  async function testCliProvider(name) {
-    const trimmed = String(name || "").trim();
-    if (!trimmed) return;
-    const feedback = document.getElementById("cli-feedback");
-    showFeedback(feedback, "info", t("settings.cli.testing"));
-    try {
-      cliAgentStatus = await window.SecretaryAPI.request(
-        "POST",
-        `/api/cli-agents/providers/${encodeURIComponent(trimmed)}/test`,
-      );
-      const result = cliAgentStatus?.test || {};
-      showFeedback(
-        feedback,
-        result.ok ? "success" : "error",
-        result.ok
-          ? t("settings.cli.testOk", { message: result.message || trimmed })
-          : t("settings.cli.testFailed", { message: result.message || "unknown" }),
-      );
-      renderAgentCliPane();
-    } catch (error) {
-      showFeedback(feedback, "error", t("settings.cli.testFailed", { message: error.message }));
-    }
-  }
-
   async function saveDurableMemory() {
     const memoryEditor = document.getElementById("durable-memory-editor");
-    const userEditor = document.getElementById("durable-user-editor");
     const feedback = document.getElementById("durable-memory-feedback");
-    if (!memoryEditor || !userEditor || !feedback) return;
+    if (!memoryEditor || !feedback) return;
     try {
       const updated = await window.SecretaryAPI.request("PUT", "/api/memory/durable", {
         memory_md: memoryEditor.value,
-        user_md: userEditor.value,
       });
       durableMemoryMd = updated.memory_md || "";
-      durableUserMd = updated.user_md || "";
       memoryEditor.value = durableMemoryMd;
-      userEditor.value = durableUserMd;
       showFeedback(feedback, "success", "持久记忆已保存");
     } catch (error) {
       showFeedback(feedback, "error", `保存失败：${error.message}`);

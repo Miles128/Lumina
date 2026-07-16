@@ -8,9 +8,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/tokens.css?v=7" />
-    <link rel="stylesheet" href="/assets/chat.css?v=65" />
-    <link rel="stylesheet" href="/assets/topbar-lite.css?v=10" />
+    <link rel="stylesheet" href="/assets/tokens.css?v=8" />
+    <link rel="stylesheet" href="/assets/chat.css?v=66" />
+    <link rel="stylesheet" href="/assets/topbar-lite.css?v=11" />
     <script src="/assets/theme.js?v=2"></script>
   </head>
   <body>
@@ -20,6 +20,7 @@
         <div class="topbar-left">
           <button id="btn-moon" type="button" class="moon-btn" data-tip="月相与节气" aria-label="月相与节气" aria-expanded="false"></button>
           <span id="moon-info-bar" class="moon-info-bar" hidden></span>
+          <span class="model-status-dot" id="model-status-dot" data-state="idle" aria-hidden="true"></span>
           <span class="topbar-model" id="topbar-model" data-i18n-title="model.current">加载中…</span>
         </div>
         <div class="topbar-right">
@@ -117,7 +118,6 @@
               <div id="messages" class="thread"></div>
               <div id="typing" class="typing" hidden>
                 <div class="think-field" aria-hidden="true"><span class="think-core"></span></div>
-                <button id="btn-pause" class="typing-pause" type="button" data-i18n="action.pause" data-tip="暂停">暂停</button>
               </div>
               <div id="agent-progress" class="agent-progress" hidden>
                 <button
@@ -135,7 +135,7 @@
                   <div id="subagent-tree" class="subagent-tree" hidden></div>
                   <ul id="agent-progress-list"></ul>
                   <div id="agent-raw-section" class="agent-raw-section" hidden>
-                    <div class="agent-raw-label" data-i18n="chat.progress.raw">模型原始输出</div>
+                    <div class="agent-raw-label" data-i18n="chat.progress.raw">模型原文</div>
                     <pre id="agent-raw-output" class="agent-raw-output"></pre>
                   </div>
                 </div>
@@ -190,9 +190,13 @@
                 placeholder="Message"
                 maxlength="4000"
               ></textarea>
-              <button type="submit" id="btn-send" class="composer-send" data-i18n-aria="action.send">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <button type="button" id="btn-send" class="composer-send" data-state="send" data-i18n-aria="action.send" data-tip="发送">
+                <svg class="send-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+                <svg class="pause-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+                  <rect x="6" y="5" width="4" height="14" rx="1"/>
+                  <rect x="14" y="5" width="4" height="14" rx="1"/>
                 </svg>
               </button>
             </form>
@@ -240,10 +244,10 @@
     <script src="/assets/i18n.js?v=15"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/lunar.js?v=3"></script>
-    <script src="/assets/topbar.js?v=9"></script>
-    <script src="/assets/settings.js?v=14"></script>
+    <script src="/assets/topbar.js?v=10"></script>
+    <script src="/assets/settings.js?v=16"></script>
     <script src="/assets/skills.js?v=6"></script>
-    <script src="/assets/chat.js?v=61"></script>
+    <script src="/assets/chat.js?v=63"></script>
     <script src="/assets/conversation_map.js?v=10"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->
     <script src="/assets/bootstrap.js?v=1"></script>
