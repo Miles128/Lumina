@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import resolve_llm_config
@@ -16,18 +17,43 @@ from secretary.services.agent_config import AgentConfigStore
 from secretary.services.background_review import re_search_json_fence
 from secretary.services.profile_service import ProfileService
 
+if TYPE_CHECKING:
+    from secretary.services.shibei_service import ShibeiService
+
 logger = logging.getLogger(__name__)
 
 _STATE_FILE = "think_state.json"
 
 _THINK_SYSTEM = """你是灵犀的后台思考模块。根据记忆、用户画像和最近对话，提炼值得长期保留的信息。
 只输出 JSON：
-{"insights":["..."], "updates":[{"action":"none"|"add"|"replace","target":"memory"|"user","text":"","old_text":""}]}
+{"insights":["..."], "updates":[{"action":"none"|"add"|"replace","target":"memory","text":"","old_text":""}]}
 规则：
+- target 只能是 "memory"；用户个人信息由系统自动写入用户画像，不要写入 MEMORY.md
 - 只记录稳定、可复用的事实，不要猜测
 - 没有值得更新的内容时 updates 为空数组
 - 不确定时 action=none
 """
+
+_STOPWORDS = frozenset(
+    (
+        "的 了 是 在 我 你 他 她 它 有 和 与 或 也 都 就 不 没 把 被 让"
+        " 请 帮 可以 能 要 会 这 那 这个 那个 什么 怎么 为什么 怎么样"
+        " a an the is are was were be been to of in on at for with"
+        " you i he she it we they me him her us them my your his its our their"
+        " do does did can could should would will shall may might must"
+    ).split()
+)
+_QUERY_MAX_CHARS = 120
+
+
+def _extract_think_query(recent_text: str) -> str:
+    """Extract a search query from recent conversation text."""
+    import re
+
+    words = re.findall(r"[\w\u4e00-\u9fff]+", recent_text)
+    filtered = [w for w in words if w.lower() not in _STOPWORDS and len(w) > 1]
+    query = " ".join(filtered[:10])
+    return query[:_QUERY_MAX_CHARS]
 
 
 class ScheduledThinkService:
@@ -37,11 +63,13 @@ class ScheduledThinkService:
         memory: LuminaMemory,
         profile_service: ProfileService,
         agent_config_store: AgentConfigStore,
+        shibei_service: ShibeiService | None = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
         self._profile_service = profile_service
         self._agent_config_store = agent_config_store
+        self._shibei = shibei_service
         self._state_path = settings.resolved_data_dir() / _STATE_FILE
 
     def should_run(self) -> bool:
@@ -63,7 +91,13 @@ class ScheduledThinkService:
             raise AgentError("未配置大模型，无法进行后台思考")
 
         profile = self._profile_service.get_view().markdown[:1200]
-        memory = self._memory.prompt_snapshot() or ""
+        recent = self._memory.recent_session_messages(limit=30)
+        recent_text = "\n".join(
+            f"[{item['role']}] {item['content'][:200]}"
+            for item in recent
+        ) or "(no recent messages)"
+
+        memory = self._resolve_memory_snapshot(recent_text)
         if not profile.strip() and not memory.strip():
             from secretary.memory.db import MemoryStore
 
@@ -74,11 +108,6 @@ class ScheduledThinkService:
                 return "skipped: no synced data"
 
         memory = memory or "(empty)"
-        recent = self._memory.recent_session_messages(limit=30)
-        recent_text = "\n".join(
-            f"[{item['role']}] {item['content'][:200]}"
-            for item in recent
-        ) or "(no recent messages)"
 
         raw = chat_completion(
             llm_config,
@@ -99,6 +128,20 @@ class ScheduledThinkService:
         self._save_state(markdown)
         logger.info("scheduled think complete, applied=%s", applied)
         return markdown
+
+    def _resolve_memory_snapshot(self, recent_text: str) -> str:
+        """Shibei-first: query shibei with keywords from recent conversation,
+        fallback to prompt_snapshot() when shibei is unavailable."""
+        if self._shibei is not None and self._shibei.is_enabled() and self._shibei.is_available():
+            query = _extract_think_query(recent_text)
+            if query:
+                try:
+                    result = self._shibei.search(query, limit=8)
+                except Exception:
+                    result = ""
+                if result.strip() and not result.startswith("Error:"):
+                    return result
+        return self._memory.prompt_snapshot() or ""
 
     @staticmethod
     def load_latest(data_dir: Path) -> dict[str, str] | None:
@@ -135,8 +178,9 @@ class ScheduledThinkService:
                 if action == "none":
                     continue
                 target = str(item.get("target", "memory")).strip().lower()
-                if target not in {"memory", "user"}:
-                    target = "memory"
+                # USER.md 已退役；target=user 跳过（用户事实由画像自动记录）
+                if target not in {"memory"}:
+                    continue
                 self._memory.mutate_memory(
                     action,
                     target,
