@@ -1043,6 +1043,25 @@
     renderToolsMcpPane();
   }
 
+  function renderToolsSkillsPane() {
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <h3>${escapeHtml(t("settings.skills"))}</h3>
+          <p>技能以 SKILL.md 形式挂靠,Agent 按需调用。打开技能管理面板可浏览目录、安装与卸载。</p>
+        </header>
+        <div class="platform-actions">
+          <button class="btn-text save-btn" type="button" id="btn-open-skills-panel">${escapeHtml(t("settings.skills.openManager"))}</button>
+        </div>
+        <div id="skills-feedback" class="platform-feedback" hidden></div>
+      </div>
+    `;
+    document.getElementById("btn-open-skills-panel")?.addEventListener("click", () => {
+      closeSettings();
+      window.SkillsModule?.open();
+    });
+  }
+
   async function syncBuiltinProvider(name) {
     const trimmed = String(name || "").trim();
     if (!trimmed) return;
