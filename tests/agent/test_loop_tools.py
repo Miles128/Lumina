@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from secretary.agent.tools.base import Tool, ToolResult
+from secretary.agent.tools.base import ToolResult
 from secretary.agent.tools.memory_tools import MemoryTool, SessionSearchTool
 from secretary.memory.lumina_memory import LuminaMemory
 
