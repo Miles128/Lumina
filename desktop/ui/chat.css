@@ -341,8 +341,23 @@ html, body {
   display: block;
   width: 30px;
   height: 30px;
-  margin: 0 auto 14px;
+  margin: 0 auto 6px;
   opacity: 0.9;
+  position: relative;
+}
+
+.hero-mark::after {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 1px;
+  margin: 8px auto 0;
+  background: var(--sig);
+  opacity: 0.7;
+}
+
+.hero-sub {
+  margin-top: 14px;
 }
 
 .hero h1 {
@@ -404,6 +419,16 @@ html, body {
   align-items: flex-start;
   gap: var(--chat-message-gap);
   max-width: 100%;
+  animation: msg-in 0.2s ease-out;
+}
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message { animation: none; }
 }
 
 .message.user {
@@ -521,6 +546,30 @@ html, body {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 12px;
+  padding-top: 28px;
+  position: relative;
+}
+
+/* 代码块标题栏 —— 显示语言名小标签，无三圆点装饰 */
+.bubble.markdown pre[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  border-bottom: 1px solid var(--line);
+  border-radius: 10px 10px 0 0;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  pointer-events: none;
 }
 
 .bubble.markdown pre code {
@@ -619,23 +668,6 @@ html, body {
   overflow: hidden;
 }
 
-.typing-pause {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  padding: 6px 10px;
-  margin-left: 8px;
-  cursor: pointer;
-}
-
-.typing-pause:hover {
-  color: var(--text);
-}
-
 .agent-progress {
   margin-top: 6px;
   max-width: calc(100% - var(--chat-user-column-reserve));
@@ -731,11 +763,12 @@ html, body {
 }
 
 .agent-progress li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.45;
-  padding: 2px 0 2px 12px;
-  border: none;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--sig-soft);
   background: none;
 }
 
@@ -1218,10 +1251,6 @@ html, body {
   padding: 6px 8px;
 }
 
-.composer:focus-within {
-  background: color-mix(in srgb, var(--bg-subtle) 70%, var(--line));
-}
-
 .composer textarea {
   flex: 1;
   border: none;
@@ -1240,7 +1269,7 @@ html, body {
 .composer-send {
   width: 34px;
   height: 34px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--btn-primary-bg);
   color: var(--btn-primary-fg);
@@ -1248,12 +1277,23 @@ html, body {
   place-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.composer-send:disabled {
-  opacity: 0.25;
-  cursor: not-allowed;
+.composer-send .pause-icon { display: none; }
+
+.composer-send[data-state="pause"] {
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-color: var(--line);
+}
+
+.composer-send[data-state="pause"] .send-icon { display: none; }
+.composer-send[data-state="pause"] .pause-icon { display: block; }
+
+.composer-send[data-state="pause"]:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
 }
 
 /* Agent mode picker (composer left) */
@@ -1916,33 +1956,41 @@ html, body {
 
 .skills-top-tabs {
   display: flex;
-  gap: 4px;
-  margin-left: 4px;
+  gap: 16px;
+  margin-left: 8px;
   align-items: center;
 }
 
 .skills-tab {
-  border: 1px solid var(--line);
-  background: var(--bg);
-  border-radius: 999px;
-  padding: 2px 8px;
+  border: none;
+  background: none;
+  border-radius: 0;
+  padding: 4px 0;
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.4;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   cursor: pointer;
+  position: relative;
 }
 
 .skills-tab:hover {
-  background: var(--bg-subtle);
   color: var(--text);
 }
 
 .skills-tab.active {
-  background: var(--btn-primary-bg);
-  color: var(--btn-primary-fg);
-  border-color: var(--btn-primary-bg);
+  color: var(--text);
+}
+
+.skills-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--text);
 }
 
 .skill-toolbar {
@@ -2131,16 +2179,6 @@ body.skill-col-resizing {
 .skill-chip:hover {
   border-color: var(--line-strong);
   background: var(--bg-subtle);
-}
-
-.skill-chip.status-ok,
-.skill-chip.status-available {
-  border-left: 3px solid var(--text);
-}
-
-.skill-chip.status-broken_link,
-.skill-chip.status-conflict {
-  border-left: 3px solid #c44;
 }
 
 .skill-chip-name {
@@ -2822,7 +2860,7 @@ body.map-view-open .chat-column > .fork-banner {
 
 /* Nodes —— 无边框，用底色区分状态 */
 .map-node rect {
-  fill: var(--bubble-user-bg);
+  fill: var(--map-node-bg);
   stroke: none;
   cursor: pointer;
   transition: fill 0.15s, opacity 0.15s;
@@ -2836,16 +2874,16 @@ body.map-view-open .chat-column > .fork-banner {
 
 /* 活跃路径祖先 —— 底色同默认，靠文字加重区分 */
 .map-node.is-done rect {
-  fill: var(--bubble-user-bg);
+  fill: var(--map-node-bg);
 }
 
-/* 非活跃分支 —— 半透明弱化 */
+/* 非活跃分支 —— 半透明弱化（深色主题系数由 tokens 提升） */
 .map-node.is-branch rect {
-  opacity: 0.55;
+  opacity: var(--map-branch-opacity);
 }
 
 .map-node.is-archived rect {
-  opacity: 0.35;
+  opacity: var(--map-archived-opacity);
 }
 
 .map-node:hover rect {

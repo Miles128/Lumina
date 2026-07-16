@@ -100,8 +100,8 @@
   function renderNav() {
     navEl.innerHTML = "";
     for (const tab of [
-      { key: "browse", label: `浏览 ${catalog.length}` },
-      { key: "installed", label: `已安装 ${installed.length}` },
+      { key: "browse", label: "浏览" },
+      { key: "installed", label: "已安装" },
     ]) {
       const btn = document.createElement("button");
       btn.type = "button";
