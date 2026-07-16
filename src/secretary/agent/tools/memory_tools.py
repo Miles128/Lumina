@@ -45,9 +45,8 @@ class SearchMemoryTool(Tool):
 class MemoryTool(Tool):
     name = "memory"
     description = (
-        "Manage durable cross-session memory. "
-        "target=memory edits MEMORY.md (environment/project facts); "
-        "target=user edits USER.md (preferences/profile). "
+        "Manage durable cross-session MEMORY.md (environment/project facts). "
+        "target=memory only; USER.md 已退役，用户个人事实请由对话推断自动写入用户画像。"
         "Actions: add, replace (requires old_text), remove (requires old_text)."
     )
     needs_confirmation = False
@@ -68,8 +67,8 @@ class MemoryTool(Tool):
                 },
                 "target": {
                     "type": "string",
-                    "enum": ["memory", "user"],
-                    "description": "memory=MEMORY.md, user=USER.md",
+                    "enum": ["memory"],
+                    "description": "memory=MEMORY.md (用户事实已改由画像自动记录，不再支持 user)",
                 },
                 "text": {"type": "string", "description": "Text to add or replacement text"},
                 "old_text": {
