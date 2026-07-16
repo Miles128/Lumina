@@ -869,13 +869,50 @@
     document.getElementById("btn-save-durable-memory").addEventListener("click", saveDurableMemory);
   }
 
-  function renderAgentMcpPane() {
+  function renderToolsMcpPane() {
     const status = mcpStatus || {};
-    const tools = Array.isArray(status.tools) ? status.tools : [];
+    const builtinProviders = Array.isArray(status.builtin_providers) ? status.builtin_providers : [];
     const servers = (Array.isArray(status.servers) ? status.servers : []).filter(
       (server) => server.enabled !== false,
     );
+    const tools = Array.isArray(status.tools) ? status.tools : [];
     const configPath = status.config_path || "~/.lumina/mcp.json";
+
+    const builtinRows = builtinProviders.length
+      ? builtinProviders
+          .map((provider) => {
+            const name = provider.name || "";
+            const display = provider.display_name || name;
+            const configured = Boolean(provider.configured);
+            const rawStatus = provider.status;
+            const dotStatus =
+              rawStatus === "ready" || (configured && rawStatus !== "error")
+                ? "ready"
+                : rawStatus === "error"
+                  ? "error"
+                  : "not_configured";
+            const countLabel = provider.item_count ? `${provider.item_count} 条` : "";
+            const message = provider.message || "";
+            const meta = [countLabel, message].filter(Boolean).join(" · ") || "—";
+            const lastSync = provider.last_sync_at
+              ? ` · 上次 ${escapeHtml(String(provider.last_sync_at).slice(0, 16))}`
+              : "";
+            return (
+              `<li class="mcp-builtin-row">` +
+              `<span class="mcp-builtin-name"><strong>${escapeHtml(display)}</strong>` +
+              `<span class="mcp-builtin-badge">builtin</span></span>` +
+              `<span class="mcp-builtin-meta">${escapeHtml(meta)}${lastSync}</span>` +
+              `<span class="status-dot ${dotStatus}" aria-hidden="true"></span>` +
+              `<span class="mcp-builtin-actions">` +
+              `<button class="btn-text" type="button" data-builtin-configure="${escapeAttr(name)}">配置</button>` +
+              `<button class="btn-text" type="button" data-builtin-sync="${escapeAttr(name)}">同步</button>` +
+              `</span>` +
+              `</li>`
+            );
+          })
+          .join("")
+      : `<li class="mcp-empty-state"><span>暂无内置连接器(后端未返回 builtin_providers)</span></li>`;
+
     const toolRows = tools.length
       ? tools
           .map(
@@ -909,26 +946,29 @@
     contentEl.innerHTML = `
       <div class="settings-pane is-wide">
         <header class="settings-pane-head">
-          <h3>MCP 工具</h3>
-          <p>外部 MCP 服务器提供的工具，对话时 Agent 可直接调用。配置文件：<code>${escapeHtml(configPath)}</code></p>
+          <h3>${escapeHtml(t("settings.mcp"))}</h3>
+          <p>统一管理 MCP 服务器与扩展工具。内置连接器(飞书/邮箱/微信读书/小红书/微信公众号/本地网盘)与用户自建服务器共享同一命名空间。</p>
         </header>
-        <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · SDK ${status.available ? "可用" : "不可用"}</p>
-        <p class="platform-meta muted">支持 stdio（本地命令）与远程 URL（SSE / Streamable HTTP）· 写入类 MCP 工具需用户确认</p>
+        <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · 内置 ${builtinProviders.length} · 远程 ${servers.length}</p>
+        <p class="platform-meta muted">支持 stdio(本地命令)与远程 URL(SSE / Streamable HTTP)· 写入类 MCP 工具需用户确认 · 配置文件 <code>${escapeHtml(configPath)}</code></p>
         ${status.last_error ? `<p class="platform-feedback error">${escapeHtml(status.last_error)}</p>` : ""}
+
+        <h4 class="settings-subtitle">内置连接器</h4>
+        <ul class="mcp-builtin-list">${builtinRows}</ul>
 
         <h4 class="settings-subtitle">快速添加 · Quick start</h4>
         <div class="platform-actions">
           <button class="btn-text save-btn" type="button" id="btn-mcp-quickstart-fs">Filesystem MCP · 文件系统</button>
         </div>
         <label class="settings-field">
-          <span>Filesystem 根目录（可选，默认 ~/Documents）</span>
+          <span>Filesystem 根目录(可选,默认 ~/Documents)</span>
           <input id="mcp-fs-root" type="text" placeholder="/Users/you/Documents" />
         </label>
 
         <h4 class="settings-subtitle">添加 MCP 服务器</h4>
         <div class="mcp-import-form">
           <label class="settings-field">
-            <span>名称（英文，如 filesystem / remote）</span>
+            <span>名称(英文,如 filesystem / remote)</span>
             <input id="mcp-name" type="text" placeholder="filesystem" />
           </label>
           <label class="settings-field">
@@ -936,15 +976,15 @@
             <select id="mcp-transport">
               <option value="stdio" selected>stdio · 本地命令</option>
               <option value="streamable_http">streamable_http · 远程</option>
-              <option value="sse">sse · 远程（旧）</option>
+              <option value="sse">sse · 远程(旧)</option>
             </select>
           </label>
           <label class="settings-field" id="mcp-command-field">
-            <span>启动命令（stdio）</span>
+            <span>启动命令(stdio)</span>
             <input id="mcp-command" type="text" placeholder="npx" />
           </label>
           <label class="settings-field" id="mcp-args-field">
-            <span>参数（空格分隔）</span>
+            <span>参数(空格分隔)</span>
             <input id="mcp-args" type="text" placeholder="-y @modelcontextprotocol/server-filesystem /Users/you" />
           </label>
           <label class="settings-field" id="mcp-url-field" hidden>
@@ -952,7 +992,7 @@
             <input id="mcp-url" type="url" placeholder="https://example.com/mcp" />
           </label>
           <label class="settings-field" id="mcp-headers-field" hidden>
-            <span>Authorization（可选，写入 Bearer …）</span>
+            <span>Authorization(可选,写入 Bearer …)</span>
             <input id="mcp-auth" type="text" placeholder="Bearer sk-…" autocomplete="off" />
           </label>
         </div>
@@ -961,7 +1001,7 @@
           <button class="btn-text" type="button" id="btn-reload-mcp">重新连接</button>
         </div>
 
-        <h4 class="settings-subtitle">服务器</h4>
+        <h4 class="settings-subtitle">远程 / stdio 服务器</h4>
         <ul class="mcp-server-list">${serverRows}</ul>
         <h4 class="settings-subtitle">工具列表</h4>
         <div class="mcp-tool-table-wrap">
@@ -984,6 +1024,47 @@
       if (!btn) return;
       void deleteMcpServer(btn.getAttribute("data-mcp-delete"));
     });
+    contentEl.querySelector(".mcp-builtin-list")?.addEventListener("click", (event) => {
+      const configureBtn = event.target.closest("[data-builtin-configure]");
+      if (configureBtn) {
+        // 复用现有 platform.source fallback 分支(renderField + savePlatform + testPlatform + syncPlatform)
+        selectTab(configureBtn.getAttribute("data-builtin-configure"));
+        return;
+      }
+      const syncBtn = event.target.closest("[data-builtin-sync]");
+      if (syncBtn) {
+        void syncBuiltinProvider(syncBtn.getAttribute("data-builtin-sync"));
+      }
+    });
+  }
+
+  // 旧渲染入口,保留为别名,兼容 addMcpServer / reloadMcp / deleteMcpServer / quickstartFilesystemMcp 内部调用
+  function renderAgentMcpPane() {
+    renderToolsMcpPane();
+  }
+
+  async function syncBuiltinProvider(name) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    const feedback = document.getElementById("mcp-feedback");
+    if (!feedback) return;
+    showFeedback(feedback, "info", `正在同步 ${trimmed}…`);
+    try {
+      const result = await window.SecretaryAPI.request("POST", `/api/sync/${trimmed}`, null, {
+        timeoutMs: 90_000,
+      });
+      const inserted = Number(result?.inserted || 0);
+      showFeedback(
+        feedback,
+        "success",
+        `${result?.message || "同步完成"}(写入 ${inserted} 条)`,
+      );
+      // 刷新 mcpStatus 以更新内置 provider 状态(失败时保留旧值)
+      mcpStatus = await window.SecretaryAPI.request("GET", "/api/mcp/status").catch(() => mcpStatus);
+      renderToolsMcpPane();
+    } catch (error) {
+      showFeedback(feedback, "error", `同步失败:${error.message}`);
+    }
   }
 
   function syncMcpTransportFields() {

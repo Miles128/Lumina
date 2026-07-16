@@ -1828,6 +1828,56 @@ html, body {
   font-size: 11px;
 }
 
+/* 内置 MCP provider 列表(飞书/邮箱/微信读书等 6 个 connector 收敛到 MCP 工具组) */
+.mcp-builtin-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.mcp-builtin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.mcp-builtin-name {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-builtin-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.mcp-builtin-meta {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-builtin-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .skills-pane {
   max-width: none;
   flex: 1;
