@@ -18,14 +18,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_REVIEW_SYSTEM = """你是记忆整理器。根据本轮对话，判断是否应更新持久记忆。
+_REVIEW_SYSTEM = """你是记忆整理器。根据本轮对话，判断是否应更新持久记忆 MEMORY.md。
 只输出 JSON：
-{"action":"none"|"add"|"replace","target":"memory"|"user","text":"","old_text":"","reason":""}
+{"action":"none"|"add"|"replace","target":"memory","text":"","old_text":"","reason":""}
 
 规则：
+- target 只能是 "memory"；用户个人信息（姓名/职业/偏好/习惯/目标等）由系统自动写入用户画像，不要写入 MEMORY.md
 - 只从 User 消息提取事实；禁止从 Assistant 回复中提取或固化（助手可能幻觉）
-- 用户明确说出的个人信息（姓名、职业、所在地、习惯、偏好、目标、家庭关系等）→ action=add, target=user
-- 用户画像类稳定事实优先写入 target=user；任务/项目/环境类稳定事实 → target=memory
+- 任务/项目/环境类稳定事实 → action=add, target=memory
 - 只记录稳定、可复用的事实，不要记临时闲聊、单次问答
 - 阅读书目、项目作者、文件列表等须由用户亲口说出；助手推断的 action=none
 - 不确定时 action=none
@@ -76,20 +76,26 @@ class BackgroundReviewService:
             decision = self._classify(user_message, assistant_reply, llm_config)
             if decision.action == "none":
                 return
-            self._memory.mutate_memory(
-                decision.action,
-                decision.target,
-                text=decision.text,
-                old_text=decision.old_text,
-            )
-            if decision.target == "user" and decision.action in {"add", "replace"}:
-                self._sync_profile_fact(decision.text)
+            self._apply_decision(decision)
             logger.info("background review updated %s: %s", decision.target, decision.reason)
             self._compress.compress_if_needed(llm_config)
         except (AgentError, ValueError) as exc:
             logger.warning("background review skipped: %s", exc)
         finally:
             self._lock.release()
+
+    def _apply_decision(self, decision: ReviewDecision) -> None:
+        """USER.md 退役：target=user 只走 profile；target=memory 走 mutate_memory。"""
+        if decision.target == "user":
+            if decision.action in {"add", "replace"}:
+                self._sync_profile_fact(decision.text)
+            return
+        self._memory.mutate_memory(
+            decision.action,
+            decision.target,
+            text=decision.text,
+            old_text=decision.old_text,
+        )
 
     def _sync_profile_fact(self, text: str) -> None:
         if self._profile_service is None:
@@ -126,14 +132,7 @@ class BackgroundReviewService:
     def apply_decision_for_tests(self, decision: ReviewDecision) -> None:
         if decision.action == "none":
             return
-        self._memory.mutate_memory(
-            decision.action,
-            decision.target,
-            text=decision.text,
-            old_text=decision.old_text,
-        )
-        if decision.target == "user" and decision.action in {"add", "replace"}:
-            self._sync_profile_fact(decision.text)
+        self._apply_decision(decision)
 
 
 def _parse_review_json(raw: str) -> ReviewDecision:
