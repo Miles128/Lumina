@@ -1,6 +1,6 @@
 """Lumina three-layer memory system.
 
-Layer 1: MEMORY.md + USER.md (durable facts, frozen snapshot in system prompt)
+Layer 1: MEMORY.md (durable facts, frozen snapshot in system prompt)
 Layer 2: Session archive (all conversations in SQLite with FTS5)
 Layer 3: Episodic memory (task execution records with success/failure)
 """
@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 MEMORY_MD_MAX_CHARS = 2200
-USER_MD_MAX_CHARS = 1375
 
 
 class LuminaMemory:
@@ -31,10 +30,6 @@ class LuminaMemory:
     @property
     def memory_md_path(self) -> Path:
         return self._memories_dir / "MEMORY.md"
-
-    @property
-    def user_md_path(self) -> Path:
-        return self._memories_dir / "USER.md"
 
     def read_memory_md(self) -> str:
         path = self.memory_md_path
@@ -65,18 +60,23 @@ class LuminaMemory:
         text: str = "",
         old_text: str = "",
     ) -> str:
-        """Apply add/replace/remove to MEMORY.md or USER.md."""
+        """Apply add/replace/remove to MEMORY.md.
+
+        USER.md 已退役；target=user 会抛 ValueError，请改用 ProfileService。
+        """
         normalized_action = action.strip().lower()
         normalized_target = target.strip().lower()
         if normalized_action not in {"add", "replace", "remove"}:
             raise ValueError(f"unknown memory action: {action}")
-        if normalized_target not in {"memory", "user"}:
+        if normalized_target == "user":
+            raise ValueError(
+                "target=user is retired; use ProfileService for user facts"
+            )
+        if normalized_target != "memory":
             raise ValueError(f"unknown memory target: {target}")
 
-        read_fn = self.read_memory_md if normalized_target == "memory" else self.read_user_md
-        write_fn = self.write_memory_md if normalized_target == "memory" else self.write_user_md
-        label = "MEMORY.md" if normalized_target == "memory" else "USER.md"
-        content = read_fn()
+        content = self.read_memory_md()
+        label = "MEMORY.md"
 
         if normalized_action == "add":
             line = text.strip()
@@ -88,7 +88,7 @@ class LuminaMemory:
                 updated = f"{content}\n{line}".strip()
             else:
                 updated = line
-            write_fn(updated)
+            self.write_memory_md(updated)
             return f"Added to {label}"
 
         if normalized_action == "replace":
@@ -98,7 +98,7 @@ class LuminaMemory:
                 return f"Error: old_text required for replace in {label}"
             if needle not in content:
                 return f"Error: old_text not found in {label}"
-            write_fn(content.replace(needle, replacement, 1))
+            self.write_memory_md(content.replace(needle, replacement, 1))
             return f"Replaced in {label}"
 
         needle = old_text.strip()
@@ -109,38 +109,23 @@ class LuminaMemory:
         updated = content.replace(needle, "", 1)
         while "\n\n\n" in updated:
             updated = updated.replace("\n\n\n", "\n\n")
-        write_fn(updated.strip())
+        self.write_memory_md(updated.strip())
         return f"Removed from {label}"
 
-    def read_user_md(self) -> str:
-        path = self.user_md_path
-        if path.exists():
-            return path.read_text(encoding="utf-8").strip()
-        return ""
-
-    def write_user_md(self, content: str) -> None:
-        content = content.strip()
-        if len(content) > USER_MD_MAX_CHARS:
-            content = content[:USER_MD_MAX_CHARS]
-        self.user_md_path.write_text(content + "\n", encoding="utf-8")
-
     def import_from_hermes(self) -> dict[str, str]:
-        """One-shot import of MEMORY.md and USER.md from ~/.hermes/ into Lumina.
+        """One-shot import of MEMORY.md from ~/.hermes/ into Lumina.
 
-        Looks for files at both top-level and `memories/` nested paths.
-        First existing file per target wins; overwrites Lumina's copy.
-        Returns dict mapping target key ("memory_md" / "user_md") to imported path.
+        USER.md 已退役，不再导入；用户事实请通过 /api/profile 编辑。
+        只查找 MEMORY.md（顶层或 memories/ 嵌套）。返回 {"memory_md": src_path}。
         """
         hermes_root = Path.home() / ".hermes"
-        candidates: list[tuple[Path, Path, str]] = [
-            (hermes_root / "MEMORY.md", self.memory_md_path, "memory_md"),
-            (hermes_root / "memories" / "MEMORY.md", self.memory_md_path, "memory_md"),
-            (hermes_root / "USER.md", self.user_md_path, "user_md"),
-            (hermes_root / "memories" / "USER.md", self.user_md_path, "user_md"),
+        candidates: list[tuple[Path, Path]] = [
+            (hermes_root / "MEMORY.md", self.memory_md_path),
+            (hermes_root / "memories" / "MEMORY.md", self.memory_md_path),
         ]
         imported: dict[str, str] = {}
-        for src, dst, key in candidates:
-            if key in imported:
+        for src, dst in candidates:
+            if "memory_md" in imported:
                 continue
             if not src.exists():
                 continue
@@ -149,18 +134,18 @@ class LuminaMemory:
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(text + "\n", encoding="utf-8")
-            imported[key] = str(src)
+            imported["memory_md"] = str(src)
         return imported
 
     def prompt_snapshot(self) -> str:
+        """Return MEMORY.md content for system prompt injection.
+
+        USER.md 已退役，不再注入；用户事实由 ProfileService 单独注入。
+        """
         memory = self.read_memory_md()
-        user = self.read_user_md()
-        parts = []
-        if memory:
-            parts.append(f"## Durable Memory\n{memory}")
-        if user:
-            parts.append(f"## User Profile\n{user}")
-        return "\n\n".join(parts) if parts else ""
+        if not memory:
+            return ""
+        return f"## Durable Memory\n{memory}"
 
     def _connect_session(self) -> sqlite3.Connection:
         conn = getattr(self._local, "session_conn", None)

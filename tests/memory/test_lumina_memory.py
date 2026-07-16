@@ -23,11 +23,26 @@ def test_mutate_memory_replace_substring(tmp_path: Path) -> None:
     assert result
 
 
-def test_mutate_memory_remove_substring(tmp_path: Path) -> None:
+def test_mutate_memory_rejects_retired_user_target(tmp_path: Path) -> None:
+    """USER.md 已退役：target=user 应抛 ValueError，引导调用方改用 ProfileService。"""
     memory = LuminaMemory(tmp_path)
-    memory.write_user_md("Name: Alex\nDislikes: emoji")
-    result = memory.mutate_memory("remove", "user", old_text="Dislikes: emoji")
-    content = memory.read_user_md()
+    try:
+        memory.mutate_memory("add", "user", text="Name: Alex")
+        raised = False
+    except ValueError as exc:
+        raised = True
+        assert "user" in str(exc).lower()
+    assert raised
+
+
+def test_mutate_memory_remove_substring(tmp_path: Path) -> None:
+    """replace/remove 仍对 memory target 正常工作。"""
+    memory = LuminaMemory(tmp_path)
+    memory.write_memory_md("Name: Alex\nDislikes: emoji")
+    result = memory.mutate_memory(
+        "remove", "memory", old_text="Dislikes: emoji"
+    )
+    content = memory.read_memory_md()
     assert "Dislikes" not in content
     assert "Alex" in content
     assert result
@@ -44,7 +59,7 @@ def test_mutate_memory_rejects_unknown_action(tmp_path: Path) -> None:
 
 
 def test_import_from_hermes_top_level(tmp_path: Path, monkeypatch) -> None:
-    """Import MEMORY.md/USER.md from ~/.hermes/ top-level into Lumina."""
+    """Import MEMORY.md from ~/.hermes/ top-level into Lumina. USER.md 不再导入。"""
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
     (hermes_home / "MEMORY.md").write_text("# Env\n- macOS\n", encoding="utf-8")
@@ -54,9 +69,10 @@ def test_import_from_hermes_top_level(tmp_path: Path, monkeypatch) -> None:
     memory = LuminaMemory(tmp_path / "lumina")
     imported = memory.import_from_hermes()
 
-    assert set(imported.keys()) == {"memory_md", "user_md"}
+    assert imported == {"memory_md": str(hermes_home / "MEMORY.md")}
     assert "- macOS" in memory.read_memory_md()
-    assert "prefers concise" in memory.read_user_md()
+    # USER.md 不应被导入
+    assert not (tmp_path / "lumina" / "memories" / "USER.md").exists()
 
 
 def test_import_from_hermes_nested_memories_dir(tmp_path: Path, monkeypatch) -> None:
@@ -79,6 +95,36 @@ def test_import_from_hermes_no_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     memory = LuminaMemory(tmp_path / "lumina")
     assert memory.import_from_hermes() == {}
+
+
+def test_prompt_snapshot_only_returns_memory_md(tmp_path: Path) -> None:
+    """USER.md 退役后，prompt_snapshot 只返回 ## Durable Memory 段。"""
+    memory = LuminaMemory(tmp_path)
+    memory.write_memory_md("- env fact: macOS")
+    # 即便旧 USER.md 文件残留，也不应被读取
+    (tmp_path / "memories" / "USER.md").write_text("- stale user fact\n", encoding="utf-8")
+    snapshot = memory.prompt_snapshot()
+    assert "## Durable Memory" in snapshot
+    assert "env fact: macOS" in snapshot
+    assert "## User Profile" not in snapshot
+    assert "stale user fact" not in snapshot
+
+
+def test_import_from_hermes_skips_user_md(tmp_path: Path, monkeypatch) -> None:
+    """import_from_hermes 不再导入 USER.md，只导入 MEMORY.md。"""
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "MEMORY.md").write_text("# Env\n- macOS\n", encoding="utf-8")
+    (hermes_home / "USER.md").write_text("# User\n- prefers concise\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    memory = LuminaMemory(tmp_path / "lumina")
+    imported = memory.import_from_hermes()
+
+    assert imported == {"memory_md": str(hermes_home / "MEMORY.md")}
+    assert "- macOS" in memory.read_memory_md()
+    # USER.md 不应被导入到 Lumina 的 memories/USER.md
+    assert not (tmp_path / "lumina" / "memories" / "USER.md").exists()
 
 
 def test_episodes_table_has_reflection_columns(tmp_path: Path) -> None:
