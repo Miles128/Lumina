@@ -7,8 +7,17 @@ servers. SyncService calls ``mcp_{source}_fetch`` to pull chunks.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
+
+from secretary.connectors.cloud_drive import CloudDriveConnector
+from secretary.connectors.email_imap import EmailConnector
+from secretary.connectors.feishu import FeishuConnector
+from secretary.connectors.weixin_oa import WeixinOAConnector
+from secretary.connectors.weread import WeReadConnector
+from secretary.connectors.xiaohongshu import XiaohongshuConnector
+from secretary.core.types import SourceKind
 
 
 @dataclass(frozen=True)
@@ -85,15 +94,6 @@ class BuiltinMcpRegistry:
 
     def has_tool(self, full_name: str) -> bool:
         return full_name in self._tools
-
-
-from secretary.connectors.feishu import FeishuConnector
-from secretary.connectors.email_imap import EmailConnector
-from secretary.connectors.weread import WeReadConnector
-from secretary.connectors.xiaohongshu import XiaohongshuConnector
-from secretary.connectors.weixin_oa import WeixinOAConnector
-from secretary.connectors.cloud_drive import CloudDriveConnector
-from secretary.core.types import SourceKind
 
 
 class _ConnectorProvider:

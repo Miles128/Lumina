@@ -5,6 +5,7 @@ from secretary.agent.mcp_builtin import (
     BuiltinMcpProvider,
     BuiltinMcpRegistry,
     BuiltinToolSpec,
+    build_builtin_registry,
 )
 
 
@@ -54,10 +55,6 @@ def test_registry_unknown_tool_returns_error():
     reg.register(_FakeProvider())
     result = reg.call_tool("mcp_fake_nonexistent", {})
     assert "error" in result
-
-
-from secretary.agent.mcp_builtin import build_builtin_registry
-from secretary.core.types import SourceKind
 
 
 def test_builtin_registry_includes_all_connectors():
