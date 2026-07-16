@@ -951,6 +951,17 @@ class ChatService:
             appendix += "\n\n" + BROWSER_TOOL_GUIDANCE
         if plan.search_query.strip() != cleaned.strip():
             appendix += f"\n- 若首轮检索不佳，可尝试关键词：{plan.search_query}"
+        # 路由器已判定本回合需要联网：禁止只复述历史回答或声称已有引用就跳过检索。
+        # 即使历史中已出现过引用，也必须在本轮内重新调用 web_search / web_fetch 验证后再回答。
+        appendix += (
+            "\n\n## 本回合硬性要求（路由已判定 needs_web=true）"
+            "\n- 你已进入联网检索分支，**必须在本回合内至少调用一次 web_search 或 web_fetch 工具**，"
+            "不允许跳过工具调用直接复述历史或凭记忆回答。"
+            "\n- 即使用户追问「有引用吗」「带来源」「给链接」，也不要只列出历史里的旧引用，"
+            "必须重新检索后再用本轮拿到的一手数据给出引用。"
+            "\n- 若本轮工具返回失败，可换关键词或换 web_fetch 重新尝试；不允许以「已有引用」"
+            "为由跳过工具调用。"
+        )
 
         system_prompt = self._build_system_prompt(profile_markdown, hits, user_message=cleaned) + "\n\n" + appendix
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -958,7 +969,12 @@ class ChatService:
         messages.append({"role": "user", "content": cleaned})
 
         tools = self._pick_web_tools(cleaned)
-        agent_plan = AgentTurnPlan(messages=messages, max_steps=20, tools=tools)
+        agent_plan = AgentTurnPlan(
+            messages=messages,
+            max_steps=20,
+            tools=tools,
+            force_web_first_step=True,
+        )
 
         if progress_callback is not None:
             progress_callback(
@@ -1632,8 +1648,8 @@ class ChatService:
             "- 不要分析用户情绪，直接回应具体问题\n"
             f"{style_rule}"
             f"{format_rule}"
-            "- 用户在本轮明确提供的个人信息，应在回复后写入 durable memory（USER.md）与用户画像\n"
-            "- 完成复杂任务后，总结关键事实到 durable memory\n"
+            "- 用户在本轮明确提供的个人信息，会在后台自动写入用户画像（profile），无需手动调用 memory 工具\n"
+            "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
             "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
             "可用 goals 数组并行最多 3 个 explore；"
             "子任务只回摘要，关键结论需你自行整合后再回复用户"
