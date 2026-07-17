@@ -11,7 +11,14 @@ WEB_RESEARCH_APPENDIX = """\
 - 需要一手数据时：用 **web_fetch** 打开搜索结果里的**官方/原始页面**（平台自带的 trending / 排行榜 / 文档页），再整理成答案。
 - **禁止**说「建议你直接访问」「自己去某某页面看」或只贴链接不总结；你必须根据工具返回写出可读结论。
 - 至少完成：**一次 web_search + 一次 web_fetch**（或两次不同关键词的 web_search），再回复用户。
-- 抓取 `https://github.com/trending` 时会自动解析列表；若页面不可用会回退 GitHub Search API，请直接根据工具输出列仓库，不要说「页面是 JS 渲染抓不到」。"""
+- 抓取 `https://github.com/trending` 时会自动解析列表；若页面不可用会回退 GitHub Search API，请直接根据工具输出列仓库，不要说「页面是 JS 渲染抓不到」。
+
+## 引用格式（重要）
+
+- 回复中引用来源时，**用脚注编号**（如 `[^1]`、`[^2]`），**不要**在正文里贴完整 URL。
+- 在回复末尾用脚注列出来源，每条一行，格式：`[^1]: 标题或域名`（不写 `https://` 前缀和长路径，只保留域名+简短路径，例如 `example.com/news/gpt5`）。
+- 正文提及来源时写 `根据[^1]` 或在句尾标 `[^1]`，不要写「详见 https://...」。
+- 禁止把完整 URL 作为正文的一部分；URL 只能出现在末尾脚注里且必须是简短形式。"""
 
 BROWSER_TOOL_GUIDANCE = """\
 ## 浏览器工具（agent-browser，与 web_fetch 分工）
@@ -82,3 +89,47 @@ def should_retry_for_web_research(
         if "web_fetch" not in used and re.search(r"抱歉|建议|无法", reply):
             return True
     return False
+
+
+# Root tokens that signal search/fetch intent in a short reply.
+# We match roots (not full phrases) because LLM wording is open-ended —
+# "联网抓一下一手资料" / "我去找找看" / "帮你带引用" all slip past a
+# fixed phrase list.  A root-token pre-filter catches them all.
+_SEARCH_INTENT_ROOTS = (
+    "搜",
+    "查",
+    "抓",
+    "找",
+    "检索",
+    "联网",
+    "上网",
+    "资料",
+    "引用",
+    "来源",
+    "链接",
+    "一手",
+    "最新",
+    "实时",
+)
+
+_WEB_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
+
+
+def reply_claims_web_search(reply: str, used_tools: list[str]) -> bool:
+    """LLM shows search intent but no web tool was actually called this turn.
+
+    Catches the failure mode where the model writes '让我搜一下' / '我联网抓一下
+    一手资料' / '帮你带引用' as text without emitting a tool_call, then the turn
+    would end with an empty or hallucinated answer.
+
+    Uses root-token matching instead of a fixed phrase list: LLM wording is
+    open-ended, so enumerating complete phrases is a losing game.  Any short
+    reply (< 200 chars) that contains a search-intent root token and wasn't
+    backed by an actual web tool call triggers a forced injection.
+    """
+    if any(name in _WEB_TOOL_NAMES for name in used_tools):
+        return False
+    text = reply.strip()
+    if not text or len(text) > 200:
+        return False
+    return any(root in text for root in _SEARCH_INTENT_ROOTS)

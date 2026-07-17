@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,8 @@ from secretary.agent.llm_config import (
     normalize_model_name,
 )
 from secretary.config import Settings
-from secretary.exceptions import AgentError, SecretaryError
+from secretary.exceptions import AgentError
+from secretary.services.base_config_store import BaseJsonConfigStore
 
 PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     "deepseek": {
@@ -73,27 +73,18 @@ class AgentConfigView:
     active_source: str
 
 
-class AgentConfigStore:
+class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
     def __init__(self, config_path: Path) -> None:
-        self._path = config_path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(config_path)
 
     def load(self) -> AgentConfigDocument:
-        if not self._path.exists():
+        raw = self._read_json_or_none()
+        if raw is None:
             return AgentConfigDocument()
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise SecretaryError(f"invalid agent config: {self._path}") from exc
-        if isinstance(raw, dict) and raw.get("agent_profile") == "orchestrator":
-            raw["agent_profile"] = "build"
         return AgentConfigDocument.model_validate(raw)
 
     def save(self, document: AgentConfigDocument) -> None:
-        self._path.write_text(
-            document.model_dump_json(indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(document)
 
     def update(self, payload: dict[str, object]) -> AgentConfigDocument:
         current = self.load()

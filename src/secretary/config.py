@@ -60,6 +60,14 @@ class Settings(BaseSettings):
         description="LLM input classifier before agent loop; default off (rules-only routing).",
     )
     prompt_gate_min_confidence: float = Field(default=0.6, alias="PROMPT_GATE_MIN_CONFIDENCE")
+    web_intent_router_enabled: bool = Field(
+        default=True,
+        alias="WEB_INTENT_ROUTER_ENABLED",
+        description=(
+            "LLM web-search intent classifier as fallback when keyword routing misses "
+            "(e.g. 'alva.ai 是什么'). Default on; set false to use keyword-only routing."
+        ),
+    )
     mcp_auto_filesystem: bool = Field(default=True, alias="MCP_AUTO_FILESYSTEM")
 
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")

@@ -9,7 +9,7 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, ListDirTool, PendingConfirmation, ShellTool
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.stop_hooks import MaxIterationsStopHook
-from secretary.agent.turn_orchestrator import TurnOrchestrator
+from secretary.agent.turn_runner import TurnRunner
 from secretary.exceptions import AgentError
 from secretary.services.file_auth import FileAuthService
 
@@ -140,7 +140,7 @@ def test_execute_confirmed_returns_tool_output_when_model_emits_followup_tool_ca
 def test_orchestrator_confirmed_action_continues_loop_after_followup_tool_call(
     tmp_path: Path,
 ) -> None:
-    orchestrator = TurnOrchestrator(FileAuthService(tmp_path / "file_auth.json"))
+    orchestrator = TurnRunner(FileAuthService(tmp_path / "file_auth.json"))
     pending = PendingConfirmation(
         action_id="act_1",
         tool_name="shell",

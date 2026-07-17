@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from secretary.exceptions import SecretaryError
+from secretary.services.base_config_store import BaseJsonConfigStore
 
 _env_root = os.environ.get("SHIBEI_INSTALL_ROOT", "").strip()
 _CANDIDATE_INSTALL_ROOTS: tuple[Path, ...] = (
@@ -43,30 +42,23 @@ class ShibeiConfigView:
     shibei_available: bool
 
 
-class ShibeiConfigStore:
+class ShibeiConfigStore(BaseJsonConfigStore[ShibeiConfigDocument]):
     """Stores only Lumina-side toggles; Shibei's own config.yaml is the source of truth."""
 
     def __init__(self, config_path: Path, *, data_dir: Path) -> None:
-        self._path = config_path
+        super().__init__(config_path, ensure_parent=False)
         self._data_dir = data_dir
 
     def load(self) -> ShibeiConfigDocument:
-        if not self._path.exists():
+        raw = self._read_json_or_none()
+        if raw is None:
             return ShibeiConfigDocument()
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise SecretaryError(f"invalid shibei config: {self._path}") from exc
         allowed = {key for key in ShibeiConfigDocument.model_fields}
         filtered = {key: value for key, value in raw.items() if key in allowed}
         return ShibeiConfigDocument.model_validate(filtered)
 
     def save(self, document: ShibeiConfigDocument) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            document.model_dump_json(indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        self._write_json(document)
 
     def update(self, payload: dict[str, object]) -> ShibeiConfigDocument:
         current = self.load()

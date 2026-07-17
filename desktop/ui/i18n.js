@@ -6,13 +6,10 @@
   const STRINGS = {
     "app.name": { en: "Lumina", zh: "灵犀" },
     "app.title": { en: "Lumina", zh: "灵犀" },
-    "user.me": { en: "Me", zh: "我" },
-    "bot.name": { en: "Lumina", zh: "灵犀" },
 
     "menu.skills": { en: "Skills", zh: "技能" },
     "menu.settings": { en: "Settings", zh: "设置" },
     "menu.knowledge": { en: "Knowledge", zh: "知识库" },
-    "menu.sync": { en: "Sync", zh: "同步" },
     "menu.about": { en: "About", zh: "关于" },
 
     "about.title": { en: "About Lumina", zh: "关于灵犀" },
@@ -30,39 +27,26 @@
     "chat.processing": { en: "Working…", zh: "正在处理…" },
     "chat.thinking": { en: "Thinking", zh: "思考中" },
     "chat.typing.understand": { en: "Understanding your question…", zh: "正在理解你的问题…" },
-    "chat.typing.instant": { en: "Replying…", zh: "正在回复…" },
     "chat.typing.gather": { en: "Gathering relevant info…", zh: "正在整理相关信息…" },
     "chat.typing.tools": { en: "Running tools…", zh: "正在调用工具处理…" },
     "chat.typing.almost": { en: "Almost done…", zh: "还在继续处理，马上给你结果…" },
     "chat.typing.slow": { en: "This is taking a while — tap Pause to stop.", zh: "这次耗时较长，你可以点「暂停」先中止。" },
     "chat.typing.organize": { en: "Preparing reply…", zh: "正在整理回复…" },
-    "chat.typing.sync": { en: "Syncing data…", zh: "正在同步数据…" },
     "chat.typing.execute": { en: "Executing…", zh: "正在执行操作…" },
     "chat.typing.subagent": { en: "Spawning sub-agent…", zh: "正在派生子 Agent…" },
     "chat.progress.thought": { en: "Reasoning", zh: "思考" },
-    "chat.progress.toggle": { en: "Thinking & raw output", zh: "思考过程与原始输出" },
-    "chat.progress.toggle.thinking": { en: "Show thinking", zh: "查看思考过程" },
-    "chat.progress.toggle.raw": { en: "Show raw output", zh: "查看原始输出" },
+    "chat.progress.toggle": { en: "Thinking", zh: "思考与原文" },
+    "chat.progress.toggle.thinking": { en: "Thinking", zh: "查看思考" },
+    "chat.progress.toggle.raw": { en: "Raw", zh: "查看原文" },
     "chat.progress.toggle.steps": {
-      en: "Thinking & raw output · {n} steps",
-      zh: "思考过程与原始输出 · {n} 步",
+      en: "Thinking · {n}",
+      zh: "思考与原文 · {n} 步",
     },
-    "chat.progress.raw": { en: "Raw model output", zh: "模型原始输出" },
+    "chat.progress.raw": { en: "Raw", zh: "模型原文" },
     "chat.confirm.subagent": { en: "Sub-agent action", zh: "子 Agent 操作" },
-    "chat.turn.tree": { en: "Turn tree", zh: "Turn 执行树" },
     "chat.turn.root": { en: "Current turn", zh: "当前回合" },
-    "chat.turn.kind.turn": { en: "Turn", zh: "回合" },
-    "chat.turn.kind.tool": { en: "Tool", zh: "工具" },
-    "chat.turn.kind.subagent": { en: "Sub", zh: "子任务" },
-    "chat.turn.kind.cli": { en: "CLI", zh: "CLI" },
-    "chat.turn.kind.pause": { en: "Pause", zh: "暂停" },
-    "chat.turn.kind.iteration": { en: "Step", zh: "步骤" },
-    "chat.turn.kind.event": { en: "Event", zh: "事件" },
-    "chat.subagent.tree": { en: "Sub-agents", zh: "子 Agent 会话树" },
     "chat.subagent.running": { en: "Running", zh: "运行中" },
     "chat.subagent.paused": { en: "Awaiting confirmation", zh: "等待确认" },
-    "chat.subagent.done": { en: "Done", zh: "已完成" },
-    "chat.subagent.failed": { en: "Failed", zh: "失败" },
     "chat.slowNotice": {
       en: "This is slower than usual — still working. Tap Pause to stop.",
       zh: "这次处理有点慢，我还在继续。你可以点「暂停」先停下。",
@@ -73,7 +57,6 @@
       zh: "这次等待超时，我还没拿到结果。你可以让我缩小范围后再试一次。",
     },
     "chat.error.reply": { en: "Reply failed", zh: "回答失败" },
-    "chat.error.sync": { en: "Sync failed", zh: "同步失败" },
     "chat.error.action": { en: "Action failed", zh: "操作失败" },
     "chat.grounding.verified": { en: "Verified via file tools", zh: "已通过文件工具核实" },
     "chat.grounding.unverified": { en: "Unverified", zh: "未核实" },
@@ -89,15 +72,7 @@
       en: "Some paths not found in tool output",
       zh: "部分路径未出现在工具结果中",
     },
-    "chat.sync.user": { en: "Sync all data", zh: "同步全部数据" },
-    "chat.sync.done": { en: "Sync complete — {n} memories written.", zh: "同步完成，写入 {n} 条记忆。" },
-
-    "prompt.orchestrate": { en: "Orchestrate a workflow", zh: "编排一个工作流" },
-    "prompt.chain": { en: "Chain a conversation flow", zh: "串一条对话链" },
-    "prompt.skill": { en: "Run a skill", zh: "运行一个 skill" },
-
     "token.label": { en: "Token", zh: "Token" },
-    "model.loading": { en: "Loading…", zh: "加载中…" },
     "model.unset": { en: "No model", zh: "未指定模型" },
     "model.unconfigured": { en: "Not configured", zh: "未配置模型" },
     "model.current": { en: "Current model", zh: "当前大模型" },
@@ -107,7 +82,6 @@
     "settings.loading": { en: "Loading…", zh: "加载中…" },
     "settings.loadFailed": { en: "Failed to load", zh: "加载失败" },
     "settings.agent": { en: "Agent", zh: "Agent" },
-    "settings.sources": { en: "Sources", zh: "数据源" },
     "settings.knowledge": { en: "Knowledge & Sync", zh: "知识库与同步" },
     "settings.personal": { en: "Personal", zh: "个人" },
     "settings.group.agent": { en: "Agent", zh: "Agent" },
@@ -142,26 +116,6 @@
     "settings.mcp.reloading": { en: "Reconnecting MCP…", zh: "正在重新连接 MCP…" },
     "settings.mcp.reloaded": { en: "Loaded {count} MCP tools", zh: "已加载 {count} 个 MCP 工具" },
     "settings.mcp.reloadFailed": { en: "Connection failed: {error}", zh: "连接失败：{error}" },
-    "settings.cliAgents": { en: "CLI Agents", zh: "CLI Agents" },
-    "settings.cli.desc": {
-      en: "Delegate heavy tasks to external CLI agents. Off by default — Lumina uses its built-in agent loop.",
-      zh: "将重任务委派给外部 CLI Agent。默认关闭，对话使用灵犀自有 Agent Loop。",
-    },
-    "settings.cli.master": { en: "Enable external CLI delegation", zh: "启用外接 CLI Agent 委派" },
-    "settings.cli.defaultProvider": { en: "Default provider", zh: "默认 Provider" },
-    "settings.cli.installed": { en: "Installed", zh: "已安装" },
-    "settings.cli.missing": { en: "Not installed", zh: "未安装" },
-    "settings.cli.test": { en: "Test", zh: "检测" },
-    "settings.cli.testing": { en: "Testing…", zh: "正在检测…" },
-    "settings.cli.testOk": { en: "OK: {message}", zh: "可用：{message}" },
-    "settings.cli.testFailed": { en: "Failed: {message}", zh: "不可用：{message}" },
-    "settings.cli.save": { en: "Save", zh: "保存" },
-    "settings.cli.saved": { en: "CLI Agent settings saved", zh: "CLI Agent 设置已保存" },
-    "settings.cli.saveFailed": { en: "Save failed: {error}", zh: "保存失败：{error}" },
-    "settings.cli.provider.codex": { en: "OpenAI Codex CLI", zh: "OpenAI Codex CLI" },
-    "settings.cli.provider.kimi": { en: "Kimi Code CLI", zh: "Kimi Code CLI" },
-    "settings.cli.active": { en: "Active", zh: "已启用" },
-    "settings.cli.inactive": { en: "Built-in agent only", zh: "仅自有 Agent" },
     "settings.shibei": { en: "Shibei KB", zh: "Shibei 知识库" },
     "settings.appearance": { en: "Appearance", zh: "界面" },
 
@@ -255,22 +209,9 @@
       const key = el.getAttribute("data-i18n-title");
       if (key) el.title = t(key);
     });
-    scope.querySelectorAll("[data-i18n-tip]").forEach((el) => {
-      const key = el.getAttribute("data-i18n-tip");
-      if (key) el.setAttribute("data-tip", t(key));
-    });
     scope.querySelectorAll("[data-i18n-aria]").forEach((el) => {
       const key = el.getAttribute("data-i18n-aria");
       if (key) el.setAttribute("aria-label", t(key));
-    });
-    scope.querySelectorAll("[data-i18n-prompt]").forEach((el) => {
-      const key = el.getAttribute("data-i18n-prompt");
-      if (key) {
-        const lang = getLanguage();
-        const langCode = lang === "en" ? "en" : "zh";
-        el.dataset.prompt =
-          STRINGS[key]?.[langCode] || STRINGS[key]?.en || STRINGS[key]?.zh || "";
-      }
     });
     const lang = getLanguage();
     document.documentElement.lang = lang === "en" ? "en" : "zh-CN";

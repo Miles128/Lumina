@@ -18,7 +18,9 @@ from typing import Any
 
 import httpx
 
+from secretary.agent.text_utils import strip_html
 from secretary.agent.tools.base import Tool, ToolResult
+from secretary.agent.web_http import DEFAULT_HEADERS, USER_AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +28,6 @@ SEARCH_TIMEOUT = 15
 FETCH_RETRIES = 2
 RETRY_BACKOFF_SEC = 0.6
 MAX_RESULTS_PER_ENGINE = 8
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
-_DEFAULT_HEADERS = {
-    "User-Agent": USER_AGENT,
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml",
-}
 
 
 @dataclass
@@ -52,7 +45,7 @@ SearchFn = Callable[[str, int], list[SearchResult]]
 
 
 def _strip_html(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text).strip()
+    return strip_html(text).strip()
 
 
 def _decode_bing_url(href: str) -> str:
@@ -132,7 +125,7 @@ def _fetch_html(
     data: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> str:
-    request_headers = {**_DEFAULT_HEADERS, **(headers or {})}
+    request_headers = {**DEFAULT_HEADERS, **(headers or {})}
     last_error: Exception | None = None
     for attempt in range(FETCH_RETRIES + 1):
         try:

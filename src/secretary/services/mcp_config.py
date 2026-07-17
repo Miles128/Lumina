@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from secretary.services.base_config_store import BaseJsonConfigStore
 
 _HERMES_CONFIG = Path.home() / ".hermes" / "config.yaml"
 _NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,47}$")
@@ -27,27 +28,19 @@ class McpConfigDocument(BaseModel):
     servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
-class McpConfigStore:
+class McpConfigStore(BaseJsonConfigStore[McpConfigDocument]):
     def __init__(self, path: Path) -> None:
-        self._path = path
-
-    @property
-    def path(self) -> Path:
-        return self._path
+        super().__init__(path, ensure_parent=False)
 
     def load(self) -> McpConfigDocument:
         """Load persisted config. Hermes is never auto-merged; use import_from_hermes()."""
-        if not self._path.exists():
+        raw = self._read_json_or_none()
+        if raw is None:
             return McpConfigDocument()
-        payload = json.loads(self._path.read_text(encoding="utf-8"))
-        return McpConfigDocument.model_validate(payload)
+        return McpConfigDocument.model_validate(raw)
 
     def save(self, document: McpConfigDocument) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            document.model_dump_json(indent=2, exclude_none=True),
-            encoding="utf-8",
-        )
+        self._write_json(document, exclude_none=True, trailing_newline=False)
 
     def load_persisted(self) -> McpConfigDocument:
         return self.load()

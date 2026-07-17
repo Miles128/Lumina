@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from secretary.agent.delegation import format_subagent_result
 from secretary.agent.llm_client import ChatCompletionResult, LlmToolCall
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, ListDirTool, LoopResult
@@ -13,7 +14,6 @@ from secretary.agent.subagent import SpawnContext, SubAgentDeps, SubAgentRunner
 from secretary.agent.subagent.policy import MAX_SPAWNS_PER_TURN
 from secretary.agent.subagent.registry import get_archetype, resolve_tools
 from secretary.agent.subagent.spawn_tool import SpawnSubagentTool as SpawnTool
-from secretary.agent.subagent.summarize import format_subagent_result
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
 

@@ -286,11 +286,7 @@
   }
 
   function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
+    return LuminaUtils.escapeHtml(value, { attrs: true });
   }
 
   function escapeAttr(value) {

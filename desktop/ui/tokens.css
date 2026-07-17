@@ -8,10 +8,7 @@
   --line-strong: #d4d4d4;
   --radius: 6px;
   --radius-lg: 12px;
-  --max: 680px;
   --font: system-ui, -apple-system, "SF Pro Text", "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
-  --shadow-sm: none;
-  --shadow-md: none;
   --overlay: rgba(0, 0, 0, 0.18);
   --bar-h: 48px;
   --bar-px: 20px;
@@ -24,6 +21,10 @@
   --code-bg: #f8fafc;
   --code-fg: #000000;
   --bubble-user-bg: #f3f3f3;
+  /* 对话地图 —— 节点底色与弱化系数 */
+  --map-node-bg: #f3f3f3;
+  --map-branch-opacity: 0.55;
+  --map-archived-opacity: 0.35;
   /* AI 在场视觉系统 —— 共享 token */
   --sig: #06b6d4;
   --sig-soft: rgba(6, 182, 212, 0.35);
@@ -56,6 +57,9 @@
   --code-bg: #121212;
   --code-fg: #e5e5e5;
   --bubble-user-bg: #1a1a1a;
+  --map-node-bg: #1f1f1f;
+  --map-branch-opacity: 0.75;
+  --map-archived-opacity: 0.55;
   --sig: #22d3ee;
   --sig-soft: rgba(34, 211, 238, 0.35);
   --sig-faint: rgba(34, 211, 238, 0.12);
@@ -81,6 +85,9 @@
   --code-bg: #efe8dc;
   --code-fg: #000000;
   --bubble-user-bg: #efe8dc;
+  --map-node-bg: #efe8dc;
+  --map-branch-opacity: 0.55;
+  --map-archived-opacity: 0.35;
   --sig: #0891b2;
   --sig-soft: rgba(8, 145, 178, 0.30);
   --sig-faint: rgba(8, 145, 178, 0.10);
@@ -107,6 +114,9 @@
     --code-bg: #121212;
     --code-fg: #e5e5e5;
     --bubble-user-bg: #1a1a1a;
+    --map-node-bg: #1f1f1f;
+    --map-branch-opacity: 0.75;
+    --map-archived-opacity: 0.55;
     --sig: #22d3ee;
     --sig-soft: rgba(34, 211, 238, 0.35);
     --sig-faint: rgba(34, 211, 238, 0.12);
@@ -128,13 +138,8 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
-.bar-row,
 .topbar,
-.sheet-head,
-.sidebar-tabs,
-.editor-toolbar,
-.ai-panel-header,
-.mascot-titlebar {
+.sheet-head {
   display: flex;
   align-items: center;
   height: var(--bar-h);

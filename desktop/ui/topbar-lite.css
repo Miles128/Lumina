@@ -21,6 +21,11 @@
   -webkit-app-region: drag;
 }
 
+/* dark 主题下顶栏底部分隔线信号色低透，light/paper 保持中性 */
+[data-theme="dark"] .topbar.chrome-float {
+  border-bottom-color: color-mix(in srgb, var(--sig) 18%, transparent);
+}
+
 .chrome-drag {
   position: absolute;
   inset: 0;
@@ -94,6 +99,7 @@
 .moon-info-bar {
   font-size: 12px;
   color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -121,10 +127,44 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   color: var(--text-tertiary);
   opacity: 0.85;
   max-width: 140px;
+}
+
+/* 模型状态灯 —— ready 信号色慢呼吸，error 红色静态，idle 灰色静态 */
+.model-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.model-status-dot[data-state="ready"] {
+  background: var(--sig);
+  opacity: 1;
+  animation: model-dot-breathe 2s ease-in-out infinite;
+}
+
+.model-status-dot[data-state="error"] {
+  background: #ef4444;
+  opacity: 1;
+}
+
+@keyframes model-dot-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-status-dot[data-state="ready"] {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 .token-usage {
@@ -135,6 +175,7 @@
   border-radius: var(--radius);
   padding: 4px 8px;
   color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   background: transparent;
   font-variant-numeric: tabular-nums;

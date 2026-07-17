@@ -20,16 +20,11 @@ class _SpawnStub:
     name = "spawn_subagent"
 
 
-class _CliSpawnStub:
-    name = "spawn_cli_agent"
-
-
 def test_parse_agent_profile_defaults_to_auto() -> None:
     assert parse_agent_profile(None) is AgentProfile.AUTO
     assert parse_agent_profile("unknown") is AgentProfile.AUTO
     assert parse_agent_profile("ask") is AgentProfile.ASK
     assert parse_agent_profile("auto") is AgentProfile.AUTO
-    assert parse_agent_profile("orchestrator") is AgentProfile.BUILD
 
 
 def test_resolve_auto_profile_picks_plan_and_build() -> None:
@@ -83,7 +78,6 @@ def test_build_profile_keeps_tools_and_spawn() -> None:
         AgentProfile.BUILD,
         tools,
         spawn_tool=_SpawnStub(),
-        cli_spawn_tool=_CliSpawnStub(),
     )
     names = {tool.name for tool in picked}
-    assert names == {"list_dir", "file_read", "spawn_subagent", "spawn_cli_agent"}
+    assert names == {"list_dir", "file_read", "spawn_subagent"}

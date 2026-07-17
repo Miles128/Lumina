@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig, resolve_llm_config
@@ -13,11 +14,26 @@ from secretary.memory.db import MemoryStore
 from secretary.services.agent_config import AgentConfigStore
 from secretary.services.profile_service import ProfileService
 
+if TYPE_CHECKING:
+    from secretary.services.shibei_service import ShibeiService
+
+_BRIEFING_QUERIES: dict[str, str] = {
+    "feishu": "飞书 日程 待办 任务 会议",
+    "email": "邮件 最近邮件 重要事项",
+    "weread": "阅读 笔记 书摘 划线",
+}
+
 
 class BriefingService:
-    def __init__(self, settings: Settings, store: MemoryStore) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: MemoryStore,
+        shibei_service: ShibeiService | None = None,
+    ) -> None:
         self._settings = settings
         self._store = store
+        self._shibei = shibei_service
         self._agent_config_store = AgentConfigStore(settings.resolved_data_dir() / "agent.json")
 
     def generate(self, profile_service: ProfileService) -> str:
@@ -30,25 +46,23 @@ class BriefingService:
                 pass
         return self._generate_rule_based(context)
 
+    def _search_via_shibei(self, query: str) -> str | None:
+        if self._shibei is None or not self._shibei.is_enabled() or not self._shibei.is_available():
+            return None
+        try:
+            result = self._shibei.search(query, limit=5)
+        except Exception:
+            return None
+        if not result.strip() or result.startswith("Error:"):
+            return None
+        return result
+
     def _build_context(self, profile_service: ProfileService) -> dict[str, str]:
         view = profile_service.get_view()
-        feishu = self._store.list_by_source(SourceKind.FEISHU, limit=8)
-        email = self._store.list_by_source(SourceKind.EMAIL, limit=5)
-        weread = self._store.list_by_source(SourceKind.WEREAD, limit=5)
+        feishu_text = self._fetch_section("feishu", SourceKind.FEISHU, limit=8)
+        email_text = self._fetch_section("email", SourceKind.EMAIL, limit=5)
+        weread_text = self._fetch_section("weread", SourceKind.WEREAD, limit=5)
 
-        from collections.abc import Sequence
-
-        def titles(chunks: Sequence[object]) -> str:
-            lines: list[str] = []
-            for chunk in chunks:
-                title = getattr(chunk, "title", "")
-                if isinstance(title, str) and title.strip():
-                    lines.append(f"- {title.strip()}")
-            return "\n".join(lines) if lines else "暂无"
-
-        feishu_text = titles(feishu)
-        email_text = titles(email)
-        weread_text = titles(weread)
         sync_hint = ""
         if feishu_text == email_text == weread_text == "暂无":
             sync_hint = (
@@ -64,6 +78,23 @@ class BriefingService:
             "weread": weread_text,
             "sync_hint": sync_hint,
         }
+
+    def _fetch_section(self, key: str, source: SourceKind, *, limit: int) -> str:
+        """Shibei-first: try semantic search, fallback to direct DB list."""
+        query = _BRIEFING_QUERIES.get(key, "")
+        if query:
+            shibei_result = self._search_via_shibei(query)
+            if shibei_result is not None:
+                return shibei_result
+        from collections.abc import Sequence
+
+        chunks: Sequence[object] = self._store.list_by_source(source, limit=limit)
+        lines: list[str] = []
+        for chunk in chunks:
+            title = getattr(chunk, "title", "")
+            if isinstance(title, str) and title.strip():
+                lines.append(f"- {title.strip()}")
+        return "\n".join(lines) if lines else "暂无"
 
     def _generate_with_llm(self, context: dict[str, str], llm_config: LlmConfig) -> str:
         prompt = (

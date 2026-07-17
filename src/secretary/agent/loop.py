@@ -235,6 +235,7 @@ class AgentLoop:
         before_model_call_hooks: list[BeforeModelCallHook] | None = None,
         before_tool_execution_hooks: list[BeforeToolExecutionHook] | None = None,
         after_tool_execution_hooks: list[AfterToolExecutionHook] | None = None,
+        force_web_first_step: bool = False,
     ) -> None:
         self._llm_config = llm_config
         self._tools = {t.name: t for t in (tools or _default_tools())}
@@ -256,6 +257,8 @@ class AgentLoop:
         self._before_model_call_hooks = before_model_call_hooks or []
         self._before_tool_execution_hooks = before_tool_execution_hooks or []
         self._after_tool_execution_hooks = after_tool_execution_hooks or []
+        self._force_web_first_step = force_web_first_step
+        self._web_forced_used = False
         # Cache tool schemas once: tool set is immutable after init, so
         # [t.schema() for t in ...] and json.dumps need not run every loop step.
         self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in self._tools.values()]
@@ -561,6 +564,147 @@ class AgentLoop:
                             step_idx=step_idx,
                         )
                         continue
+
+                # Safety net: LLM wrote "让我搜一下" but didn't call any web
+                # tool. Inject a web_search to force grounding instead of
+                # letting the turn end with an empty or hallucinated reply.
+                from secretary.agent.web_research import reply_claims_web_search
+
+                if (
+                    shared_retries < max_shared_retries
+                    and web_retries < max_web_retries
+                    and "web_search" in self._tools
+                    and reply_claims_web_search(reply, used_tools)
+                ):
+                    web_retries += 1
+                    shared_retries += 1
+                    web_tool = self._tools["web_search"]
+                    web_args = {"query": turn_user_message.strip()[:200]}
+                    try:
+                        if self._is_cancelled():
+                            return self._cancelled_result(steps, used_tools, step_idx)
+                        web_output = _coerce_to_tool_result(
+                            web_tool.execute(web_args, self._working_dir),
+                            tool_name="web_search",
+                        ).to_output_string()
+                    except Exception as exc:
+                        error_type, retryable = _classify_tool_error(exc)
+                        web_output = ToolResult.failure(
+                            f"Error: {exc}",
+                            error_type=error_type,
+                            retryable=retryable,
+                        ).to_output_string()
+                    web_call = ToolCall(
+                        name="web_search",
+                        arguments=web_args,
+                        id=f"call_auto_web_search_{step_idx}",
+                    )
+                    steps.append(
+                        StepResult(
+                            thought=thought,
+                            tool_call=web_call,
+                            tool_output=web_output,
+                        )
+                    )
+                    used_tools.append("web_search")
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_started",
+                            iteration=iteration,
+                            tool_name="web_search",
+                            detail=_tool_action_detail(web_tool, web_args, self._working_dir),
+                        )
+                    )
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_finished",
+                            iteration=iteration,
+                            tool_name="web_search",
+                            success=not str(web_output).startswith("Error:"),
+                        )
+                    )
+                    self._append_tool_result_messages(
+                        current_messages,
+                        raw=raw or f"[auto] web_search {web_args['query']}",
+                        tool_call=web_call,
+                        tool_output=web_output,
+                        assistant_message=assistant_message,
+                        native_used=native_used,
+                        step_idx=step_idx,
+                    )
+                    continue
+
+                # Force web search when the router already judged needs_web=true
+                # but the model still tried to end the turn without calling any
+                # web tool (e.g. "有引用吗" → model restates old citations).
+                # Fires once per turn; not gated by shared_retries because the
+                # router's judgement is authoritative for this branch.
+                from secretary.agent.web_research import _WEB_TOOL_NAMES
+
+                if (
+                    self._force_web_first_step
+                    and not self._web_forced_used
+                    and "web_search" in self._tools
+                    and not any(
+                        name in _WEB_TOOL_NAMES for name in used_tools
+                    )
+                ):
+                    self._web_forced_used = True
+                    web_tool = self._tools["web_search"]
+                    web_args = {"query": turn_user_message.strip()[:200]}
+                    try:
+                        if self._is_cancelled():
+                            return self._cancelled_result(steps, used_tools, step_idx)
+                        web_output = _coerce_to_tool_result(
+                            web_tool.execute(web_args, self._working_dir),
+                            tool_name="web_search",
+                        ).to_output_string()
+                    except Exception as exc:
+                        error_type, retryable = _classify_tool_error(exc)
+                        web_output = ToolResult.failure(
+                            f"Error: {exc}",
+                            error_type=error_type,
+                            retryable=retryable,
+                        ).to_output_string()
+                    web_call = ToolCall(
+                        name="web_search",
+                        arguments=web_args,
+                        id=f"call_force_web_{step_idx}",
+                    )
+                    steps.append(
+                        StepResult(
+                            thought=thought,
+                            tool_call=web_call,
+                            tool_output=web_output,
+                        )
+                    )
+                    used_tools.append("web_search")
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_started",
+                            iteration=iteration,
+                            tool_name="web_search",
+                            detail=_tool_action_detail(web_tool, web_args, self._working_dir),
+                        )
+                    )
+                    self._emit_progress(
+                        ProgressEvent(
+                            kind="tool_finished",
+                            iteration=iteration,
+                            tool_name="web_search",
+                            success=not str(web_output).startswith("Error:"),
+                        )
+                    )
+                    self._append_tool_result_messages(
+                        current_messages,
+                        raw=raw or f"[force] web_search {web_args['query']}",
+                        tool_call=web_call,
+                        tool_output=web_output,
+                        assistant_message=assistant_message,
+                        native_used=native_used,
+                        step_idx=step_idx,
+                    )
+                    continue
 
                 if (
                     shared_retries < max_shared_retries
@@ -1446,7 +1590,10 @@ class AgentLoop:
                         tool.bind_progress(self._progress_callback)
                     if hasattr(tool, "bind_cancel_check"):
                         tool.bind_cancel_check(self._cancel_check)
-                    output = tool.execute(paired_call.arguments, self._working_dir)
+                    output = _coerce_to_tool_result(
+                        tool.execute(paired_call.arguments, self._working_dir),
+                        tool_name=paired_call.name,
+                    ).content
                     used_tools.append(paired_call.name)
                     self._emit_progress(
                         ProgressEvent(

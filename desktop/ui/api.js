@@ -172,6 +172,18 @@ async function subscribeChatProgress(traceId, onEvent, signal) {
   }
 }
 
+window.LuminaUtils = window.LuminaUtils || {};
+window.LuminaUtils.escapeHtml = function (value, options) {
+  var s = String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  if (options && options.attrs) {
+    s = s.replaceAll('"', "&quot;");
+  }
+  return s;
+};
+
 window.SecretaryAPI = {
   request: apiRequest,
   subscribeChatProgress,

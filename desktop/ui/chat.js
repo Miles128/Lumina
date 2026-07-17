@@ -12,7 +12,6 @@
   const progressRawEl = document.getElementById("agent-raw-output");
   const progressRawSectionEl = document.getElementById("agent-raw-section");
   const subagentTreeEl = document.getElementById("subagent-tree");
-  const pauseBtn = document.getElementById("btn-pause");
   const newThreadBtn = document.getElementById("btn-new-thread");
   const threadListEl = document.getElementById("thread-list");
   const chatForm = document.getElementById("chat-form");
@@ -314,7 +313,13 @@
   });
 
   chatInput.addEventListener("input", autoResize);
-  pauseBtn.addEventListener("click", pauseCurrentRequest);
+  sendBtn.addEventListener("click", () => {
+    if (busy) {
+      pauseCurrentRequest();
+    } else {
+      chatForm.requestSubmit();
+    }
+  });
   newThreadBtn.addEventListener("click", () => {
     createThread();
   });
@@ -850,6 +855,15 @@
       wrap.appendChild(restoreBtn);
     } else {
       if (canFork) {
+        const feedbackBtn = document.createElement("button");
+        feedbackBtn.type = "button";
+        feedbackBtn.className = "msg-action-btn";
+        feedbackBtn.textContent = "反馈";
+        feedbackBtn.title = "生成代码修改建议";
+        feedbackBtn.dataset.action = "feedback";
+        feedbackBtn.dataset.msgId = msgId;
+        wrap.appendChild(feedbackBtn);
+
         const forkBtn = document.createElement("button");
         forkBtn.type = "button";
         forkBtn.className = "msg-action-btn";
@@ -871,6 +885,30 @@
     const switcher = buildSiblingSwitcherEl(thread, msgId);
     if (switcher) wrap.appendChild(switcher);
     return wrap;
+  }
+
+  // Build a feedback prompt that asks how to modify the code in a message.
+  // Extracts rendered code blocks from the row's DOM; falls back to a general
+  // improvement prompt when the message contains no code.
+  function buildFeedbackPrompt(row) {
+    const blocks = Array.from(row.querySelectorAll("pre"))
+      .map((pre) => {
+        const codeEl = pre.querySelector("code");
+        const code = (codeEl ? codeEl.textContent : pre.textContent) || "";
+        return { lang: pre.getAttribute("data-lang") || "", code: code.replace(/\s+$/, "") };
+      })
+      .filter((b) => b.code && b.code.trim());
+    if (!blocks.length) {
+      return "请针对上一条回答给出改进建议：哪些地方不够准确、简洁或完整？应当如何修改？";
+    }
+    const fences = blocks.map((b) => {
+      const lang = b.lang && b.lang !== "text" ? b.lang : "";
+      return "```" + lang + "\n" + b.code + "\n```";
+    });
+    return (
+      "请 review 以下代码并指出应该如何修改（bug、性能、可读性、边界情况），并给出修改后的完整代码：\n\n" +
+      fences.join("\n\n")
+    );
   }
 
   function appendConfirmation(response) {
@@ -1600,9 +1638,9 @@
 
   function setBusy(value) {
     busy = value;
-    sendBtn.disabled = value;
     chatInput.disabled = value;
-    pauseBtn.hidden = !value;
+    sendBtn.setAttribute("data-state", value ? "pause" : "send");
+    sendBtn.setAttribute("data-tip", value ? t("action.pause") : t("action.send"));
   }
 
   function createActiveController() {
@@ -2522,6 +2560,16 @@
     const action = btn.dataset.action;
     const msgId = btn.dataset.msgId;
     if (!action) return;
+    if (action === "feedback") {
+      const row = btn.closest(".message");
+      if (!row) return;
+      chatInput.value = buildFeedbackPrompt(row);
+      autoResize();
+      chatInput.focus();
+      const len = chatInput.value.length;
+      try { chatInput.setSelectionRange(len, len); } catch (_e) { /* noop */ }
+      return;
+    }
     if (action === "fork") {
       setForkParent(msgId);
     } else if (action === "rollback") {

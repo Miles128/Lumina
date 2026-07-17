@@ -1,4 +1,4 @@
-"""Unified delegation results for spawn_subagent and spawn_cli_agent."""
+"""Unified delegation results for spawn_subagent."""
 
 from __future__ import annotations
 

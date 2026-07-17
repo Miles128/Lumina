@@ -3,13 +3,6 @@
 
   let md = null;
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }
-
   function initEngine() {
     if (md) {
       return md;
@@ -57,12 +50,12 @@
       const clean = window.DOMPurify.sanitize(raw, {
         ADD_ATTR: ["target", "rel", "class", "data-lang"],
       });
-      return clean || `<p>${escapeHtml(source)}</p>`;
+      return clean || `<p>${LuminaUtils.escapeHtml(source)}</p>`;
     } catch (error) {
       console.warn("[Lumina] markdown render failed:", error);
-      return `<p>${escapeHtml(source)}</p>`;
+      return `<p>${LuminaUtils.escapeHtml(source)}</p>`;
     }
   }
 
-  window.LuminaMarkdown = { render, init: initEngine };
+  window.LuminaMarkdown = { render };
 })();

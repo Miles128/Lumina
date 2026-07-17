@@ -120,8 +120,6 @@ _ASK_MARKERS = (
 
 def parse_agent_profile(raw: str | None) -> AgentProfile:
     normalized = (raw or AgentProfile.AUTO.value).strip().lower()
-    if normalized == "orchestrator":
-        return AgentProfile.BUILD
     try:
         return AgentProfile(normalized)
     except ValueError:

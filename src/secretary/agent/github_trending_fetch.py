@@ -8,10 +8,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
+from secretary.agent.web_http import USER_AGENT
+
 _SKIP_OWNERS = frozenset(
     {
         "login",
@@ -73,7 +71,7 @@ def _fetch_html_trending(url: str, *, timeout: float = 25.0) -> list[tuple[str, 
         with httpx.Client(
             timeout=timeout,
             follow_redirects=True,
-            headers={"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+            headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
         ) as client:
             resp = client.get(url)
             resp.raise_for_status()
@@ -102,7 +100,7 @@ def _fetch_search_api_trending(since: str, *, limit: int = 12) -> list[dict[str,
         with httpx.Client(
             timeout=20.0,
             headers={
-                "User-Agent": _USER_AGENT,
+                "User-Agent": USER_AGENT,
                 "Accept": "application/vnd.github+json",
             },
         ) as client:

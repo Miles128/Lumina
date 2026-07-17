@@ -8,7 +8,9 @@ from typing import Any
 
 import httpx
 
+from secretary.agent.text_utils import strip_html, truncate_chars
 from secretary.agent.tools.base import Tool, ToolResult
+from secretary.agent.web_http import USER_AGENT
 
 
 class WebFetchTool(Tool):
@@ -49,10 +51,10 @@ class WebFetchTool(Tool):
             body = _fetch_url(url)
             body = re.sub(r"<script[^>]*>.*?</script>", "", body, flags=re.DOTALL)
             body = re.sub(r"<style[^>]*>.*?</style>", "", body, flags=re.DOTALL)
-            body = re.sub(r"<[^>]+>", " ", body)
+            body = strip_html(body, replacement=" ")
             body = re.sub(r"\s+", " ", body).strip()
             if len(body) > max_chars:
-                body = body[:max_chars] + "..."
+                body = truncate_chars(body, max_chars, suffix="...")
             return body or "(empty response)"
         except Exception as exc:
             return ToolResult.failure(
@@ -66,13 +68,7 @@ def _fetch_url(url: str) -> str:
     with httpx.Client(timeout=httpx.Timeout(20.0), follow_redirects=True) as client:
         response = client.get(
             url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/131.0.0.0 Safari/537.36"
-                )
-            },
+            headers={"User-Agent": USER_AGENT},
         )
         response.raise_for_status()
         return response.text

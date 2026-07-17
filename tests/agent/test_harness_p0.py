@@ -11,8 +11,7 @@ from secretary.agent.loop import LoopResult
 from secretary.agent.progress_events import ProgressEvent, progress_event_payload
 from secretary.agent.session_store import SessionStore
 from secretary.agent.turn_models import PROGRESS_SCHEMA_VERSION
-from secretary.agent.turn_orchestrator import AgentTurnPlan, TurnOrchestrator
-from secretary.agent.turn_runner import TurnRunner, bind_turn_progress
+from secretary.agent.turn_runner import AgentTurnPlan, TurnRunner, bind_turn_progress
 from secretary.services.file_auth import FileAuthService
 
 
@@ -70,17 +69,18 @@ def test_delegation_tool_output_unified() -> None:
 
 def test_turn_runner_emits_turn_lifecycle(tmp_path) -> None:
     file_auth = FileAuthService(tmp_path / "file_auth.json")
-    runner = TurnRunner(TurnOrchestrator(file_auth))
+    runner = TurnRunner(file_auth)
     turn = runner.session_store.start_turn(trace_id="trace", thread_id="t", user_message="go")
     events: list[ProgressEvent] = []
 
     fake_result = LoopResult(reply="ok", steps=[], used_tools=[], total_steps=1)
 
+    fake_loop = MagicMock()
+    fake_loop.run.return_value = fake_result
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            runner.orchestrator,
-            "run_agent_turn",
-            MagicMock(return_value=fake_result),
+            "secretary.agent.turn_runner.AgentLoop",
+            MagicMock(return_value=fake_loop),
         )
         plan = AgentTurnPlan(messages=[{"role": "user", "content": "go"}], max_steps=3, tools=[])
         runner.run_agent_turn(

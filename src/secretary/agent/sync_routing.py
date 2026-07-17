@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from secretary.agent.grounding import is_personal_memory_question
-from secretary.core.types import ConnectorHealth, ConnectorStatus, SOURCE_LABELS, SourceKind
+from secretary.core.types import SOURCE_LABELS, ConnectorHealth, ConnectorStatus, SourceKind
 from secretary.memory.db import MemoryStore
 from secretary.services.shibei_service import shibei_ready_for_memory_read
 

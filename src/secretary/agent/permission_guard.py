@@ -16,7 +16,6 @@ PLAN_DENY_TOOL_NAMES = frozenset(
         "shibei_import",
         "memory",
         "spawn_subagent",
-        "spawn_cli_agent",
     }
 )
 

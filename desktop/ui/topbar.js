@@ -139,6 +139,15 @@
   function renderActiveModel(model, status) {
     const t = (key) => window.LuminaI18n?.t(key) || key;
     const name = String(model || "").trim();
+    const dot = document.getElementById("model-status-dot");
+    const dotState = !name
+      ? "idle"
+      : status === "error"
+        ? "error"
+        : status === "ready"
+          ? "ready"
+          : "idle";
+    if (dot) dot.setAttribute("data-state", dotState);
     if (!name) {
       modelEl.textContent = status === "ready" ? t("model.unset") : t("model.unconfigured");
       modelEl.title = t("model.current");

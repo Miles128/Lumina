@@ -22,7 +22,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from secretary.agent.web_search import SEARCH_TIMEOUT, USER_AGENT, SearchResult
+from secretary.agent.web_http import USER_AGENT
+from secretary.agent.web_search import SEARCH_TIMEOUT, SearchResult
 
 logger = logging.getLogger(__name__)
 

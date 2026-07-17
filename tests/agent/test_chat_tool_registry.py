@@ -13,7 +13,6 @@ from secretary.agent.tools.base import Tool
 from secretary.config import Settings
 from secretary.memory.db import MemoryStore
 from secretary.memory.lumina_memory import LuminaMemory
-from secretary.services.cli_agent_config import CliAgentConfigStore
 from secretary.services.file_auth import FileAuthService
 
 
@@ -32,7 +31,6 @@ def _registry(tmp_path: Path) -> ChatToolRegistry:
         mcp_manager=None,
         shibei_service=None,
         sync_service=None,
-        cli_agent_config_store=CliAgentConfigStore(tmp_path / "cli-agents.json"),
         get_session_id=lambda: "sess1",
         shell_working_dir=lambda: tmp_path,
         temperature=lambda: 0.7,
@@ -49,26 +47,6 @@ def test_build_tools_includes_core_names(tmp_path: Path) -> None:
     assert "web_search" in names
 
 
-def test_cli_spawn_disabled_by_default(tmp_path: Path) -> None:
-    registry = _registry(tmp_path)
-    llm = LlmConfig(
-        api_key="k",
-        base_url="https://example.com/v1",
-        model="m",
-        source="test",
-    )
-    assert registry.make_cli_spawn_tool() is None
-    tools, _ = registry.resolve_tools(
-        profile=__import__("secretary.agent.agent_profile", fromlist=["AgentProfile"]).AgentProfile.BUILD,
-        user_message="hello",
-        suggested=(),
-        filesystem_turn=False,
-        light_mode=False,
-        llm_config=llm,
-    )
-    assert all(tool.name != "spawn_cli_agent" for tool in tools)
-
-
 def test_plan_permission_guard_blocks_dangerous_tools() -> None:
     class FakeTool(Tool):
         def __init__(self, name: str, *, needs_confirmation: bool = False) -> None:
@@ -79,7 +57,6 @@ def test_plan_permission_guard_blocks_dangerous_tools() -> None:
         FakeTool("file_read"),
         FakeTool("shell"),
         FakeTool("file_write"),
-        FakeTool("spawn_cli_agent"),
         FakeTool("custom_write_records"),
         FakeTool("mcp_server_read_notes"),
         FakeTool("mcp_server_update_notes", needs_confirmation=True),
@@ -116,4 +93,3 @@ def test_plan_resolve_tools_excludes_write_shell_and_delegation(tmp_path: Path) 
     assert "file_write" not in names
     assert "patch" not in names
     assert "spawn_subagent" not in names
-    assert "spawn_cli_agent" not in names
