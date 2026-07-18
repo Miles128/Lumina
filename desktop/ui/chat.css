@@ -596,37 +596,65 @@ html, body {
   width: fit-content;
 }
 
-/* 光场呼吸 —— 替代原 typing-dots 三点 */
-.think-field {
+/* 卡通冒泡白脑小图标 —— 仅思考时显示，结论出现即随 #typing 隐藏 */
+.think-brain {
   position: relative;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--sig) 0%, var(--sig-soft) 45%, transparent 75%);
-  filter: blur(1px);
-  animation: think-breathe var(--pace-breathe) ease-in-out infinite;
+  width: 22px;
+  height: 20px;
   flex-shrink: 0;
+  animation: brain-wobble var(--pace-breathe) ease-in-out infinite;
 }
-
-.think-core {
+.think-brain::before {
+  content: "";
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 2px 1px 3px 1px;
+  background: #ffffff;
+  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  box-shadow:
+    inset 0 -2px 3px rgba(0, 0, 0, 0.06),
+    0 2px 8px var(--sig-soft);
+}
+.think-brain::after {
+  content: "";
+  position: absolute;
+  inset: 2px 1px 3px 1px;
+  border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+  background:
+    linear-gradient(90deg, transparent 48%, rgba(0, 0, 0, 0.06) 49% 51%, transparent 52%);
+  pointer-events: none;
+}
+.think-bubble {
+  position: absolute;
+  bottom: 14px;
+  left: 8px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--sig);
-  box-shadow: var(--sig-glow);
+  background: #ffffff;
+  box-shadow: 0 0 3px var(--sig-soft);
+  opacity: 0;
+  animation: brain-bubble var(--pace-breathe) ease-in infinite;
+}
+.think-bubble:nth-child(2) { left: 13px; width: 3px; height: 3px; animation-delay: 0.8s; }
+
+@keyframes brain-wobble {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-1px) scale(1.06); }
+}
+@keyframes brain-bubble {
+  0% { transform: translateY(0) scale(0.5); opacity: 0; }
+  25% { opacity: 0.9; }
+  100% { transform: translateY(-14px) scale(1); opacity: 0; }
 }
 
-@keyframes think-breathe {
-  0%, 100% { transform: scale(0.9); opacity: 0.6; }
-  50% { transform: scale(1.08); opacity: 1; }
+.typing-label {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 /* 长时思考（>5s）—— 由 JS 添加 .is-deep 类触发 */
-.typing.is-deep .think-field {
+.typing.is-deep .think-brain {
   animation-duration: var(--pace-breathe-deep);
 }
 
@@ -864,79 +892,194 @@ html, body {
   border: none;
 }
 
-.turn-tree,
-.turn-tree-root,
-.turn-tree-children {
+/* ========== 思考过程可视化 · Agent 泳道 + 工具芯片 ========== */
+.tp-tree,
+.tp-sublanes {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-
-.turn-tree-children {
+.tp-sublanes {
+  margin-top: 6px;
   padding-left: 12px;
+  border-left: 2px solid var(--line);
 }
-
-.turn-tree-node {
-  margin: 0;
-  padding: 2px 0;
-  border: none;
-  border-radius: 0;
-  background: none;
-}
-
-.turn-tree-node.is-running,
-.turn-tree-node.is-paused,
-.turn-tree-node.is-done,
-.turn-tree-node.is-failed,
-.turn-tree-node.type-subagent,
-.turn-tree-node.type-cli,
-.turn-tree-node.type-pause {
-  border: none;
-  background: none;
-}
-
-.turn-tree-line {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
-  overflow-wrap: anywhere;
-}
-
-.turn-tree-node.is-running .turn-tree-line {
-  color: var(--text-secondary);
-}
-
-.turn-tree-node.is-failed .turn-tree-line {
-  color: var(--text-secondary);
-}
-
-.turn-tree-detail {
-  margin: 1px 0 0;
-  padding: 0;
-  color: var(--text-tertiary);
-  background: none;
-  border-radius: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  max-height: none;
-  overflow: visible;
-}
-
-.turn-tree-detail.markdown p,
-.turn-tree-detail.markdown ul,
-.turn-tree-detail.markdown ol,
-.turn-tree-detail.markdown pre,
-.turn-tree-detail.markdown blockquote {
+.tp-node {
   margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
 }
-
-.turn-tree-detail.markdown p:last-child,
-.turn-tree-detail.markdown ul:last-child,
-.turn-tree-detail.markdown ol:last-child,
-.turn-tree-detail.markdown pre:last-child,
-.turn-tree-detail.markdown blockquote:last-child {
+.tp-node:last-child {
   margin-bottom: 0;
 }
+
+/* 泳道（turn 根 / subagent） */
+.tp-lane {
+  position: relative;
+  padding: 7px 10px 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+.tp-lane.is-root {
+  padding: 4px 10px 6px;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+.tp-node.is-subagent > .tp-lane {
+  border-left: 3px solid #a855f7;
+}
+.tp-node.is-running > .tp-lane {
+  border-color: var(--sig-soft);
+  box-shadow: 0 0 0 1px var(--sig-faint), 0 0 14px var(--sig-faint);
+}
+.tp-node.is-failed > .tp-lane {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+.tp-node.is-done > .tp-lane {
+  opacity: 0.72;
+}
+
+.tp-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.tp-lane-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tp-lane-label {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
+}
+.tp-node.is-running .tp-lane-label {
+  color: var(--text);
+}
+.tp-node.is-root .tp-lane-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 状态标记（泳道头右侧） */
+.tp-mark {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+.tp-mark.is-done { color: var(--sig); }
+.tp-mark.is-failed { color: #ef4444; }
+.tp-mark.is-paused { color: #f59e0b; }
+.tp-mark.is-queued {
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+}
+.tp-mark.is-running {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--sig-soft);
+  border-top-color: var(--sig);
+  border-radius: 50%;
+  animation: tp-spin 0.8s linear infinite;
+}
+@keyframes tp-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tp-lane-detail {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.tp-lane-detail.markdown p,
+.tp-lane-detail.markdown ul,
+.tp-lane-detail.markdown ol,
+.tp-lane-detail.markdown pre,
+.tp-lane-detail.markdown blockquote {
+  margin: 0 0 6px;
+}
+.tp-lane-detail.markdown p:last-child,
+.tp-lane-detail.markdown ul:last-child,
+.tp-lane-detail.markdown ol:last-child,
+.tp-lane-detail.markdown pre:last-child,
+.tp-lane-detail.markdown blockquote:last-child {
+  margin-bottom: 0;
+}
+
+/* 工具芯片行（agent 自己的工具调用） */
+.tp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.tp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 7px 3px 6px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+.tp-chip-icon {
+  font-size: 11px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tp-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.tp-chip.is-running {
+  border-color: var(--sig-soft);
+  color: var(--text);
+  background: var(--sig-faint);
+}
+.tp-chip.is-done {
+  opacity: 0.62;
+}
+.tp-chip.is-failed {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #ef4444;
+}
+.tp-chip.is-iteration {
+  background: none;
+  border-style: dashed;
+}
+
+/* 芯片状态小圆点 */
+.tp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+.tp-dot.is-running { background: var(--sig); box-shadow: 0 0 4px var(--sig); }
+.tp-dot.is-done { background: var(--sig); }
+.tp-dot.is-failed { background: #ef4444; }
+.tp-dot.is-paused { background: #f59e0b; }
 
 .subagent-tree-node {
   border: none;
@@ -1220,12 +1363,23 @@ html, body {
   padding-bottom: 2px;
 }
 
+.workspace-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  border-radius: var(--radius);
+}
+
+.workspace-chip-wrap.is-active {
+  background: var(--control-hover);
+}
+
 .workspace-chip,
 .attach-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0;
+  gap: 4px;
   border: none;
   border-radius: var(--radius);
   background: transparent;
@@ -1234,7 +1388,7 @@ html, body {
   font-size: 12px;
   line-height: 1;
   padding: 6px 8px;
-  max-width: none;
+  max-width: 160px;
 }
 
 .workspace-chip:hover,
@@ -1243,7 +1397,49 @@ html, body {
   color: var(--text);
 }
 
+.workspace-chip-wrap.is-active .workspace-chip:hover {
+  background: transparent;
+}
+
+.workspace-chip.is-active {
+  color: var(--text);
+  background: transparent;
+  max-width: 140px;
+  padding-right: 2px;
+}
+
 .workspace-chip-label {
+  display: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.workspace-chip.is-active .workspace-chip-label {
+  display: inline;
+}
+
+.workspace-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px 4px 2px;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.workspace-chip-clear:hover {
+  color: var(--text);
+}
+
+.workspace-chip-clear[hidden] {
   display: none;
 }
 
@@ -2931,9 +3127,12 @@ body.map-view-open .chat-column > .fork-banner {
 
 /* ========== AI 在场视觉系统 · 动效降级 ========== */
 @media (prefers-reduced-motion: reduce) {
-  .think-field {
+  .think-brain {
     animation: none;
-    opacity: 0.7;
+  }
+  .think-bubble {
+    animation: none;
+    opacity: 0.5;
   }
 
   .bot-sig span {
@@ -2948,6 +3147,12 @@ body.map-view-open .chat-column > .fork-banner {
 
   .map-particle {
     display: none;
+  }
+
+  .tp-mark.is-running,
+  .tp-chip.is-running {
+    animation: none;
+    border-color: var(--sig-soft);
   }
 }
 

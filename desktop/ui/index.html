@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=68" />
+    <link rel="stylesheet" href="/assets/chat.css?v=70" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=11" />
     <script src="/assets/theme.js?v=2"></script>
   </head>
@@ -117,7 +117,11 @@
 
               <div id="messages" class="thread"></div>
               <div id="typing" class="typing" hidden>
-                <div class="think-field" aria-hidden="true"><span class="think-core"></span></div>
+                <div class="think-brain" aria-hidden="true">
+                  <span class="think-bubble"></span>
+                  <span class="think-bubble"></span>
+                </div>
+                <span id="typing-label" class="typing-label"></span>
               </div>
               <div id="agent-progress" class="agent-progress" hidden>
                 <button
@@ -170,11 +174,15 @@
                     </li>
                   </ul>
                 </div>
-                <button type="button" class="workspace-chip" id="workspace-chip" title="工作区目录" aria-label="工作区目录">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-                  </svg>
-                </button>
+                <div class="workspace-chip-wrap" id="workspace-chip-wrap">
+                  <button type="button" class="workspace-chip" id="workspace-chip" title="工作区目录" aria-label="工作区目录">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+                    </svg>
+                    <span class="workspace-chip-label" id="workspace-chip-label"></span>
+                  </button>
+                  <button type="button" class="workspace-chip-clear" id="workspace-chip-clear" title="清除工作区" aria-label="清除工作区" hidden>×</button>
+                </div>
                 <button type="button" class="attach-btn" id="attach-btn" title="添加附件" aria-label="添加附件">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a1.5 1.5 0 1 1-2.12-2.12l7.78-7.78"/>
@@ -247,7 +255,7 @@
     <script src="/assets/topbar.js?v=10"></script>
     <script src="/assets/settings.js?v=16"></script>
     <script src="/assets/skills.js?v=7"></script>
-    <script src="/assets/chat.js?v=63"></script>
+    <script src="/assets/chat.js?v=65"></script>
     <script src="/assets/conversation_map.js?v=10"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->
     <script src="/assets/bootstrap.js?v=1"></script>

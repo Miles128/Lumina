@@ -22,6 +22,8 @@
   const agentModeBtn = document.getElementById("agent-mode-btn");
   const agentModeMenu = document.getElementById("agent-mode-menu");
   const workspaceChip = document.getElementById("workspace-chip");
+  const workspaceChipWrap = document.getElementById("workspace-chip-wrap");
+  const workspaceChipClear = document.getElementById("workspace-chip-clear");
   const attachBtn = document.getElementById("attach-btn");
   const attachInput = document.getElementById("attach-input");
   const attachmentsEl = document.getElementById("composer-attachments");
@@ -138,12 +140,22 @@
 
   function renderWorkspaceChip() {
     if (!workspaceChip) return;
+    const labelEl = document.getElementById("workspace-chip-label");
     if (currentWorkspaceDir) {
+      const name = basenamePath(currentWorkspaceDir);
       workspaceChip.title = currentWorkspaceDir;
-      workspaceChip.setAttribute("aria-label", `工作区：${basenamePath(currentWorkspaceDir)}`);
+      workspaceChip.setAttribute("aria-label", `工作区：${name}`);
+      workspaceChip.classList.add("is-active");
+      workspaceChipWrap?.classList.add("is-active");
+      if (labelEl) labelEl.textContent = name;
+      if (workspaceChipClear) workspaceChipClear.hidden = false;
     } else {
       workspaceChip.title = "选择工作区目录（shell / 读写默认路径）";
       workspaceChip.setAttribute("aria-label", "工作区目录");
+      workspaceChip.classList.remove("is-active");
+      workspaceChipWrap?.classList.remove("is-active");
+      if (labelEl) labelEl.textContent = "";
+      if (workspaceChipClear) workspaceChipClear.hidden = true;
     }
   }
 
@@ -232,17 +244,40 @@
       selected = raw == null ? null : raw.trim();
     }
     if (!selected) return;
+    // Normalize: drop trailing slashes; keep absolute path as returned by Electron.
+    selected = String(selected).trim().replace(/[/\\]+$/, "") || selected;
     const previous = currentWorkspaceDir;
     currentWorkspaceDir = selected;
     renderWorkspaceChip();
     try {
-      await window.SecretaryAPI.request("PUT", "/api/agent/config", {
+      const saved = await window.SecretaryAPI.request("PUT", "/api/agent/config", {
         shell_working_dir: selected,
       });
+      const confirmed = String(saved?.shell_working_dir || "").trim();
+      if (confirmed) {
+        currentWorkspaceDir = confirmed.replace(/[/\\]+$/, "") || confirmed;
+        renderWorkspaceChip();
+      }
     } catch (error) {
       currentWorkspaceDir = previous;
       renderWorkspaceChip();
       console.error("Failed to set workspace:", error);
+    }
+  }
+
+  async function clearWorkspaceDir() {
+    if (!currentWorkspaceDir) return;
+    const previous = currentWorkspaceDir;
+    currentWorkspaceDir = "";
+    renderWorkspaceChip();
+    try {
+      await window.SecretaryAPI.request("PUT", "/api/agent/config", {
+        shell_working_dir: "",
+      });
+    } catch (error) {
+      currentWorkspaceDir = previous;
+      renderWorkspaceChip();
+      console.error("Failed to clear workspace:", error);
     }
   }
 
@@ -264,6 +299,13 @@
   if (workspaceChip) {
     workspaceChip.addEventListener("click", () => {
       void pickWorkspaceDir();
+    });
+  }
+  if (workspaceChipClear) {
+    workspaceChipClear.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void clearWorkspaceDir();
     });
   }
   if (attachBtn && attachInput) {
@@ -412,9 +454,9 @@
   void loadAgentMode();
 
   const LUMINA_IDENTITY_INTRO_FALLBACK =
-    "我是灵犀（Lumina），在你本机运行的个人 AI 秘书。\n\n" +
+    "我是灵犀（Lumina），在你本机运行的通用 Agent 生产力工具。\n\n" +
     "我的说话风格：轻巧灵动、简明扼要——先给结论，句子短，不铺垫。\n\n" +
-    "我能帮你读本地文件、搜索记忆、联网搜索、同步数据源、调用工具；涉及写入或删除时会先征求你确认。\n\n" +
+    "我能帮你读本地文件、搜索记忆、联网搜索、调用 MCP/工具、可选同步数据源；涉及写入或删除时会先征求你确认。对话支持分支地图（fork / 回滚）。Skill 工作流编排仍在规划中。\n\n" +
     "我的技术栈是：\n" +
     "- 前端：Electron + HTML / CSS / JavaScript\n" +
     "- 后端：Python + FastAPI\n" +
@@ -425,7 +467,7 @@
     "- 开发者：四海\n" +
     "- 邮箱：myx28@qq.com\n" +
     "- 版本：0.1.0\n\n" +
-    "我是跑在你本机上的个人 AI 秘书；更多产品信息见右上角「关于」。";
+    "我是跑在你本机上的通用 Agent 生产力工具；更多产品信息见右上角「关于」。";
 
   let cachedIdentityIntro = LUMINA_IDENTITY_INTRO_FALLBACK;
   let cachedAuthorReply = LUMINA_AUTHOR_REPLY_FALLBACK;
@@ -970,8 +1012,12 @@
 
   window.__luminaConfirm = handleConfirm;
 
-  function showTyping(visible) {
+  function showTyping(visible, label) {
     typingEl.hidden = !visible;
+    const labelEl = document.getElementById("typing-label");
+    if (labelEl) {
+      labelEl.textContent = visible ? String(label || "") : "";
+    }
     if (visible) {
       typingStartAt = Date.now();
       if (!typingTicker) {
@@ -1324,6 +1370,7 @@
     existing.parentId = existing.parentId || parentId;
     existing.type = turnNodeType(event);
     existing.label = label || existing.label || kind;
+    existing.toolName = String(event?.tool_name || existing.toolName || "");
     existing.status = normalizeTurnStatus(event);
     if (event?.detail) existing.detail = String(event.detail);
     if (event?.goal && !existing.detail) existing.detail = String(event.goal);
@@ -1341,24 +1388,116 @@
     renderTurnTree();
   }
 
+  function toolIcon(toolName) {
+    const n = String(toolName || "");
+    if (n === "web_search") return "🔍";
+    if (n === "web_fetch") return "🌐";
+    if (n.startsWith("browser_")) return "🧭";
+    if (/^(file_read|read_file|file_view)$/.test(n)) return "📄";
+    if (/^(file_write|write_file|file_edit|edit_file|str_replace|apply_patch|write)$/.test(n)) return "✏️";
+    if (/^(list_dir|search_files|glob|grep|find)$/.test(n)) return "📁";
+    if (/^(search_memory|session_search|shibei_search|shibei_list_sources|memory_search)$/.test(n)) return "🗂️";
+    if (n.startsWith("mcp_")) return "🔌";
+    if (n === "spawn_subagent") return "🧩";
+    if (/^(shell|run_command|exec|bash|cmd)$/.test(n)) return "⌨️";
+    return "🔧";
+  }
+
+  function nodeIcon(node) {
+    if (node.type === "tool") return toolIcon(node.toolName);
+    switch (node.type) {
+      case "turn": return ""; // no brain marker in progress UI
+      case "subagent": return "🧩";
+      case "iteration": return "🔁";
+      case "pause": return "⏸";
+      default: return "";
+    }
+  }
+
+  function statusMark(status) {
+    switch (status) {
+      case "done":
+        return '<span class="tp-mark is-done" aria-label="完成">✓</span>';
+      case "failed":
+        return '<span class="tp-mark is-failed" aria-label="失败">✕</span>';
+      case "paused":
+        return '<span class="tp-mark is-paused" aria-label="暂停">⏸</span>';
+      case "running":
+        return '<span class="tp-mark is-running" aria-label="进行中"></span>';
+      default:
+        return '<span class="tp-mark is-queued" aria-label="排队"></span>';
+    }
+  }
+
+  function statusDot(status) {
+    return `<span class="tp-dot is-${escapeAttr(status)}" aria-hidden="true"></span>`;
+  }
+
+  function renderChip(node) {
+    if (node.type === "iteration") {
+      return (
+        `<span class="tp-chip is-iteration is-${escapeAttr(node.status)}" title="${escapeAttr(node.label)}">` +
+        `<span class="tp-chip-icon">🔁</span>` +
+        `<span class="tp-chip-label">${LuminaUtils.escapeHtml(node.label)}</span>` +
+        `</span>`
+      );
+    }
+    return (
+      `<span class="tp-chip is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}" title="${escapeAttr(node.label)}">` +
+      `<span class="tp-chip-icon">${nodeIcon(node)}</span>` +
+      `<span class="tp-chip-label">${LuminaUtils.escapeHtml(node.label)}</span>` +
+      statusDot(node.status) +
+      `</span>`
+    );
+  }
+
+  function renderTurnChildren(node) {
+    const children = node.children
+      .map((id) => progressSession.turnNodes.get(id))
+      .filter(Boolean)
+      .sort((a, b) => a.order - b.order);
+    const chips = children.filter((c) => c.type !== "subagent");
+    const lanes = children.filter((c) => c.type === "subagent");
+    let html = "";
+    if (chips.length) {
+      html += `<div class="tp-chips">${chips.map(renderChip).join("")}</div>`;
+    }
+    if (lanes.length) {
+      html += `<ul class="tp-sublanes">${lanes.map((c) => renderTurnTreeNode(c.id, 1)).join("")}</ul>`;
+    }
+    return html;
+  }
+
   function renderTurnTreeNode(nodeId, depth = 0) {
     const node = progressSession.turnNodes.get(nodeId);
     if (!node) return "";
-    const children = node.children
-      .map((childId) => progressSession.turnNodes.get(childId))
-      .filter(Boolean)
-      .sort((a, b) => a.order - b.order)
-      .map((child) => renderTurnTreeNode(child.id, depth + 1))
-      .join("");
-    const detail = node.detail
-      ? `<div class="turn-tree-detail markdown">${renderMarkdown(node.detail)}</div>`
+    const isRoot = depth === 0;
+    const isLane = node.type === "turn" || node.type === "subagent";
+    if (!isLane) {
+      return `<li class="tp-node">${renderChip(node)}</li>`;
+    }
+    const icon = nodeIcon(node);
+    const iconHtml = icon
+      ? `<span class="tp-lane-icon" aria-hidden="true">${icon}</span>`
       : "";
-    const childrenHtml = children ? `<ul class="turn-tree-children">${children}</ul>` : "";
+    const label = (isRoot && node.type === "turn")
+      ? (node.label && node.label !== "开始处理" ? node.label : t("chat.turn.root"))
+      : node.label;
+    // Root turn detail often echoes the user message — keep focus on actions.
+    const detail = (!isRoot && node.detail)
+      ? `<div class="tp-lane-detail markdown">${renderMarkdown(node.detail)}</div>`
+      : "";
     return (
-      `<li class="turn-tree-node depth-${depth} is-${escapeAttr(node.status)}">` +
-      `<div class="turn-tree-line">${LuminaUtils.escapeHtml(node.label)}</div>` +
-      detail +
-      childrenHtml +
+      `<li class="tp-node is-${escapeAttr(node.type)} is-${escapeAttr(node.status)}${isRoot ? " is-root" : ""}">` +
+      `<div class="tp-lane${isRoot ? " is-root" : ""}">` +
+        `<div class="tp-lane-head">` +
+          iconHtml +
+          `<span class="tp-lane-label">${LuminaUtils.escapeHtml(label)}</span>` +
+          statusMark(node.status) +
+        `</div>` +
+        detail +
+        renderTurnChildren(node) +
+      `</div>` +
       `</li>`
     );
   }
@@ -1373,7 +1512,7 @@
     subagentTreeEl.hidden = false;
     subagentTreeEl.classList.add("turn-tree");
     const rootId = progressSession.turnRootId || [...progressSession.turnNodes.keys()][0];
-    subagentTreeEl.innerHTML = `<ul class="turn-tree-root">${renderTurnTreeNode(rootId, 0)}</ul>`;
+    subagentTreeEl.innerHTML = `<ul class="tp-tree">${renderTurnTreeNode(rootId, 0)}</ul>`;
   }
 
   function isSubagentProgressEvent(event) {
@@ -1444,21 +1583,26 @@
     }
     if (progressSession.hasTurnTree) {
       renderTurnTree();
-    } else if (subagentTreeEl) {
-      subagentTreeEl.hidden = true;
-      subagentTreeEl.innerHTML = "";
-    }
-    progressListEl.innerHTML = "";
-    if (progressSession.bufferedItems.length > 0) {
-      progressListEl.hidden = false;
-      for (const item of progressSession.bufferedItems) {
-        progressListEl.appendChild(item);
-      }
-      if (progressSession.expanded) {
-        progressListEl.scrollTop = progressListEl.scrollHeight;
-      }
-    } else {
+      // Lane+chip tree is the sole progress visual; hide the legacy flat list.
+      progressListEl.innerHTML = "";
       progressListEl.hidden = true;
+    } else {
+      if (subagentTreeEl) {
+        subagentTreeEl.hidden = true;
+        subagentTreeEl.innerHTML = "";
+      }
+      progressListEl.innerHTML = "";
+      if (progressSession.bufferedItems.length > 0) {
+        progressListEl.hidden = false;
+        for (const item of progressSession.bufferedItems) {
+          progressListEl.appendChild(item);
+        }
+        if (progressSession.expanded) {
+          progressListEl.scrollTop = progressListEl.scrollHeight;
+        }
+      } else {
+        progressListEl.hidden = true;
+      }
     }
     renderRawOutput();
   }
@@ -1509,6 +1653,11 @@
       if (shouldShowProgressPanel()) {
         flushProgressPanel();
       }
+      return;
+    }
+    // Thoughts already land in raw output; skip flat-list noise once the tree exists.
+    if (kind === "thought" && progressSession.hasTurnTree) {
+      if (shouldShowProgressPanel()) flushProgressPanel();
       return;
     }
     const item = createProgressListItem(event, label);
