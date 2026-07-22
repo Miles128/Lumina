@@ -207,7 +207,10 @@ class FileReadTool(Tool):
         }
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
-        path = _resolve_path(str(arguments.get("path", "")), working_dir)
+        # Accept the common `file_path` alias — some models emit tool calls as
+        # text XML and guess the parameter name from training defaults.
+        raw_path = str(arguments.get("path") or arguments.get("file_path") or "")
+        path = _resolve_path(raw_path, working_dir)
 
         if not path.exists():
             return ToolResult.failure(

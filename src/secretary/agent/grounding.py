@@ -209,6 +209,11 @@ _SIMULATED_TOTAL = re.compile(r"^total\s+\d+", re.MULTILINE)
 _SIMULATED_DRWX = re.compile(r"^[-drwxl]{10}\s+\d+\s+", re.MULTILINE)
 _TREE_LINE = re.compile(r"^[├└│──]")
 _FAKE_DIR_HEADER = re.compile(r"^📂\s+/", re.MULTILINE)
+# A directory-entry line in the list_dir output shape: "📁 name/" or "📄 name".
+# Used to catch fabricated listings even when the user's question is not a
+# filesystem question (e.g. "完整分析") — real tool output is exempt because
+# has_read_grounding(used_tools) is True in that case.
+_LISTING_ENTRY_LINE = re.compile(r"^[ \t]*[📁📂📄]\s+\S", re.MULTILINE)
 
 # --- Command execution receipt system ---
 # Receipts bind prose claims ("我跑了 pytest") to real shell tool calls.
@@ -521,6 +526,17 @@ def reply_simulates_file_listing(reply: str) -> bool:
     return False
 
 
+def reply_contains_listing_entries(reply: str, *, min_entries: int = 2) -> bool:
+    """Reply shows 📁/📂/📄 directory-entry lines (the list_dir output shape).
+
+    Catches fabricated file/directory listings that mimic the real list_dir
+    format. Safe to use as a hallucination signal because genuine listings
+    come with read grounding (list_dir in used_tools) and are exempted by the
+    caller.
+    """
+    return len(_LISTING_ENTRY_LINE.findall(reply or "")) >= min_entries
+
+
 def requires_forced_read_tool(user_message: str, used_tools: list[str]) -> bool:
     from secretary.agent.web_routing import is_web_search_query
 
@@ -720,6 +736,14 @@ def enforce_grounded_reply(
 
     if has_web_grounding(used_tools):
         return reply, True, grounding_note or "已通过 web_search / web_fetch 联网核实"
+
+    # Defense-in-depth: a reply that fabricates a 📁/📄 listing (the list_dir
+    # output shape) without any read grounding is a hallucination even when
+    # the user's question did not match the filesystem heuristic (e.g.
+    # "完整分析"). Genuine listings have list_dir in used_tools and are exempt.
+    if not has_read_grounding(used_tools) and reply_contains_listing_entries(reply):
+        note = grounding_note or "回复含目录/文件列表但未调用 list_dir/file_read，已阻止未核实内容"
+        return UNGROUNDED_LISTING_FALLBACK, False, note
 
     if not is_filesystem_question(user_message) and not is_personal_memory_question(
         user_message

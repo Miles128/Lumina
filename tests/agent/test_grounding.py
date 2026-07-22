@@ -72,6 +72,53 @@ def test_mentions_local_files_detects_paths() -> None:
     assert not mentions_local_files("你可以先列一下需求")
 
 
+def test_enforce_blocks_fabricated_listing_on_non_fs_question() -> None:
+    """A 📁/📄 listing with no read grounding is blocked even for non-fs questions."""
+    from secretary.agent.grounding import UNGROUNDED_LISTING_FALLBACK, enforce_grounded_reply
+
+    reply = (
+        "根据你工作区路径下的目录结构，项目包含：\n"
+        "📁 .git/\n"
+        "📁 data/\n"
+        "📄 README.md\n"
+        "📄 main.py\n"
+        "📄 backtest.py\n"
+        "📄 strategy.py\n"
+    )
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "完整分析",
+        [],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert kept == UNGROUNDED_LISTING_FALLBACK
+    assert verified is False
+
+
+def test_enforce_allows_real_listing_with_read_grounding() -> None:
+    """Genuine list_dir output passes because list_dir is in used_tools."""
+    from secretary.agent.grounding import UNGROUNDED_LISTING_FALLBACK, enforce_grounded_reply
+
+    reply = (
+        "📂 /Users/sihai/Documents/My Projects/StockResearch (5 entries)\n"
+        "📁 src/\n"
+        "📁 prompts/\n"
+        "📄 README.md\n"
+        "📄 pyproject.toml\n"
+    )
+    kept, verified, _ = enforce_grounded_reply(
+        reply,
+        "完整分析",
+        ["list_dir"],
+        grounding_verified=True,
+        grounding_note="已通过 list_dir 核实",
+    )
+    assert kept.strip() == reply.strip()
+    assert verified is True
+    assert UNGROUNDED_LISTING_FALLBACK not in kept
+
+
 def test_resolve_turn_user_message_skips_grounding_retry() -> None:
     from secretary.agent.grounding import GROUNDING_RETRY_USER, resolve_turn_user_message
 

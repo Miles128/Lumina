@@ -1,0 +1,68 @@
+"""Confirmation policy for write/shell/MCP tools (read-only tools never pause)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from secretary.agent.tools.base import Tool, _resolve_path
+from secretary.agent.tools.shell import _is_read_only_shell_command
+from secretary.services.file_auth import FileAuthService
+
+
+def tool_requires_confirmation(
+    tool: Tool,
+    arguments: dict[str, Any],
+    *,
+    working_dir: Path,
+    file_auth: FileAuthService | None,
+) -> tuple[bool, str]:
+    """Return (needs_confirmation, kind) for a tool invocation."""
+    if tool.read_only:
+        return False, ""
+    if tool.name.startswith("mcp_"):
+        from secretary.agent.mcp_manager import mcp_tool_needs_confirmation
+
+        if not mcp_tool_needs_confirmation(tool.name):
+            return False, ""
+
+    if tool.name == "file_write":
+        path = _resolve_path(str(arguments.get("path", "")), working_dir)
+        append = bool(arguments.get("append", False))
+        if file_auth is None:
+            kind = "write_modify" if path.exists() else "write_new"
+            return True, kind
+        kind = file_auth.write_confirmation_kind(path, append=append)
+        if file_auth.needs_write_confirmation(path, append=append):
+            return True, kind
+        return False, ""
+
+    if tool.name == "patch":
+        path = _resolve_path(str(arguments.get("path", "")), working_dir)
+        old_text = str(arguments.get("old_text", ""))
+        if file_auth is None:
+            kind = "write_modify" if path.exists() and old_text else "write_new"
+            return True, kind
+        if path.exists() and not old_text:
+            return True, "write_modify"
+        kind = file_auth.write_confirmation_kind(path, append=False)
+        if file_auth.needs_write_confirmation(path, append=False):
+            return True, kind
+        return False, ""
+
+    if tool.name == "file_delete":
+        return True, "write_delete"
+
+    if tool.name == "shell":
+        command = str(arguments.get("command", "")).strip()
+        if not command:
+            return False, ""  # empty → skip; execute returns error
+        if _is_read_only_shell_command(command):
+            return False, ""
+        return True, "shell"
+
+    if tool.needs_confirmation:
+        kind = "shell" if tool.name == "shell" else "action"
+        return True, kind
+
+    return False, ""

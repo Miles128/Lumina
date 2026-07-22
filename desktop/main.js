@@ -377,30 +377,54 @@ ipcMain.handle("window:openWorkspace", () => {
   createKnowledgeWindow();
 });
 
-ipcMain.handle("dialog:pickDirectory", async (_event, defaultPath) => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle("dialog:pickDirectory", async (event, defaultPath) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  let resolvedDefault;
+  if (typeof defaultPath === "string" && defaultPath.trim()) {
+    const candidate = path.resolve(defaultPath.trim());
+    // Only seed the dialog when the path exists; otherwise macOS may open
+    // a surprising parent / temporary location.
+    if (fs.existsSync(candidate)) {
+      resolvedDefault = candidate;
+    }
+  }
+  const options = {
     title: "选择工作区目录",
-    defaultPath: typeof defaultPath === "string" && defaultPath ? defaultPath : undefined,
+    defaultPath: resolvedDefault,
     properties: ["openDirectory", "createDirectory"],
-  });
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, options)
+    : await dialog.showOpenDialog(options);
   if (result.canceled || !result.filePaths.length) {
     return null;
   }
-  return result.filePaths[0];
+  return path.resolve(result.filePaths[0]);
 });
 
-ipcMain.handle("dialog:pickFiles", async (_event, defaultPath) => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle("dialog:pickFiles", async (event, defaultPath) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  let resolvedDefault;
+  if (typeof defaultPath === "string" && defaultPath.trim()) {
+    const candidate = path.resolve(defaultPath.trim());
+    if (fs.existsSync(candidate)) {
+      resolvedDefault = candidate;
+    }
+  }
+  const options = {
     title: "选择附件",
-    defaultPath: typeof defaultPath === "string" && defaultPath ? defaultPath : undefined,
+    defaultPath: resolvedDefault,
     properties: ["openFile", "multiSelections"],
     filters: [
       { name: "Documents", extensions: ["pdf", "docx", "xlsx", "xlsm", "csv", "txt", "md", "json"] },
       { name: "All Files", extensions: ["*"] },
     ],
-  });
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, options)
+    : await dialog.showOpenDialog(options);
   if (result.canceled || !result.filePaths.length) {
     return [];
   }
-  return result.filePaths;
+  return result.filePaths.map((p) => path.resolve(p));
 });

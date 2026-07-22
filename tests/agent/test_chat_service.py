@@ -644,6 +644,44 @@ def test_finalize_agent_result_no_reflection_in_ask_profile(tmp_path: Path) -> N
     service._ensure_reflection_runner.assert_not_called()
 
 
+def test_build_system_prompt_includes_workspace_block(tmp_path: Path) -> None:
+    """Selected shell working dir must appear in system prompt context."""
+    from secretary.services.agent_config import AgentConfigStore
+
+    service = _build_chat_service(tmp_path)
+    workspace = tmp_path / "my-project"
+    workspace.mkdir()
+    store = AgentConfigStore(tmp_path / "agent.json")
+    store.update({"shell_working_dir": str(workspace)})
+    service._agent_config_store = store
+
+    prompt = service._build_system_prompt(
+        profile_markdown="", hits=[], user_message="看看这个项目"
+    )
+    assert "## 当前工作区" in prompt
+    assert str(workspace.resolve()) in prompt
+
+
+def test_resolve_turn_working_dir_overrides_config(tmp_path: Path) -> None:
+    from secretary.services.agent_config import AgentConfigStore
+
+    service = _build_chat_service(tmp_path)
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    turn_dir = tmp_path / "turn-project"
+    turn_dir.mkdir()
+    store = AgentConfigStore(tmp_path / "agent.json")
+    store.update({"shell_working_dir": str(configured)})
+    service._agent_config_store = store
+    service._turn_working_dir = service._resolve_turn_working_dir(str(turn_dir))
+
+    prompt = service._build_system_prompt(
+        profile_markdown="", hits=[], user_message="当前工作区是哪"
+    )
+    assert str(turn_dir.resolve()) in prompt
+    assert str(configured.resolve()) not in prompt
+
+
 def test_build_system_prompt_includes_reflections_block(tmp_path: Path) -> None:
     """F21: failed-turn reflections are injected into system prompt as ## 历史教训."""
     service = _build_chat_service(tmp_path)

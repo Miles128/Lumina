@@ -30,6 +30,11 @@ class AgentTurnPlan:
     max_steps: int
     tools: list[Tool]
     force_web_first_step: bool = False
+    # True when the user explicitly selected a workspace folder this turn
+    # (chat request carried a non-empty working_dir). Triggers an unconditional
+    # top-level list_dir preflight at step 0 so the model starts with real
+    # entry names instead of hallucinating paths.
+    explicit_working_dir: bool = False
 
 
 @dataclass
@@ -131,6 +136,7 @@ class TurnRunner:
                 before_tool_execution_hooks=hooks.before_tool_execution,
                 after_tool_execution_hooks=hooks.after_tool_execution,
                 force_web_first_step=plan.force_web_first_step,
+                explicit_working_dir=plan.explicit_working_dir,
             )
             result = loop.run(plan.messages, temperature=temperature)
             if wrapped is not None and turn is not None:

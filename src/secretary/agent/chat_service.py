@@ -1121,7 +1121,12 @@ class ChatService:
         else:
             max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=False)
 
-        plan = AgentTurnPlan(messages=messages, max_steps=max_steps, tools=tools)
+        plan = AgentTurnPlan(
+            messages=messages,
+            max_steps=max_steps,
+            tools=tools,
+            explicit_working_dir=self._turn_working_dir is not None,
+        )
 
         try:
             result = self._turn_runner.run_agent_turn(
@@ -1440,6 +1445,17 @@ class ChatService:
                 return path.resolve()
         return Path.home()
 
+    def _build_workspace_block(self) -> str:
+        """Expose the active workspace cwd in the system prompt."""
+        cwd = self._shell_working_dir()
+        return (
+            "## 当前工作区\n"
+            f"- 路径：`{cwd}`\n"
+            "- `list_dir` / `file_read` / `shell` / 相对路径默认都相对此目录解析。\n"
+            "- 用户问「当前项目 / 工作区 / 这个目录」时，先对此路径 `list_dir`，不要猜测其它目录。\n"
+            "- 回答中引用工作区时必须使用上述绝对路径，禁止编造或替换成其它路径。\n\n"
+        )
+
     def _pick_web_tools(self, user_message: str) -> list[Tool]:
         from secretary.agent.tools.web import WebFetchTool
         from secretary.agent.web_search import WebSearchTool
@@ -1604,8 +1620,10 @@ class ChatService:
             )
 
         reflections_block = self._build_reflections_block(user_message)
+        workspace_block = self._build_workspace_block()
 
         return prefix + (
+            f"{workspace_block}"
             "## 关于用户的资料（用户画像与本地文档，描述用户本人，不是灵犀）\n"
             f"{profile_block[:6000]}\n\n"
             "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
