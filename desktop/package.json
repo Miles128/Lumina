@@ -1,7 +1,7 @@
 {
   "name": "lumina-desktop",
   "version": "0.1.0",
-  "description": "CN-local personal AI secretary desktop mascot",
+  "description": "Local-first Agent productivity desktop for Lumina",
   "main": "main.js",
   "author": "四海",
   "scripts": {

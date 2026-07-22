@@ -1,6 +1,7 @@
 # Codex Cursor Hermes Agent, Claude Code - 4 家 Harness 横向对比
 
-> Cursor · Codex · Hermes Agent · Claude Code · 2026-06-01
+> Cursor · Codex · Hermes Agent · Claude Code · 2026-06-01  
+> **产品语境（2026-07）：** 灵犀为本地通用 Agent 生产力工具；本文为 harness 抽象对比，非产品 PRD。集成原则见 [PRD.md](PRD.md)（标准 MCP 或 CLI）。
 
 共性：**外层 Harness + 内层 while loop + 委派工具 + 隔离 context + 只回摘要**。差异在于 loop 所在层、session 模型、并行/深度限制、子 agent 类型配置。
 

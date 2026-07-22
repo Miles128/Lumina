@@ -1,5 +1,8 @@
 # AI 在场视觉系统 · 实现计划（P0 + P1）
 
+> **状态（2026-07）：视觉系统 largely 已落地。** Checkbox 可能未勾完，以 desktop UI / tokens 为准。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 为 Lumina 前端落地统一的「AI 在场」视觉系统——共享信号色（青 #06b6d4）+ 共享节奏语言，覆盖思考态光场呼吸、输出态信号条、对话地图升级三个落点。

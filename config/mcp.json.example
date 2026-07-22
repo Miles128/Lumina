@@ -1,4 +1,5 @@
 {
+  "_comment": "Standard MCP only (stdio / SSE / streamable_http). No platform-specific Lumina connectors — see docs/PRD.md.",
   "servers": {
     "filesystem": {
       "command": "npx",

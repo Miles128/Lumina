@@ -1,5 +1,7 @@
 # 退役 USER.md：用户事实统一归 ProfileService 管理
 
+> **状态（2026-07）：与现行记忆模型一致（USER.md 退役）。** 产品定位为通用 Agent 生产力工具；本 plan 不涉及平台 connector。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 `memories/USER.md` 从 Lumina 退役，让 `ProfileService` 成为唯一"用户事实"存储；`LuminaMemory` 只保留 `MEMORY.md`（任务/环境/项目事实 + 会话摘要）。消除 BackgroundReviewService 双写、系统提示词双段、前端双编辑框的重叠。

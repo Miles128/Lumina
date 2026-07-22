@@ -1,4 +1,4 @@
-"""Connector base classes."""
+"""Legacy connector base classes (frozen — prefer standard MCP or CLI)."""
 
 from __future__ import annotations
 

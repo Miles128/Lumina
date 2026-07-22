@@ -1,5 +1,7 @@
 # Flat Minimal UI Implementation Plan
 
+> **状态（2026-07）：UI 方向已落地（tokens / lumen mark / mini-map）。** Checkbox 可能未勾完，以 desktop UI 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Flatten Lumina desktop UI to Cursor/Codex-like minimalism with lumen mark + corner mini-map, no bird logo, no message avatars.

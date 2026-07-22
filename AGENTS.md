@@ -1,6 +1,8 @@
 # AGENTS.md — Lumina
 
-Local-first Agent Harness: conversation orchestration, skill workflow orchestration, memory, MCP, file access. Confirms before risky actions.
+Local-first Agent productivity tool: harness (Turn/profiles/confirm), conversation map, memory, MCP, file access. Confirms before risky actions. Skill workflow DAG is planned (see docs/workflow-dag-design.md), not shipped.
+
+Integrations: **standard MCP or CLI only** — do not add platform-specific connectors under `src/secretary/connectors/`. Legacy SyncService/connectors are frozen.
 
 ## Quick start
 
@@ -27,7 +29,10 @@ uv run mypy src
 src/           FastAPI backend, AgentLoop, MCP, memory
 desktop/       Electron shell
 tests/
+docs/          PRD + harness design — see docs/README.md
 ```
+
+Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpowers/plans/` without checking PRD.
 
 ## Gotchas
 

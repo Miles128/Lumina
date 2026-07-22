@@ -1,7 +1,8 @@
 # Sub-agent 与 Agent Loop 方案对比
 
 > Cursor · Codex · Hermes Agent · Claude Code  
-> 灵犀（Lumina）FR-14 设计参考 · 2026-05-30
+> 灵犀（Lumina）FR-14 设计参考 · 2026-05-30  
+> **产品语境（2026-07）：** 本地通用 Agent 生产力工具（非个人秘书）；外部集成 = 标准 MCP 或 CLI。本文仅作 harness 设计参考。
 
 四家**均不使用 LangGraph**。共性：**外层 Harness + 内层 while loop + 委派工具 + 隔离 context + 只回摘要**。差异在于 loop 所在层、session 模型、并行/深度限制、子 agent 类型配置。
 
@@ -103,7 +104,7 @@ Harness（权限 / 会话 / UI 事件 / 确认）
 |------|------------|-----------|------------|-----------------|
 | **确认模型** | hooks + IDE 确认 | **server 暂停 turn**，等 client JSON-RPC | 父 interrupt → 子全停 | permission + hooks |
 | **子内确认** | 可配 | 双向 App Server | 子独立 terminal | subagent permission mode |
-| **适合桌面秘书** | 中（偏 IDE） | **高**（pause/resume 成熟） | 中 | 高 |
+| **适合桌面 Agent** | 中（偏 IDE） | **高**（pause/resume 成熟） | 中 | 高 |
 
 灵犀已有 `PendingConfirmation`，更接近 **Codex pause turn** + **Claude permission**，而非 Cursor 的 git worktree。
 
@@ -151,7 +152,7 @@ Harness（权限 / 会话 / UI 事件 / 确认）
 │ 并行             → 二期 batch≤2（= Hermes）                 │
 │ 确认             → 挂父 session PendingConfirmation（= Codex）│
 │ Session ID       → parent::sub::run_id（= Codex/OpenClaw）  │
-│ 不做 v1          → git worktree（Cursor 特有，非秘书核心）   │
+│ 不做 v1          → git worktree（Cursor 特有，非 v1 核心）   │
 └─────────────────────────────────────────────────────────┘
 ```
 

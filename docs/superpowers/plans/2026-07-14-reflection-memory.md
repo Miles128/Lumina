@@ -1,5 +1,7 @@
 # F21 反思记忆（Reflexion-style）实现计划
 
+> **状态（2026-07）：MVP 已落地**（`src/secretary/agent/reflection/`）。下方 checkbox 可能未勾完，以代码与 PRD F21 Done(MVP) 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a reflexion-style memory system that detects failed Build-profile turns, spawns a reflect sub-agent to generate structured lessons, stores them in the extended episodes table, and injects top-3 relevant lessons into future turns' system prompts.

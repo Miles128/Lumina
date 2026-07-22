@@ -109,7 +109,7 @@ class BriefingService:
         body = chat_completion(
             llm_config,
             [
-                {"role": "system", "content": "你是个人 AI 秘书，负责写每日简报。"},
+                {"role": "system", "content": "你是本地 Agent 助手，负责写每日简报。"},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.4,

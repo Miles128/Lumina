@@ -1,8 +1,8 @@
 # F21 反思记忆（Reflexion-style）设计文档
 
-**日期：** 2026-07-14
-**状态：** 设计已确认，待实现
-**关联 PRD：** F21（`docs/PRD.md:357`，状态将从 Research 升级为 Done(MVP)）
+**日期：** 2026-07-14  
+**状态：** Done（MVP）——实现见 `src/secretary/agent/reflection/`；PRD F21  
+**关联 PRD：** F21 · 产品定位为通用 Agent 生产力工具（非个人秘书）
 
 ---
 

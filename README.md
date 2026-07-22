@@ -9,18 +9,24 @@
 </p>
 
 <p align="center">
-  <strong>Local-first personal AI secretary · 本地优先的个人 AI 秘书</strong>
+  <strong>Local-first Agent productivity tool · 本地优先的通用 Agent 生产力工具</strong>
 </p>
 
 <p align="center">
-  Electron · FastAPI · self-built harness · Shibei KB · Build / Ask / Plan
+  Electron · FastAPI · self-built harness · conversation map · Build / Ask / Plan
 </p>
 
 ---
 
-灵犀在你本机运行：读文件、搜 **Shibei 知识库**、查连接器、连 MCP，Build 模式下可写文件/跑 Shell/委派子 Agent 或 CLI——**高风险操作先问你**。
+灵犀在你本机运行：自研 harness 驱动工具调用——读文件、跑 Shell、连 **标准 MCP**、可选 Shibei；Build 模式下可写文件 / 委派子 Agent——**高风险操作先问你**。
+
+外部集成只走 **MCP**（stdio / SSE / Streamable HTTP）或 **CLI**（`shell` / MCP 包装的命令行），不为各平台维护专用连接器产品面。
+
+当前差异点：**对话地图**（分支 / 回滚 / 恢复）、profiles、可调本地 harness。  
+**Skill 编排（工作流 DAG）** 为规划中的差异化能力（[设计稿](docs/workflow-dag-design.md)），尚未产品化。
 
 **产品需求：** [docs/PRD.md](docs/PRD.md)（含路线图与 FR 清单）  
+**文档索引：** [docs/README.md](docs/README.md)  
 **架构：** [docs/harness-design.md](docs/harness-design.md) · [docs/4-harness-comparison.md](docs/4-harness-comparison.md)
 
 ---
@@ -30,23 +36,23 @@
 | 能力 | 说明 |
 |------|------|
 | **Agent 模式** | **Build** 执行 · **Ask** 只读问答 · **Plan** 只读规划（设置或输入框旁切换） |
-| **工具集** | FS · `glob_files` · 记忆/Shibei · 联网 · MCP · 连接器 · 浏览器 · `ask_user`（选项按钮）|
-| **Shibei 知识库** | 直连 Shibei 索引；**读个人文档无需先同步** |
-| **连接器** | 飞书/读书等 → SQLite；Agent 可 `list_connectors` / `sync_source`（Build） |
-| **Sub-agent** | explore/worker/verify/plan；暂停/恢复；进度树 |
-| **CLI Agent** | `spawn_cli_agent` 外接 codex/kimi 等（Build，需确认） |
-| **Harness P0** | TurnRunner · SessionStore · SSE schema v2 |
+| **Harness** | TurnRunner · SessionStore · SSE · confirm · compaction · Auto profile |
+| **工具集** | FS · `glob_files` · 记忆/Shibei · 联网 · MCP · shell/CLI · 浏览器 · `ask_user` |
+| **对话地图** | 节点化分支、fork / rollback / restore、紧凑节点视图 |
+| **Sub-agent** | explore / worker / verify / plan；暂停/恢复；进度树 |
+| **Skills（目录）** | 扫描与查看已安装 skill；**编排工作流尚未上线** |
+| **知识库（可选）** | Shibei 直连 + workspace；启用时读文档优先检索 |
+| **外部集成** | 标准 MCP 或 CLI；遗留 Sync/平台连接器冻结、不再扩展 |
 | **Grounding** | 文件/记忆回答需工具佐证；Verified / Unverified |
-| **多线程** | `/api/chat/threads` 持久化 + 侧边栏切换；标题自动跟随最新提问 |
-| **分支地图** | 对话节点化、fork/rollback/restore、紧凑节点视图 |
+| **多线程** | `/api/chat/threads` 持久化 + 侧边栏；标题跟随最新提问 |
 | **Chat Markdown** | markdown-it + DOMPurify |
 
-### 读记忆 vs 同步
+### 读记忆（可选路径）
 
 ```
-读笔记 / 「读取记忆」     →  shibei_search（主路径）
-写偏好 / 稳定事实         →  memory 工具（USER.md / MEMORY.md）
-连接器专项 / 刷新数据    →  sync_source 或 设置里「同步」（备选）
+读笔记 / 「读取记忆」     →  shibei_search（启用 Shibei 时的主路径）
+写偏好 / 稳定事实         →  memory 工具（画像 / MEMORY.md）
+外部数据 / SaaS           →  用户自备 MCP 或 CLI（不再新增平台专用 connector）
 ```
 
 ---
@@ -55,9 +61,9 @@
 
 | 模式 | 适合 | 典型工具 |
 |------|------|----------|
-| **Ask** | 查资料、问记忆、调研 | 只读 FS、Shibei、web、browser、连接器状态 |
+| **Ask** | 查资料、问记忆、调研 | 只读 FS、Shibei、web、browser、MCP 只读 |
 | **Plan** | 出方案、拆任务 | Ask + todo、skills |
-| **Build** | 改代码、跑命令、同步、委派 | 全工具 + spawn_subagent / spawn_cli_agent |
+| **Build** | 改代码、跑命令、同步、委派 | 全工具 + `spawn_subagent` |
 
 旧配置 `orchestrator` 会自动当作 **Build**。
 
@@ -89,7 +95,7 @@ cp .env.example .env
 
 或编辑 `~/.lumina/agent.json`。可从「设置 → 大模型 → 一键从 Hermes 导入」迁移。
 
-### 3. Shibei（推荐）
+### 3. Shibei（可选）
 
 1. 安装 [Shibei](https://github.com/Miles128/shibei)
 2. 配置 `config.yaml` 的 `sources`
@@ -118,7 +124,7 @@ npm i -g agent-browser && agent-browser install
 
 ## MCP
 
-`~/.lumina/mcp.json` → 设置 → MCP → 保存并连接（stdio）。
+`~/.lumina/mcp.json` → 设置 → MCP → 保存并连接（stdio / SSE / Streamable HTTP）。
 
 ---
 
@@ -129,7 +135,7 @@ Lumina/
 ├── docs/PRD.md              # 需求与路线图
 ├── src/secretary/agent/     # loop · chat_service · tools · harness
 ├── desktop/ui/              # chat · settings · workspace
-└── tests/                   # 356+ unit tests
+└── tests/
 ```
 
 ---
@@ -137,23 +143,23 @@ Lumina/
 ## 开发
 
 ```bash
-pytest                          # 356 tests（ignore e2e）
+uv run pytest
+uv run ruff check src tests
+uv run mypy src
 ./scripts/e2e-smoke.sh
-ruff check src tests
-mypy src
 ```
 
 ---
 
-## 下一步开发（摘要）
+## 下一步（摘要）
 
-详见 [PRD §11](docs/PRD.md)。当前优先级：
+详见 [PRD §11](docs/PRD.md)。当前文档真相源以 PRD 为准：
 
-1. **Shibei 空结果 UX** — 空检索时的引导与 import
-2. **SSE 进度前端全接** — 工具步骤对用户可见
-3. **CLI provider 端到端** — codex/kimi 真实委派验证
-4. **Web search API** — Brave/Tavily 替代 scrape
-5. **Explore 便宜模型** — 降 sub-agent 成本
+1. **文档与产品叙事对齐** — 通用 Agent 生产力工具（本轮）
+2. **Skill 编排（F26）** — 规划中差异化能力；设计见 `docs/workflow-dag-design.md`
+3. **Harness 巩固** — 集成测、模块边界、打包内嵌 Python（FR-27 Deferred）
+
+已移除：CLI Agent（`spawn_cli_agent` / FR-30）。
 
 ---
 

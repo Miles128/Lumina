@@ -1,8 +1,13 @@
 # 设置界面重构 + Connector 统一 MCP 扩展架构 实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **状态（2026-07-17）：已废止 / Superseded**  
+> 产品决策：外部集成**只做标准 MCP 或 CLI**，不再扩展平台专用 connector，也不再推进「6 连接器 → builtin MCP provider」产品面。  
+> 本 plan 中与飞书/邮箱/读书等 connector 相关任务**不再执行**。设置页「四组导航」若仍有独立价值，另开切片（与 connector 无关）。  
+> 现行原则见 [docs/PRD.md](../../PRD.md) §1 / Open Decisions。
 
-**Goal:** 重构设置界面为「按配置对象」的四组结构(Agent / 工具与扩展 / 知识库 / 个人),并把 6 个独立 connector(飞书/邮箱/微信读书/小红书/微信公众号/本地网盘)统一改造为「内置 MCP provider」,与用户自建 MCP server 共享 `mcp_{provider}_{tool}` 命名空间,由 `McpManager` 统一加载与暴露,`SyncService` 改为通过 MCP 工具调用拿数据。
+> **For agentic workers:** Do **not** implement this plan as written. Follow PRD integration rules instead.
+
+**Goal（原文，已废止）：** 重构设置界面为「按配置对象」的四组结构(Agent / 工具与扩展 / 知识库 / 个人),并把 6 个独立 connector(飞书/邮箱/微信读书/小红书/微信公众号/本地网盘)统一改造为「内置 MCP provider」,与用户自建 MCP server 共享 `mcp_{provider}_{tool}` 命名空间,由 `McpManager` 统一加载与暴露,`SyncService` 改为通过 MCP 工具调用拿数据。
 
 **Architecture:**
 1. **后端抽象层**:新增 `BuiltinMcpProvider` 协议,每个 connector 实现该协议,暴露 `{source}_status` / `{source}_fetch` 工具;`McpManager` 扩展支持内置 provider 注册(同进程,不走子进程),与 stdio/remote server 统一命名空间。

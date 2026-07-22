@@ -1,7 +1,7 @@
 [project]
 name = "lumina"
 version = "0.1.0"
-description = "CN-local personal AI secretary with integrations and desktop mascot"
+description = "Local-first Agent productivity tool: harness, conversation map, tools/MCP"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

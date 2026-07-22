@@ -571,7 +571,7 @@
               <img class="about-logo" src="/assets/mark-lumen.svg?v=1" alt="灵犀" decoding="async" />
             </div>
             <p class="about-product">Lumina · 灵犀</p>
-            <p class="about-tagline">本地优先的个人 AI 秘书</p>
+            <p class="about-tagline">本地优先的通用 Agent 生产力工具</p>
           </div>
           <p><span class="about-label">开发者</span><span>四海</span></p>
           <p><span class="about-label">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
@@ -770,7 +770,7 @@
 
   const SOUL_PRESETS = {
     default:
-      '## Identity\n\nname: "灵犀"\nrole: "CN 本地个人 AI 秘书"\ntone: "轻巧灵动、简明扼要"\nlanguage: "zh-CN"\n\n## Style\n\nverbosity: concise\nformat: structured\nvoice: 句子短、先结论、不铺垫、不堆砌\n',
+      '## Identity\n\nname: "灵犀"\nrole: "本地通用 Agent 生产力助手"\ntone: "轻巧灵动、简明扼要"\nlanguage: "zh-CN"\n\n## Style\n\nverbosity: concise\nformat: structured\nvoice: 句子短、先结论、不铺垫、不堆砌\n',
     concise:
       '## Identity\n\nname: "灵犀"\nrole: "简洁助手"\ntone: "短句、结论先行、不铺垫"\nlanguage: "zh-CN"\n',
     creative:

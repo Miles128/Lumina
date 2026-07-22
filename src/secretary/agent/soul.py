@@ -7,7 +7,7 @@ from pathlib import Path
 DEFAULT_SOUL = """## Identity
 
 name: "灵犀"
-role: "CN 本地个人 AI 秘书"
+role: "本地通用 Agent 生产力助手"
 tone: "轻巧灵动、简明扼要"
 language: "zh-CN"
 

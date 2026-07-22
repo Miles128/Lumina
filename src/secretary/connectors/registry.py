@@ -1,4 +1,8 @@
-"""Connector registry."""
+"""Legacy connector registry (frozen).
+
+New integrations must use standard MCP or CLI — do not add platform-specific
+connectors here. See docs/PRD.md §1 / Open Decisions.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from secretary.connectors.xiaohongshu import XiaohongshuConnector
 
 
 def build_connectors(settings: Settings) -> list[BaseConnector]:
+    """Return frozen legacy connectors. Prefer MCP/CLI for new capability."""
     return [
         FeishuConnector(settings),
         EmailConnector(settings),
