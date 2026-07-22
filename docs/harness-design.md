@@ -97,7 +97,7 @@ Harness（灵犀专有）
 - [x] **智能 archetype（F24）**
 - [x] **结构化卡片（F25）**
 - [x] **Hooks 权限层**
-- [ ] **Skill 编排 / 工作流 DAG（F26）** — **后端切片已落地**；画布 UI 未交付（见 [workflow-dag-design.md](workflow-dag-design.md)）
+- [x] **Skill 编排 / 工作流 DAG（F26）** — **画布 MVP 已落地**（见 [workflow-dag-design.md](workflow-dag-design.md)）；暂停/封装仍属后续
 - [ ] 打包内嵌 Python（FR-27）— **Deferred**
 - [ ] IM 网关（FR-16）— **Deferred**
 - [ ] Git 只读工具（FR-37）— **Deferred**
