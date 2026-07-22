@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from secretary.agent.chat_service import ChatService
+from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import resolve_llm_config
 from secretary.agent.mcp_builtin import build_builtin_registry
@@ -25,6 +26,7 @@ from secretary.agent.turn_runner import TurnRunner
 from secretary.api.deps import svc
 from secretary.api.routes_chat import router as chat_router
 from secretary.api.routes_mcp import router as mcp_router
+from secretary.api.routes_workflows import router as workflows_router
 from secretary.api.schemas import (
     AgentConfigResponse,
     AgentConfigUpdateRequest,
@@ -78,6 +80,9 @@ from secretary.services.shibei_service import ShibeiService
 from secretary.services.sync import SyncService
 from secretary.services.user_profile_store import UserProfileStore
 from secretary.utils.messages import format_connector_message
+from secretary.workflow.runners import build_agent_runner, build_skill_runner
+from secretary.workflow.scheduler import WorkflowScheduler
+from secretary.workflow.store import WorkflowStore
 
 DESKTOP_UI_DIR = Path(__file__).resolve().parents[3] / "desktop" / "ui"
 
@@ -131,6 +136,14 @@ def _init_services() -> dict[str, object]:
     )
     workspace = KnowledgeWorkspace(settings.resolved_data_dir() / "workspace")
     workspace.ensure_layout()
+    workflow_store = WorkflowStore(settings.resolved_data_dir() / "workflows")
+    exec_skills = ExecutableSkillManager(settings.resolved_data_dir())
+    workflow_scheduler = WorkflowScheduler(
+        skill_runner=build_skill_runner(exec_skills),
+        agent_runner=build_agent_runner(
+            resolve_llm_config(settings, agent_config_store)
+        ),
+    )
     return {
         "store": store,
         "platform_store": platform_store,
@@ -147,6 +160,8 @@ def _init_services() -> dict[str, object]:
         "session_store": session_store,
         "turn_runner": turn_runner,
         "workspace": workspace,
+        "workflow_store": workflow_store,
+        "workflow_scheduler": workflow_scheduler,
     }
 
 
@@ -228,6 +243,7 @@ app.add_middleware(
 
 app.include_router(mcp_router)
 app.include_router(chat_router)
+app.include_router(workflows_router)
 
 
 @app.get("/api/agent/background")
