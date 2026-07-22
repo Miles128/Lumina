@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=70" />
+    <link rel="stylesheet" href="/assets/chat.css?v=71" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=11" />
     <script src="/assets/theme.js?v=2"></script>
   </head>
@@ -36,6 +36,7 @@
             </button>
             <nav id="topbar-menu" class="topbar-menu" hidden>
               <button id="btn-skills" type="button" data-i18n="menu.skills">技能</button>
+              <button id="btn-workflows" type="button" data-i18n="menu.workflows">工作流</button>
               <button id="btn-platforms" type="button" data-i18n="menu.settings">设置</button>
               <button id="btn-kb" type="button" data-i18n="menu.knowledge">知识库</button>
               <button id="btn-about" type="button" data-i18n="menu.about">关于</button>
@@ -231,6 +232,21 @@
         </div>
       </aside>
 
+      <div id="workflows-backdrop" class="overlay" hidden></div>
+      <aside id="workflows-panel" class="sheet sheet-workflows" hidden>
+        <header class="sheet-head">
+          <button id="btn-close-workflows" type="button" data-i18n-aria="action.close">×</button>
+          <span data-i18n="workflows.title">工作流</span>
+          <button id="btn-workflow-new-sample" type="button" class="btn-text" data-i18n="workflows.newSample">新建示例</button>
+        </header>
+        <div class="sheet-body">
+          <nav id="workflows-nav" class="sheet-nav workflows-nav"></nav>
+          <div id="workflows-content" class="sheet-main workflows-main">
+            <p class="muted" data-i18n="settings.loading">加载中…</p>
+          </div>
+        </div>
+      </aside>
+
       <div id="settings-backdrop" class="overlay" hidden></div>
       <aside id="settings-panel" class="sheet" hidden>
         <header class="sheet-head">
@@ -249,12 +265,13 @@
     <script src="/assets/vendor/markdown-it.min.js?v=1"></script>
     <script src="/assets/vendor/purify.min.js?v=1"></script>
     <script src="/assets/markdown.js?v=1"></script>
-    <script src="/assets/i18n.js?v=15"></script>
+    <script src="/assets/i18n.js?v=16"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/lunar.js?v=3"></script>
     <script src="/assets/topbar.js?v=10"></script>
     <script src="/assets/settings.js?v=16"></script>
     <script src="/assets/skills.js?v=7"></script>
+    <script src="/assets/workflows.js?v=1"></script>
     <script src="/assets/chat.js?v=65"></script>
     <script src="/assets/conversation_map.js?v=10"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->

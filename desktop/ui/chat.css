@@ -3156,3 +3156,86 @@ body.map-view-open .chat-column > .fork-banner {
   }
 }
 
+
+/* F26 workflows panel (list + run; canvas later) */
+.sheet-workflows .workflows-nav {
+  min-width: 180px;
+}
+.workflows-nav-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.workflows-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.workflows-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.workflows-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.workflows-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workflows-section h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.workflows-pre,
+.workflows-inputs {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-elevated, var(--bg));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.workflows-inputs {
+  min-height: 110px;
+  resize: vertical;
+  color: inherit;
+}
+.workflows-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.workflows-actions .btn-run {
+  border: 1px solid var(--line);
+  background: var(--fg);
+  color: var(--bg);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.workflows-actions .btn-run:hover {
+  opacity: 0.9;
+}
+.workflows-actions .btn-run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.workflows-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+}

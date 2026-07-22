@@ -8,9 +8,26 @@
     "app.title": { en: "Lumina", zh: "灵犀" },
 
     "menu.skills": { en: "Skills", zh: "技能" },
+    "menu.workflows": { en: "Workflows", zh: "工作流" },
     "menu.settings": { en: "Settings", zh: "设置" },
     "menu.knowledge": { en: "Knowledge", zh: "知识库" },
     "menu.about": { en: "About", zh: "关于" },
+
+    "workflows.title": { en: "Workflows", zh: "工作流" },
+    "workflows.empty": {
+      en: "No workflows yet. Create a sample or PUT JSON via API.",
+      zh: "暂无工作流。可新建示例，或通过 API PUT JSON。",
+    },
+    "workflows.newSample": { en: "New sample", zh: "新建示例" },
+    "workflows.run": { en: "Run", zh: "运行" },
+    "workflows.delete": { en: "Delete", zh: "删除" },
+    "workflows.inputs": { en: "Inputs (JSON)", zh: "输入（JSON）" },
+    "workflows.result": { en: "Result", zh: "运行结果" },
+    "workflows.nodes": { en: "Nodes", zh: "节点" },
+    "workflows.canvasHint": {
+      en: "Canvas editor comes next; this panel lists and runs saved DAGs.",
+      zh: "画布编辑器稍后；本面板先支持列表与运行。",
+    },
 
     "about.title": { en: "About Lumina", zh: "关于灵犀" },
     "about.developer": { en: "Developer", zh: "开发者" },
