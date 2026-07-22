@@ -190,6 +190,7 @@ class ChatService:
         self._active_trace_id = ""
         self._active_parent_message_id = ""
         self._turn_working_dir: Path | None = None
+        self._rejected_working_dir: str = ""
         self._tool_registry = ChatToolRegistry(
             settings=settings,
             store=store,
@@ -381,6 +382,17 @@ class ChatService:
         self._active_trace_id = trace_id.strip() if trace_id else ""
         self._active_parent_message_id = parent_message_id or ""
         self._turn_working_dir = self._resolve_turn_working_dir(working_dir)
+        if self._rejected_working_dir and progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    kind="turn_started",
+                    iteration=0,
+                    message=(
+                        f"工作区路径无效，已回退默认目录：{self._rejected_working_dir}"
+                    ),
+                    success=False,
+                )
+            )
         _active_thread_id_var.set(self._active_thread_id)
         _active_trace_id_var.set(self._active_trace_id)
         _active_parent_message_id_var.set(self._active_parent_message_id)
@@ -412,6 +424,29 @@ class ChatService:
                     grounding_verified=True,
                 )
 
+        # Personal sync-empty must beat web routing. Questions like
+        # "我微信读书最近在读什么" are local-data prompts, not web search —
+        # otherwise an empty connector store falls through to web_agent.
+        view = self._profile_service.get_view()
+        hits = self._store.search(cleaned, limit=5)
+        profile_excerpt = view.markdown[:800]
+        from secretary.agent.sync_routing import resolve_sync_empty_reply
+
+        sync_empty = resolve_sync_empty_reply(
+            cleaned,
+            self._store,
+            self._sync_service,
+            memory_hits=len(hits),
+            shibei_service=self._shibei_service,
+        )
+        if sync_empty:
+            return self._finish_gate_reply(
+                cleaned,
+                sync_empty,
+                used_llm=False,
+                route="sync_empty",
+            )
+
         web_plan = resolve_web_search_with_llm_fallback(
             cleaned,
             history,
@@ -427,15 +462,13 @@ class ChatService:
                     "还没配置大模型，暂时无法联网查询。",
                     used_llm=False,
                 )
-            view = self._profile_service.get_view()
-            hits = self._store.search(cleaned, limit=5)
             return self._run_web_agent_turn(
                 cleaned,
                 web_plan,
                 view.markdown,
                 hits,
                 llm_config,
-                view.markdown[:800],
+                profile_excerpt,
                 memory_hits=len(hits),
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
@@ -457,27 +490,6 @@ class ChatService:
             return self._handle_identity_gate(cleaned)
         if decision.action == GateAction.CLARIFY:
             decision = GateDecision(action=GateAction.CONTINUE, intent=decision.intent)
-
-        view = self._profile_service.get_view()
-        hits = self._store.search(cleaned, limit=5)
-        profile_excerpt = view.markdown[:800]
-
-        from secretary.agent.sync_routing import resolve_sync_empty_reply
-
-        sync_empty = resolve_sync_empty_reply(
-            cleaned,
-            self._store,
-            self._sync_service,
-            memory_hits=len(hits),
-            shibei_service=self._shibei_service,
-        )
-        if sync_empty:
-            return self._finish_gate_reply(
-                cleaned,
-                sync_empty,
-                used_llm=False,
-                route="sync_empty",
-            )
 
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
@@ -1425,12 +1437,15 @@ class ChatService:
         )
 
     def _resolve_turn_working_dir(self, working_dir: str | None) -> Path | None:
+        self._rejected_working_dir = ""
         raw = (working_dir or "").strip()
         if not raw:
             return None
         path = Path(raw).expanduser()
         if path.is_dir():
             return path.resolve()
+        self._rejected_working_dir = raw
+        logger.warning("Ignoring invalid working_dir %r (not a directory)", raw)
         return None
 
     def _shell_working_dir(self) -> Path:

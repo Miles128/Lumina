@@ -80,3 +80,30 @@ def test_compaction_result_detail_json() -> None:
     detail = result.to_detail()
     assert '"mode": "rule_summary"' in detail
     assert '"before_tokens": 100' in detail
+
+
+def test_clear_tools_reports_token_savings() -> None:
+    """clear_tools mode must measure tokens before clearing, not after."""
+    big = "x" * 800
+    messages = [{"role": "system", "content": "sys"}]
+    for index in range(6):
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": f"c{index}",
+                "content": f"result {index} {big}",
+            }
+        )
+    messages.append({"role": "user", "content": "recent"})
+    messages.append({"role": "assistant", "content": "ok"})
+
+    before = estimate_messages_tokens(messages)
+    # Huge budget so only clear_tools runs (no summary/truncate).
+    result = compact_messages_if_needed(
+        messages, None, max_tokens=before * 10, keep_tail=2
+    )
+    assert result.triggered is True
+    assert result.mode == "clear_tools"
+    assert result.tool_results_cleared > 0
+    assert result.before_tokens == before
+    assert result.after_tokens < result.before_tokens

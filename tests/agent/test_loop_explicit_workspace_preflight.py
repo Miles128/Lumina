@@ -104,3 +104,41 @@ def test_no_explicit_workspace_skips_preflight_for_non_fs_question(tmp_path: Pat
         result = loop.run([{"role": "user", "content": "分析 StockResearch"}], temperature=0.0)
 
     assert "list_dir" not in result.used_tools
+
+
+def test_filesystem_question_preflights_working_dir_when_no_path(tmp_path: Path) -> None:
+    """FS questions with no extractable path still list_dir the loop cwd."""
+    workspace = tmp_path / "proj"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("# proj", encoding="utf-8")
+
+    user_msg = "这个目录有什么文件"
+    assert is_filesystem_question(user_msg) is True
+
+    final_reply = ChatCompletionResult(
+        content="顶层有 README.md。",
+        tool_calls=(),
+        assistant_message={"role": "assistant", "content": "done"},
+    )
+
+    loop = AgentLoop(
+        _llm_config(),
+        tools=[ListDirTool()],
+        max_steps=3,
+        working_dir=workspace,
+        explicit_working_dir=False,
+    )
+
+    with (
+        patch("secretary.agent.loop.requires_forced_read_tool", return_value=False),
+        patch("secretary.agent.loop.should_retry_for_grounding", return_value=False),
+        patch("secretary.agent.loop.should_retry_for_verification", return_value=False),
+        patch(
+            "secretary.agent.loop.chat_completion_with_tools",
+            return_value=final_reply,
+        ),
+    ):
+        result = loop.run([{"role": "user", "content": user_msg}], temperature=0.0)
+
+    assert "list_dir" in result.used_tools
+    assert "README.md" in (result.steps[0].tool_output or "")

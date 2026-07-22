@@ -194,11 +194,13 @@ def profile_system_appendix(profile: AgentProfile) -> str:
     )
 
 
-def _is_mcp_read_tool(name: str) -> bool:
-    lowered = name.lower()
-    if lowered.startswith("mcp_"):
-        return any(token in lowered for token in ("read", "list", "get", "search"))
-    return any(lowered.startswith(prefix) for prefix in MCP_READ_PREFIXES)
+def _is_mcp_read_tool(tool: Tool) -> bool:
+    """Ask/Plan may include MCP tools that were marked read-only at construction."""
+    if not tool.name.lower().startswith("mcp_"):
+        return any(tool.name.lower().startswith(prefix) for prefix in MCP_READ_PREFIXES)
+    return bool(getattr(tool, "read_only", False)) and not bool(
+        getattr(tool, "needs_confirmation", True)
+    )
 
 
 def resolve_parent_tools(
@@ -225,7 +227,7 @@ def resolve_parent_tools(
         if name in by_name:
             picked.append(by_name[name])
     for tool in tools:
-        if tool.name in by_name and tool not in picked and _is_mcp_read_tool(tool.name):
+        if tool.name in by_name and tool not in picked and _is_mcp_read_tool(tool):
             picked.append(tool)
     return picked
 

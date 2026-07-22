@@ -40,10 +40,10 @@ def tool_allowed_for_profile(profile: AgentProfile, tool: Tool) -> bool:
         return False
     if getattr(tool, "needs_confirmation", False):
         return False
+    # MCP writes are already rejected via needs_confirmation above. Remaining
+    # mcp_* tools are construction-time read tools — allow in Plan.
     if name.startswith("mcp_"):
-        from secretary.agent.mcp_manager import mcp_tool_needs_confirmation
-
-        return not mcp_tool_needs_confirmation(name)
+        return True
     name_tokens = name.replace("-", "_").split("_")
     if any(token in name_tokens for token in PLAN_DENY_NAME_TOKENS):
         return False

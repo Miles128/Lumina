@@ -682,6 +682,13 @@ def test_resolve_turn_working_dir_overrides_config(tmp_path: Path) -> None:
     assert str(configured.resolve()) not in prompt
 
 
+def test_resolve_turn_working_dir_rejects_missing_path(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    missing = tmp_path / "gone"
+    assert service._resolve_turn_working_dir(str(missing)) is None
+    assert service._rejected_working_dir == str(missing)
+
+
 def test_build_system_prompt_includes_reflections_block(tmp_path: Path) -> None:
     """F21: failed-turn reflections are injected into system prompt as ## 历史教训."""
     service = _build_chat_service(tmp_path)

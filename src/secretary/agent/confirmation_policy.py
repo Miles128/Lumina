@@ -20,11 +20,13 @@ def tool_requires_confirmation(
     """Return (needs_confirmation, kind) for a tool invocation."""
     if tool.read_only:
         return False, ""
+    # MCP tools: trust flags set at construction from the bare remote name.
+    # Never re-run name heuristics on `mcp_{server}_{tool}` — server tokens
+    # like "search" would false-negative write tools.
     if tool.name.startswith("mcp_"):
-        from secretary.agent.mcp_manager import mcp_tool_needs_confirmation
-
-        if not mcp_tool_needs_confirmation(tool.name):
-            return False, ""
+        if tool.needs_confirmation:
+            return True, "action"
+        return False, ""
 
     if tool.name == "file_write":
         path = _resolve_path(str(arguments.get("path", "")), working_dir)

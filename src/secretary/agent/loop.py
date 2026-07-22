@@ -301,9 +301,7 @@ class AgentLoop:
                 )
             )
             if needs_preflight:
-                target = infer_list_dir_target(turn_user_message) or (
-                    str(self._working_dir) if self._explicit_working_dir else None
-                )
+                target = infer_list_dir_target(turn_user_message) or str(self._working_dir)
                 if target:
                     preflight_list_dir_used = True
                     auto_list_dir_used = True

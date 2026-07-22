@@ -209,29 +209,45 @@ def compact_messages_if_needed(
     threshold = int(token_budget * COMPACT_THRESHOLD_RATIO)
 
     # Step 1: clear old tool results to reduce token pressure early.
-    messages, cleared_count = clear_old_tool_results(messages, keep_tail=keep_tail)
-
+    # Measure *before* clearing so clear_tools mode reports real savings.
     before_tokens = estimate_messages_tokens(messages)
-    if before_tokens <= threshold:
+    messages, cleared_count = clear_old_tool_results(messages, keep_tail=keep_tail)
+    after_clear_tokens = estimate_messages_tokens(messages)
+
+    if after_clear_tokens <= threshold:
         mode: CompactionMode = "clear_tools" if cleared_count else "none"
+        if cleared_count:
+            logger.info(
+                "context compaction clear_tools: %s→%s tokens (%s results cleared)",
+                before_tokens,
+                after_clear_tokens,
+                cleared_count,
+            )
         return CompactionResult(
             messages=messages,
             triggered=cleared_count > 0,
             mode=mode,
             before_tokens=before_tokens,
-            after_tokens=before_tokens,
+            after_tokens=after_clear_tokens,
             tool_results_cleared=cleared_count,
         )
 
     system_msgs = [msg for msg in messages if msg.get("role") == "system"]
     non_system = [msg for msg in messages if msg.get("role") != "system"]
     if len(non_system) <= keep_tail + 1:
+        if cleared_count:
+            logger.info(
+                "context compaction clear_tools: %s→%s tokens (%s results cleared)",
+                before_tokens,
+                after_clear_tokens,
+                cleared_count,
+            )
         return CompactionResult(
             messages=messages,
             triggered=cleared_count > 0,
             mode="clear_tools" if cleared_count else "none",
             before_tokens=before_tokens,
-            after_tokens=before_tokens,
+            after_tokens=after_clear_tokens,
             tool_results_cleared=cleared_count,
         )
 

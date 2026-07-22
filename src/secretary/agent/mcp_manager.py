@@ -528,15 +528,39 @@ def _safe_name(value: str) -> str:
     return cleaned.strip("_") or "tool"
 
 
+# Read-ish remote tool names — matched as prefix / exact / suffix tokens only.
+# Substring matching is unsafe: server names like "search_hub" would mask writes
+# when the heuristic is applied to the full `mcp_{server}_{tool}` agent name.
+_MCP_READ_EXACT = frozenset({"read", "list", "get", "search", "fetch", "find", "query"})
+_MCP_READ_PREFIXES = tuple(f"{verb}_" for verb in sorted(_MCP_READ_EXACT))
+_MCP_READ_SUFFIXES = tuple(f"_{verb}" for verb in sorted(_MCP_READ_EXACT))
+
+
 def _needs_confirmation(tool_name: str) -> bool:
-    lowered = tool_name.lower()
-    if any(token in lowered for token in ("read", "list", "get", "search", "fetch")):
+    """Return True unless *tool_name* looks like a read-only remote MCP tool.
+
+    Expects the **bare remote tool name** (not `mcp_{server}_{tool}`).
+    """
+    lowered = tool_name.lower().replace("-", "_").strip("_")
+    if not lowered:
+        return True
+    if lowered in _MCP_READ_EXACT:
+        return False
+    if any(lowered.startswith(prefix) for prefix in _MCP_READ_PREFIXES):
+        return False
+    if any(lowered.endswith(suffix) for suffix in _MCP_READ_SUFFIXES):
         return False
     return True
 
 
 def mcp_tool_needs_confirmation(tool_name: str) -> bool:
-    """Whether an MCP tool exposed to the agent loop requires user confirmation."""
-    if not tool_name.startswith("mcp_"):
+    """Whether an MCP tool requires confirmation when only a name string is known.
+
+    Full `mcp_{server}_{tool}` names cannot be split reliably (both sides may
+    contain underscores), so this helper **defaults to confirming**. Prefer
+    ``Tool.needs_confirmation`` / ``Tool.read_only`` set at construction from
+    the bare remote tool name.
+    """
+    if tool_name.startswith("mcp_"):
         return True
     return _needs_confirmation(tool_name)
