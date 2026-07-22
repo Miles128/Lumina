@@ -3,30 +3,57 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
-from secretary.agent.chat_service import ChatResult, ChatService
-from secretary.agent.llm_client import LlmUsage, chat_completion, llm_usage_scope
+from secretary.agent.chat_service import ChatService
+from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import resolve_llm_config
 from secretary.agent.mcp_builtin import build_builtin_registry
 from secretary.agent.mcp_manager import McpManager
-from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.session_store import SessionStore
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
-from secretary.agent.turn_cancel import begin_turn, end_turn, request_cancel
 from secretary.agent.turn_runner import TurnRunner
+from secretary.api.deps import svc
+from secretary.api.routes_chat import router as chat_router
+from secretary.api.routes_mcp import router as mcp_router
+from secretary.api.schemas import (
+    AgentConfigResponse,
+    AgentConfigUpdateRequest,
+    AgentTestResponse,
+    BackgroundTasksResponse,
+    BriefingResponse,
+    HealthResponse,
+    MemorySearchResponse,
+    PlatformCardResponse,
+    PlatformFieldResponse,
+    PlatformUpdateRequest,
+    ProfileResponse,
+    ProfileUpdateRequest,
+    ShibeiActionResponse,
+    ShibeiConfigResponse,
+    ShibeiConfigUpdateRequest,
+    ShibeiSearchRequest,
+    ShibeiSourceReadResponse,
+    SkillCategoryUpdateRequest,
+    SkillInstallAllResponse,
+    SkillInstallRequest,
+    SkillRecordResponse,
+    SkillSourceResponse,
+    SkillUninstallRequest,
+    SoulResponse,
+    SoulUpdateRequest,
+    SyncResponse,
+    WebSearchResponse,
+)
 from secretary.config import settings
 from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError
@@ -34,15 +61,9 @@ from secretary.memory.db import MemoryStore
 from secretary.memory.kb import KnowledgeWorkspace
 from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
 from secretary.services.briefing import BriefingService
-from secretary.services.chat_uploads import (
-    DEFAULT_ATTACHMENT_PROMPT,
-    MAX_UPLOAD_FILES,
-    copy_local_path,
-    save_upload_bytes,
-)
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
-from secretary.services.mcp_config import McpConfigStore, McpServerConfig
+from secretary.services.mcp_config import McpConfigStore
 from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (
     PLATFORM_DEFINITIONS,
@@ -58,330 +79,7 @@ from secretary.services.sync import SyncService
 from secretary.services.user_profile_store import UserProfileStore
 from secretary.utils.messages import format_connector_message
 
-
-class HealthResponse(BaseModel):
-    source: str
-    status: str
-    message: str
-    last_sync_at: datetime | None = None
-    item_count: int = 0
-
-
-class SyncResponse(BaseModel):
-    source: str
-    inserted: int
-    status: str
-    message: str
-
-
-class ProfileResponse(BaseModel):
-    generated_at: datetime
-    markdown: str
-    auto_markdown: str
-    user_markdown: str
-    chat_facts_markdown: str = ""
-    is_user_edited: bool
-    sections: list[dict[str, str | int]]
-
-
-class ProfileUpdateRequest(BaseModel):
-    markdown: str = Field(max_length=100_000)
-
-
-class MemorySearchResponse(BaseModel):
-    query: str
-    results: list[dict[str, str]]
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(default="", max_length=8000)
-    trace_id: str = Field(default="", max_length=64)
-    thread_id: str = Field(default="", max_length=64)
-    parent_message_id: str = Field(default="", max_length=64)
-    working_dir: str = Field(default="", max_length=1024)
-    attachments: list[str] = Field(default_factory=list, max_length=10)
-
-
-class ChatCancelRequest(BaseModel):
-    trace_id: str = Field(min_length=1, max_length=64)
-
-
-class ChatUploadsFromPathsRequest(BaseModel):
-    thread_id: str = Field(default="", max_length=64)
-    paths: list[str] = Field(default_factory=list, max_length=10)
-
-
-class ChatThreadActiveLeafRequest(BaseModel):
-    leaf_id: str = Field(min_length=1, max_length=64)
-
-
-class ChatThreadRollbackRequest(BaseModel):
-    to_message_id: str = Field(min_length=1, max_length=64)
-
-
-class ChatThreadRestoreRequest(BaseModel):
-    message_id: str = Field(min_length=1, max_length=64)
-
-
-class ChatThreadsPutRequest(BaseModel):
-    current_id: str = Field(default="", max_length=64)
-    threads: list[dict[str, object]] = Field(default_factory=list)
-
-
-class ChatThreadCreateRequest(BaseModel):
-    title: str = Field(default="新对话", max_length=120)
-
-
-class ChatThreadCurrentRequest(BaseModel):
-    thread_id: str = Field(min_length=1, max_length=64)
-
-
-class ChatResponse(BaseModel):
-    reply: str
-    profile_excerpt: str
-    used_tools: list[str] = []
-    total_steps: int = 1
-    route: str = ""
-    needs_confirmation: bool = False
-    confirmation_description: str = ""
-    confirmation_action_id: str = ""
-    confirmation_risk_level: str = ""
-    confirmation_kind: str = ""
-    allow_permanent_read: bool = False
-    allow_session_write: bool = False
-    grounding_verified: bool = True
-    grounding_note: str = ""
-    files_read: list[str] = []
-    usage_prompt_tokens: int = 0
-    usage_completion_tokens: int = 0
-    usage_total_tokens: int = 0
-    confirmation_scope: str = ""
-    raw_reply: str = ""
-
-
-class ConfirmActionRequest(BaseModel):
-    action_id: str = Field(min_length=1)
-    approved: bool
-    grant_permanent_read: bool = False
-    grant_session_write: bool = False
-    trace_id: str = Field(default="", max_length=64)
-    thread_id: str = Field(default="", max_length=64)
-
-
-class BriefingResponse(BaseModel):
-    markdown: str
-    generated_at: str
-
-
-class McpServerUpsertRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=48)
-    command: str = ""
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-    url: str = ""
-    transport: str = "stdio"
-    headers: dict[str, str] = Field(default_factory=dict)
-    enabled: bool = True
-    timeout: int = Field(default=120, ge=5, le=600)
-
-
-class BackgroundTasksResponse(BaseModel):
-    think_enabled: bool
-    think_interval_hours: int
-    last_think_at: str
-    last_think_markdown: str
-    memory_summary_enabled: bool
-    memory_summary_hour: int
-    last_summary_date: str
-    last_summary: str
-
-
-class PlatformFieldResponse(BaseModel):
-    key: str
-    label: str
-    field_type: str
-    placeholder: str
-    value: str | int | bool
-
-
-class PlatformCardResponse(BaseModel):
-    source: str
-    name: str
-    description: str
-    kind: str
-    setup_hint: str
-    status: str
-    status_message: str
-    fields: list[PlatformFieldResponse]
-    mcp_provider: bool = False
-
-
-class PlatformUpdateRequest(BaseModel):
-    values: dict[str, str | int | bool]
-
-
-class SkillRecordResponse(BaseModel):
-    name: str
-    description: str
-    path: str
-    source_key: str
-    source_label: str
-    source_root: str
-    origin_path: str
-    install_mode: str
-    link_target: str
-    status: str
-    category: str
-    tags: list[str]
-    installed: bool
-
-
-class SkillSourceResponse(BaseModel):
-    key: str
-    label: str
-    path: str
-    available: bool
-    count: int = 0
-
-
-class SkillInstallAllResponse(BaseModel):
-    installed: int
-    skipped: int
-    failed: list[str]
-    message: str
-
-
-class SkillInstallRequest(BaseModel):
-    source_path: str = Field(min_length=1, max_length=4096)
-    target_name: str = Field(default="", max_length=120)
-    install_mode: str = "link"
-
-
-class SkillUninstallRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-
-
-class SkillCategoryUpdateRequest(BaseModel):
-    category: str = Field(min_length=1, max_length=60)
-    tags: list[str] = []
-
-
-class SoulResponse(BaseModel):
-    markdown: str
-    path: str
-
-
-class SoulUpdateRequest(BaseModel):
-    markdown: str = Field(max_length=50_000)
-
-
-class AgentConfigResponse(BaseModel):
-    provider: str
-    api_key_masked: str
-    base_url: str
-    model: str
-    temperature: float
-    max_history_turns: int
-    response_style: str
-    agent_profile: str = "auto"
-    shell_working_dir: str = ""
-    status: str
-    status_message: str
-    active_source: str
-    providers: list[dict[str, str]]
-
-
-class AgentConfigUpdateRequest(BaseModel):
-    provider: str = ""
-    api_key: str = ""
-    base_url: str = ""
-    model: str = ""
-    temperature: float | None = None
-    max_history_turns: int | None = None
-    response_style: str = ""
-    agent_profile: str = ""
-    shell_working_dir: str | None = None
-
-
-class McpQuickstartFilesystemRequest(BaseModel):
-    root: str = ""
-
-
-class AgentTestResponse(BaseModel):
-    status: str
-    message: str
-    model: str
-    source: str
-
-
-class ShibeiConfigResponse(BaseModel):
-    enabled: bool
-    sources: list[str]
-    extensions: list[str]
-    search_engine: str
-    auto_import_on_sync: bool
-    collection: str
-    install_path: str
-    config_path: str
-    db_path: str
-    status: str
-    status_message: str
-    source_count: int
-    shibei_available: bool
-
-
-class ShibeiConfigUpdateRequest(BaseModel):
-    enabled: bool | None = None
-    install_path: str | None = None
-    config_path: str | None = None
-    auto_import_on_sync: bool | None = None
-
-
-class ShibeiActionResponse(BaseModel):
-    status: str
-    message: str
-
-
-class ShibeiSearchRequest(BaseModel):
-    query: str
-    limit: int = Field(default=10, ge=1, le=50)
-    tag: str | None = None
-
-
-class ShibeiSourceReadResponse(BaseModel):
-    path: str
-    name: str
-    content: str
-
-
 DESKTOP_UI_DIR = Path(__file__).resolve().parents[3] / "desktop" / "ui"
-
-
-def _to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> ChatResponse:
-    pending = result.pending_confirmation
-    usage_stats = usage or LlmUsage()
-    return ChatResponse(
-        reply=result.reply,
-        profile_excerpt=result.profile_excerpt,
-        used_tools=result.used_tools or [],
-        total_steps=result.total_steps,
-        route=result.route,
-        needs_confirmation=pending is not None,
-        confirmation_description=pending.description if pending else "",
-        confirmation_action_id=pending.action_id if pending else "",
-        confirmation_risk_level=pending.risk_level if pending else "",
-        confirmation_kind=result.confirmation_kind,
-        allow_permanent_read=result.allow_permanent_read,
-        allow_session_write=result.allow_session_write,
-        grounding_verified=result.grounding_verified,
-        grounding_note=result.grounding_note,
-        files_read=list(result.files_read or []),
-        usage_prompt_tokens=usage_stats.prompt_tokens,
-        usage_completion_tokens=usage_stats.completion_tokens,
-        usage_total_tokens=usage_stats.total_tokens,
-        confirmation_scope=result.confirmation_scope,
-        raw_reply=result.raw_reply,
-    )
 
 
 def _init_services() -> dict[str, object]:
@@ -528,161 +226,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def _svc(request: Request) -> Any:
-    return request.app.state
-
-
-def _build_progress_callback(
-    request: Request,
-    trace_id: str,
-) -> Callable[[ProgressEvent], None] | None:
-    if not trace_id:
-        return None
-    hub: ProgressHub = request.app.state.progress_hub
-    hub.open(trace_id)
-
-    def callback(event: ProgressEvent) -> None:
-        hub.publish(trace_id, event)
-
-    return callback
-
-
-def _finish_progress(request: Request, trace_id: str, *, keep_turn: bool = False) -> None:
-    if not trace_id:
-        return
-    request.app.state.progress_hub.close(trace_id)
-    if not keep_turn:
-        request.app.state.session_store.clear_turn(trace_id)
-
-
-def _build_builtin_provider_summaries(manager: McpManager) -> list[dict[str, object]]:
-    """Build a status summary for each builtin MCP provider (connector).
-
-    Iterates the builtin registry and calls ``mcp_{name}_status`` on each
-    provider to read its stored health. Used by both ``/api/mcp/builtin``
-    and ``/api/mcp/status`` so the frontend can render the unified MCP pane
-    in a single fetch.
-    """
-    providers: list[dict[str, object]] = []
-    for p in manager._builtin.list_providers():
-        status = manager.call_tool(f"mcp_{p.name}_status", {})
-        if not isinstance(status, dict):
-            status = {}
-        providers.append({
-            "name": p.name,
-            "display_name": p.display_name,
-            "configured": status.get("configured", False),
-            "status": status.get("status", "unknown"),
-            "message": status.get("message", ""),
-            "item_count": status.get("item_count", 0),
-            "last_sync_at": status.get("last_sync_at"),
-        })
-    return providers
-
-
-@app.get("/api/mcp/status")
-def mcp_status(request: Request) -> dict[str, object]:
-    manager: McpManager = request.app.state.mcp_manager
-    data = manager.status()
-    data["builtin_providers"] = _build_builtin_provider_summaries(manager)
-    return data
-
-
-@app.get("/api/mcp/builtin")
-def mcp_builtin_providers(request: Request) -> dict[str, object]:
-    manager: McpManager = request.app.state.mcp_manager
-    return {"providers": _build_builtin_provider_summaries(manager)}
-
-
-@app.post("/api/mcp/reload")
-def mcp_reload(request: Request) -> dict[str, object]:
-    manager: McpManager = request.app.state.mcp_manager
-    manager.reload()
-    return manager.status()
-
-
-@app.get("/api/mcp/servers")
-def mcp_servers(request: Request) -> dict[str, object]:
-    store: McpConfigStore = request.app.state.mcp_config_store
-    return {"servers": store.list_view()}
-
-
-@app.post("/api/mcp/servers")
-def mcp_upsert_server(request: Request, body: McpServerUpsertRequest) -> dict[str, object]:
-    store: McpConfigStore = request.app.state.mcp_config_store
-    manager: McpManager = request.app.state.mcp_manager
-    command = body.command.strip()
-    url = body.url.strip()
-    transport = (body.transport or "stdio").strip().lower() or "stdio"
-    if transport in {"http", "streamable-http"}:
-        transport = "streamable_http"
-    if not command and not url:
-        raise HTTPException(status_code=400, detail="需要 command（stdio）或 url（远程）")
-    if command and url:
-        raise HTTPException(status_code=400, detail="command 与 url 只能二选一")
-    if url and transport == "stdio":
-        transport = "streamable_http"
-    if command:
-        transport = "stdio"
-    try:
-        store.upsert_server(
-            body.name.strip(),
-            McpServerConfig(
-                command=command,
-                args=body.args,
-                env=body.env,
-                url=url,
-                transport=transport,
-                headers=body.headers,
-                enabled=body.enabled,
-                timeout=body.timeout,
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    manager.reload()
-    return manager.status()
-
-
-@app.delete("/api/mcp/servers/{name}")
-def mcp_delete_server(request: Request, name: str) -> dict[str, object]:
-    store: McpConfigStore = request.app.state.mcp_config_store
-    manager: McpManager = request.app.state.mcp_manager
-    if not store.remove_server(name):
-        raise HTTPException(status_code=404, detail="服务器不存在")
-    manager.reload()
-    return manager.status()
-
-
-@app.post("/api/mcp/import-hermes")
-def mcp_import_hermes(request: Request) -> dict[str, object]:
-    store: McpConfigStore = request.app.state.mcp_config_store
-    manager: McpManager = request.app.state.mcp_manager
-    added = store.import_from_hermes()
-    manager.reload()
-    status = manager.status()
-    status["imported_count"] = added
-    return status
-
-
-@app.post("/api/mcp/quickstart/filesystem")
-def mcp_quickstart_filesystem(
-    request: Request,
-    body: McpQuickstartFilesystemRequest | None = None,
-) -> dict[str, object]:
-    store: McpConfigStore = request.app.state.mcp_config_store
-    manager: McpManager = request.app.state.mcp_manager
-    root_raw = body.root.strip() if body and body.root else ""
-    root = Path(root_raw).expanduser() if root_raw else Path.home() / "Documents"
-    try:
-        added = store.add_filesystem_server(root)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    manager.reload()
-    status = manager.status()
-    status["added"] = added
-    status["root"] = str(root.expanduser().resolve())
-    return status
+app.include_router(mcp_router)
+app.include_router(chat_router)
 
 
 @app.get("/api/agent/background")
@@ -704,7 +249,7 @@ def agent_background_status(request: Request) -> BackgroundTasksResponse:
 
 @app.get("/api/health")
 def get_health(request: Request) -> list[HealthResponse]:
-    sync_service: SyncService = _svc(request).sync_service
+    sync_service: SyncService = svc(request).sync_service
     return [
         HealthResponse(
             source=item.source.value,
@@ -719,7 +264,7 @@ def get_health(request: Request) -> list[HealthResponse]:
 
 @app.post("/api/sync")
 async def sync_all(request: Request) -> list[SyncResponse]:
-    sync_service: SyncService = _svc(request).sync_service
+    sync_service: SyncService = svc(request).sync_service
     results = await asyncio.to_thread(sync_service.sync_all, include_browser_sources=True)
     return [
         SyncResponse(
@@ -734,7 +279,7 @@ async def sync_all(request: Request) -> list[SyncResponse]:
 
 @app.post("/api/sync/{source}")
 async def sync_one(source: SourceKind, request: Request) -> SyncResponse:
-    sync_service: SyncService = _svc(request).sync_service
+    sync_service: SyncService = svc(request).sync_service
     result = await asyncio.to_thread(sync_service.sync_source, source)
     return SyncResponse(
         source=result.source.value,
@@ -746,7 +291,7 @@ async def sync_one(source: SourceKind, request: Request) -> SyncResponse:
 
 @app.get("/api/profile")
 def get_profile(request: Request) -> ProfileResponse:
-    profile_service: ProfileService = _svc(request).profile_service
+    profile_service: ProfileService = svc(request).profile_service
     view = profile_service.get_view()
     return ProfileResponse(
         generated_at=view.generated_at,
@@ -761,7 +306,7 @@ def get_profile(request: Request) -> ProfileResponse:
 
 @app.put("/api/profile")
 def update_profile(request: Request, body: ProfileUpdateRequest) -> ProfileResponse:
-    profile_service: ProfileService = _svc(request).profile_service
+    profile_service: ProfileService = svc(request).profile_service
     view = profile_service.save_user_markdown(body.markdown)
     return ProfileResponse(
         generated_at=view.generated_at,
@@ -776,7 +321,7 @@ def update_profile(request: Request, body: ProfileUpdateRequest) -> ProfileRespo
 
 @app.delete("/api/profile/user")
 def reset_profile_user(request: Request) -> ProfileResponse:
-    profile_service: ProfileService = _svc(request).profile_service
+    profile_service: ProfileService = svc(request).profile_service
     view = profile_service.reset_user_markdown()
     return ProfileResponse(
         generated_at=view.generated_at,
@@ -794,7 +339,7 @@ def clear_profile_chat_derived(request: Request) -> dict[str, object]:
     """Remove chat-inferred profile bullets and polluted scheduler snapshots."""
     from secretary.services.profile_service import clear_polluted_derived_state
 
-    profile_service: ProfileService = _svc(request).profile_service
+    profile_service: ProfileService = svc(request).profile_service
     view = profile_service.clear_chat_derived_facts()
     removed = clear_polluted_derived_state(settings.resolved_data_dir())
     return {
@@ -806,7 +351,7 @@ def clear_profile_chat_derived(request: Request) -> dict[str, object]:
 
 @app.get("/api/memory/search")
 def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResponse:
-    store: MemoryStore = _svc(request).store
+    store: MemoryStore = svc(request).store
     chunks = store.search(q, limit=limit)
     return MemorySearchResponse(
         query=q,
@@ -822,232 +367,9 @@ def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResp
     )
 
 
-@app.get("/api/chat/progress/{trace_id}")
-async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
-    hub: ProgressHub = request.app.state.progress_hub
-    return StreamingResponse(
-        hub.stream(trace_id),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
-    )
-
-
-@app.post("/api/chat/cancel")
-def cancel_chat(body: ChatCancelRequest) -> dict[str, bool]:
-    return {"cancelled": request_cancel(body.trace_id.strip())}
-
-
-@app.get("/api/identity/author")
-def identity_author() -> dict[str, str]:
-    from secretary.agent.identity import get_author_reply
-
-    return {"reply": get_author_reply()}
-
-
-@app.get("/api/identity/intro")
-def identity_intro() -> dict[str, str]:
-    from secretary.agent.identity import get_identity_reply
-
-    return {"reply": get_identity_reply()}
-
-
-@app.post("/api/chat")
-def chat(request: Request, body: ChatRequest) -> ChatResponse:
-    chat_service: ChatService = _svc(request).chat_service
-    attachments = [p.strip() for p in body.attachments if isinstance(p, str) and p.strip()]
-    message = body.message.strip()
-    if not message and not attachments:
-        raise HTTPException(status_code=400, detail="message or attachments required")
-    if not message:
-        message = DEFAULT_ATTACHMENT_PROMPT
-    author_turn = chat_service.is_author_turn(message)
-    identity_turn = chat_service.is_identity_turn(message)
-    trace_id = "" if (author_turn or identity_turn) else body.trace_id.strip()
-    thread_id = body.thread_id.strip()
-    progress = _build_progress_callback(request, trace_id)
-    cancel_event = begin_turn(trace_id) if trace_id else None
-    if trace_id:
-        request.app.state.session_store.start_turn(
-            trace_id=trace_id,
-            thread_id=thread_id,
-            user_message=message,
-        )
-    keep_turn = False
-    try:
-        with llm_usage_scope() as usage:
-            result = chat_service.reply(
-                message,
-                progress_callback=progress,
-                thread_id=thread_id or None,
-                trace_id=trace_id or None,
-                parent_message_id=body.parent_message_id or None,
-                working_dir=body.working_dir or None,
-                attachments=attachments,
-                cancel_check=cancel_event.is_set if cancel_event is not None else None,
-            )
-        keep_turn = bool(result.pending_confirmation)
-        return _to_chat_response(result, usage)
-    finally:
-        _finish_progress(request, trace_id, keep_turn=keep_turn)
-        if trace_id:
-            end_turn(trace_id)
-
-
-@app.post("/api/chat/uploads")
-async def upload_chat_files(
-    files: Annotated[list[UploadFile], File()],
-    thread_id: Annotated[str, Form()] = "",
-) -> dict[str, object]:
-    uploads = list(files)
-    if not uploads:
-        raise HTTPException(status_code=400, detail="no files")
-    if len(uploads) > MAX_UPLOAD_FILES:
-        raise HTTPException(status_code=400, detail=f"max {MAX_UPLOAD_FILES} files")
-    data_dir = settings.resolved_data_dir()
-    saved: list[dict[str, object]] = []
-    try:
-        for upload in uploads:
-            content = await upload.read()
-            item = save_upload_bytes(
-                data_dir,
-                thread_id=thread_id,
-                filename=upload.filename or "file",
-                content=content,
-            )
-            saved.append(item.as_dict())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"files": saved}
-
-
-@app.post("/api/chat/uploads/from-paths")
-def upload_chat_files_from_paths(
-    body: ChatUploadsFromPathsRequest,
-) -> dict[str, object]:
-    if not body.paths:
-        raise HTTPException(status_code=400, detail="no paths")
-    if len(body.paths) > MAX_UPLOAD_FILES:
-        raise HTTPException(status_code=400, detail=f"max {MAX_UPLOAD_FILES} files")
-    data_dir = settings.resolved_data_dir()
-    saved: list[dict[str, object]] = []
-    try:
-        for raw in body.paths:
-            item = copy_local_path(data_dir, thread_id=body.thread_id, source=raw)
-            saved.append(item.as_dict())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"files": saved}
-
-
-@app.post("/api/chat/confirm")
-def confirm_action(request: Request, body: ConfirmActionRequest) -> ChatResponse:
-    chat_service: ChatService = _svc(request).chat_service
-    trace_id = body.trace_id.strip()
-    thread_id = body.thread_id.strip()
-    progress = _build_progress_callback(request, trace_id)
-    cancel_event = begin_turn(trace_id) if trace_id else None
-    if trace_id and request.app.state.session_store.get_turn(trace_id) is None:
-        request.app.state.session_store.start_turn(
-            trace_id=trace_id,
-            thread_id=thread_id,
-            user_message="confirm",
-        )
-    keep_turn = False
-    try:
-        with llm_usage_scope() as usage:
-            result = chat_service.confirm_action(
-                body.approved,
-                grant_permanent_read=body.grant_permanent_read,
-                grant_session_write=body.grant_session_write,
-                progress_callback=progress,
-                thread_id=thread_id or None,
-                trace_id=trace_id or None,
-                cancel_check=cancel_event.is_set if cancel_event is not None else None,
-            )
-        keep_turn = bool(result.pending_confirmation)
-        return _to_chat_response(result, usage)
-    finally:
-        _finish_progress(request, trace_id, keep_turn=keep_turn)
-        if trace_id:
-            end_turn(trace_id)
-
-
-@app.delete("/api/chat/history")
-def clear_chat_history(request: Request) -> dict[str, str]:
-    chat_service: ChatService = _svc(request).chat_service
-    chat_service.clear_history()
-    return {"status": "ok"}
-
-
-@app.get("/api/chat/threads")
-def get_chat_threads(request: Request) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.list_threads()
-
-
-@app.post("/api/chat/threads")
-def create_chat_thread(request: Request, body: ChatThreadCreateRequest) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.create_thread(title=body.title.strip() or "新对话")
-
-
-@app.put("/api/chat/threads/current")
-def set_current_chat_thread(request: Request, body: ChatThreadCurrentRequest) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.set_current_thread(body.thread_id.strip())
-
-
-@app.delete("/api/chat/threads/{thread_id}")
-def delete_chat_thread(request: Request, thread_id: str) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.delete_thread(thread_id.strip())
-
-
-@app.put("/api/chat/threads")
-def put_chat_threads(request: Request, body: ChatThreadsPutRequest) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.save_threads(current_id=body.current_id, threads=body.threads)
-
-
-@app.put("/api/chat/threads/{thread_id}/active-leaf")
-def set_chat_thread_active_leaf(
-    request: Request,
-    thread_id: str,
-    body: ChatThreadActiveLeafRequest,
-) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.set_thread_active_leaf(thread_id.strip(), body.leaf_id.strip())
-
-
-@app.get("/api/chat/threads/{thread_id}/tree")
-def get_chat_thread_tree(request: Request, thread_id: str) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.thread_tree(thread_id.strip())
-
-
-@app.post("/api/chat/threads/{thread_id}/rollback")
-def rollback_chat_thread(
-    request: Request,
-    thread_id: str,
-    body: ChatThreadRollbackRequest,
-) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.rollback_thread(thread_id.strip(), body.to_message_id.strip())
-
-
-@app.post("/api/chat/threads/{thread_id}/restore")
-def restore_chat_thread(
-    request: Request,
-    thread_id: str,
-    body: ChatThreadRestoreRequest,
-) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
-    return chat_service.restore_thread(thread_id.strip(), body.message_id.strip())
-
-
 @app.get("/api/memory/durable")
 def get_durable_memory(request: Request) -> dict[str, str]:
-    chat_service: ChatService = _svc(request).chat_service
+    chat_service: ChatService = svc(request).chat_service
     memory = chat_service.memory
     return {"memory_md": memory.read_memory_md()}
 
@@ -1056,7 +378,7 @@ def get_durable_memory(request: Request) -> dict[str, str]:
 def update_durable_memory(
     request: Request, body: dict[str, str]
 ) -> dict[str, str]:
-    chat_service: ChatService = _svc(request).chat_service
+    chat_service: ChatService = svc(request).chat_service
     memory = chat_service.memory
     if "memory_md" in body:
         memory.write_memory_md(body["memory_md"])
@@ -1069,7 +391,7 @@ def import_memory_from_hermes(request: Request) -> dict[str, object]:
 
     USER.md 已退役，不再导入；用户事实请通过 /api/profile 编辑。
     """
-    chat_service: ChatService = _svc(request).chat_service
+    chat_service: ChatService = svc(request).chat_service
     memory = chat_service.memory
     imported = memory.import_from_hermes()
     if not imported:
@@ -1085,22 +407,16 @@ def import_memory_from_hermes(request: Request) -> dict[str, object]:
 
 @app.get("/api/memory/sessions/search")
 def search_sessions(request: Request, q: str, limit: int = 10) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
+    chat_service: ChatService = svc(request).chat_service
     results = chat_service.memory.search_sessions(q, limit=limit)
     return {"query": q, "results": results}
 
 
 @app.get("/api/memory/episodes/search")
 def search_episodes(request: Request, q: str, limit: int = 5) -> dict[str, object]:
-    chat_service: ChatService = _svc(request).chat_service
+    chat_service: ChatService = svc(request).chat_service
     results = chat_service.memory.search_episodes(q, limit=limit)
     return {"query": q, "results": results}
-
-
-class WebSearchResponse(BaseModel):
-    query: str
-    engine: str
-    results: list[dict[str, str]]
 
 
 @app.get("/api/web/search")
@@ -1150,7 +466,7 @@ def update_agent_soul(body: SoulUpdateRequest) -> SoulResponse:
 
 @app.get("/api/agent/config")
 def get_agent_config(request: Request) -> AgentConfigResponse:
-    agent_config_store: AgentConfigStore = _svc(request).agent_config_store
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
     view = agent_config_store.get_view(settings)
     providers = [
         {
@@ -1180,7 +496,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
 
 @app.put("/api/agent/config")
 def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> AgentConfigResponse:
-    agent_config_store: AgentConfigStore = _svc(request).agent_config_store
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
     payload: dict[str, object] = {}
     if body.provider:
         payload["provider"] = body.provider.strip()
@@ -1207,7 +523,7 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
 
 @app.post("/api/agent/config/import-hermes")
 def import_agent_config_from_hermes(request: Request) -> AgentConfigResponse:
-    agent_config_store: AgentConfigStore = _svc(request).agent_config_store
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
     try:
         agent_config_store.import_from_hermes()
     except AgentError as error:
@@ -1218,7 +534,7 @@ def import_agent_config_from_hermes(request: Request) -> AgentConfigResponse:
 
 @app.post("/api/agent/config/test")
 def test_agent_config(request: Request) -> AgentTestResponse:
-    agent_config_store: AgentConfigStore = _svc(request).agent_config_store
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
     config = resolve_llm_config(settings, agent_config_store)
     if config is None:
         raise HTTPException(
@@ -1250,22 +566,22 @@ def test_agent_config(request: Request) -> AgentTestResponse:
 
 @app.get("/api/shibei/config")
 def get_shibei_config(request: Request) -> ShibeiConfigResponse:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     view = service.status_view()
     return ShibeiConfigResponse(**view)
 
 
 @app.put("/api/shibei/config")
 def update_shibei_config(request: Request, body: ShibeiConfigUpdateRequest) -> ShibeiConfigResponse:
-    store: ShibeiConfigStore = _svc(request).shibei_config_store
+    store: ShibeiConfigStore = svc(request).shibei_config_store
     store.update(body.model_dump(exclude_none=True))
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     return ShibeiConfigResponse(**service.status_view())
 
 
 @app.post("/api/shibei/import")
 def import_shibei(request: Request, full: bool = False) -> ShibeiActionResponse:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     try:
         result = service.import_all(full=full)
     except Exception as error:
@@ -1275,7 +591,7 @@ def import_shibei(request: Request, full: bool = False) -> ShibeiActionResponse:
 
 @app.post("/api/shibei/test")
 def test_shibei(request: Request) -> ShibeiActionResponse:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     try:
         preview = service.search("测试", limit=1)
     except Exception as error:
@@ -1286,7 +602,7 @@ def test_shibei(request: Request) -> ShibeiActionResponse:
 
 @app.get("/api/shibei/sources")
 def shibei_sources(request: Request, limit: int = 50, offset: int = 0) -> dict[str, object]:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     try:
         payload = service.list_sources(limit=max(1, min(limit, 200)), offset=max(0, offset))
     except Exception as error:
@@ -1296,7 +612,7 @@ def shibei_sources(request: Request, limit: int = 50, offset: int = 0) -> dict[s
 
 @app.post("/api/shibei/search")
 def shibei_search(request: Request, body: ShibeiSearchRequest) -> dict[str, object]:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     try:
         return service.search_raw(body.query, limit=body.limit, tag=body.tag)
     except Exception as error:
@@ -1305,7 +621,7 @@ def shibei_search(request: Request, body: ShibeiSearchRequest) -> dict[str, obje
 
 @app.get("/api/shibei/source")
 def shibei_read_source(request: Request, path: str) -> ShibeiSourceReadResponse:
-    service: ShibeiService = _svc(request).shibei_service
+    service: ShibeiService = svc(request).shibei_service
     try:
         payload = service.read_source(path)
     except FileNotFoundError as error:
@@ -1317,19 +633,19 @@ def shibei_read_source(request: Request, path: str) -> ShibeiSourceReadResponse:
 
 @app.get("/api/skills/sources")
 def list_skill_sources(request: Request) -> list[SkillSourceResponse]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     return [SkillSourceResponse(**item) for item in skill_manager.list_sources()]  # type: ignore[arg-type]
 
 
 @app.get("/api/skills/categories")
 def list_skill_categories(request: Request) -> dict[str, list[str]]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     return {"categories": skill_manager.categories()}
 
 
 @app.get("/api/skills/catalog")
 def list_skill_catalog(request: Request, source: str | None = None) -> list[SkillRecordResponse]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     records = skill_manager.catalog(source_key=source)
     return [
         SkillRecordResponse(
@@ -1353,7 +669,7 @@ def list_skill_catalog(request: Request, source: str | None = None) -> list[Skil
 
 @app.get("/api/skills/installed")
 def list_installed_skills(request: Request) -> list[SkillRecordResponse]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     records = skill_manager.list_installed()
     return [
         SkillRecordResponse(
@@ -1381,7 +697,7 @@ def install_all_skills(
     source: str | None = None,
     install_mode: str = "link",
 ) -> SkillInstallAllResponse:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     key = source.strip() if source else None
     if key == "all":
         key = None
@@ -1405,7 +721,7 @@ def install_all_skills(
 
 @app.post("/api/skills/install")
 def install_skill(request: Request, body: SkillInstallRequest) -> SkillRecordResponse:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     mode = body.install_mode.strip().lower()
     if mode not in {"link", "copy"}:
         mode = "link"
@@ -1436,7 +752,7 @@ def install_skill(request: Request, body: SkillInstallRequest) -> SkillRecordRes
 
 @app.post("/api/skills/uninstall")
 def uninstall_skill(request: Request, body: SkillUninstallRequest) -> dict[str, str]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     try:
         skill_manager.uninstall(body.name.strip())
     except AgentError as error:
@@ -1450,14 +766,14 @@ def update_skill_category(
     request: Request,
     body: SkillCategoryUpdateRequest,
 ) -> dict[str, object]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     skill_manager.update_category(name, body.category, body.tags)
     return {"status": "ok", "name": name, "category": body.category, "tags": body.tags}
 
 
 @app.get("/api/skills/installed/{name}")
 def read_installed_skill(name: str, request: Request) -> dict[str, str]:
-    skill_manager: SkillManager = _svc(request).skill_manager
+    skill_manager: SkillManager = svc(request).skill_manager
     try:
         body = skill_manager.read_skill_body(name, max_chars=12000)
     except AgentError as error:
@@ -1477,7 +793,7 @@ def briefing_latest() -> BriefingResponse:
 
 
 def _platform_field_values(source: SourceKind, request: Request) -> dict[str, object]:
-    platform_store: PlatformConfigStore = _svc(request).platform_store
+    platform_store: PlatformConfigStore = svc(request).platform_store
     section: dict[str, object] = platform_store.get_section(source)  # type: ignore[assignment]
     if source is SourceKind.EMAIL:
         return mask_secrets(section)
@@ -1485,7 +801,7 @@ def _platform_field_values(source: SourceKind, request: Request) -> dict[str, ob
 
 
 def _build_platform_cards(request: Request) -> list[PlatformCardResponse]:
-    sync_service: SyncService = _svc(request).sync_service
+    sync_service: SyncService = svc(request).sync_service
     stored_map = {item.source: item for item in sync_service.get_stored_health()}
     cards: list[PlatformCardResponse] = []
     for definition in PLATFORM_DEFINITIONS:
@@ -1530,8 +846,8 @@ def _build_platform_cards(request: Request) -> list[PlatformCardResponse]:
 
 @app.get("/api/settings/platforms")
 def list_platform_settings(request: Request) -> list[PlatformCardResponse]:
-    platform_store: PlatformConfigStore = _svc(request).platform_store
-    sync_service: SyncService = _svc(request).sync_service
+    platform_store: PlatformConfigStore = svc(request).platform_store
+    sync_service: SyncService = svc(request).sync_service
     settings.load_platform_config(platform_store)
     sync_service.reload_connectors()
     return _build_platform_cards(request)
@@ -1543,8 +859,8 @@ def update_platform_settings(
     request: Request,
     body: PlatformUpdateRequest,
 ) -> PlatformCardResponse:
-    platform_store: PlatformConfigStore = _svc(request).platform_store
-    sync_service: SyncService = _svc(request).sync_service
+    platform_store: PlatformConfigStore = svc(request).platform_store
+    sync_service: SyncService = svc(request).sync_service
     platform_store.update_section(source, body.values)  # type: ignore[arg-type]
     settings.load_platform_config(platform_store)
     sync_service.reload_connectors()
@@ -1556,8 +872,8 @@ def update_platform_settings(
 
 @app.post("/api/settings/platforms/{source}/test")
 async def test_platform_settings(source: SourceKind, request: Request) -> dict[str, str]:
-    platform_store: PlatformConfigStore = _svc(request).platform_store
-    sync_service: SyncService = _svc(request).sync_service
+    platform_store: PlatformConfigStore = svc(request).platform_store
+    sync_service: SyncService = svc(request).sync_service
     settings.load_platform_config(platform_store)
     sync_service.reload_connectors()
     result = await asyncio.to_thread(sync_service.sync_source, source)
