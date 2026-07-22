@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,23 +59,34 @@ class KnowledgeWorkspace:
 
     def export_chunks(self, chunks: list[MemoryChunk]) -> int:
         self.ensure_layout()
-        written = 0
+        grouped: dict[tuple[str, str], list[MemoryChunk]] = defaultdict(list)
         for chunk in chunks:
             topic_parts = SOURCE_TOPICS.get(chunk.source, ("个人", chunk.source.value))
+            grouped[topic_parts].append(chunk)
+
+        written = 0
+        for topic_parts, topic_chunks in grouped.items():
             topic = " > ".join(topic_parts)
             folder = self.notes_dir / topic_parts[0] / topic_parts[1]
             folder.mkdir(parents=True, exist_ok=True)
-            filename = _safe_filename(chunk.title) + ".md"
+            filename = _safe_filename(topic_parts[1]) + ".md"
             note_path = folder / filename
+            sources = sorted({chunk.source.value for chunk in topic_chunks})
             frontmatter: dict[str, object] = {
                 "topic": topic,
-                "tags": [chunk.source.value, topic_parts[0], topic_parts[1]],
-                "title": chunk.title,
-                "source": chunk.source.value,
-                "chunk_id": chunk.chunk_id,
+                "tags": [*sources, topic_parts[0], topic_parts[1]],
+                "title": f"{topic_parts[1]} 汇总",
+                "source": ",".join(sources),
+                "chunk_id": f"aggregate:{topic_parts[0]}:{topic_parts[1]}",
+                "aggregate": True,
+                "chunk_count": len(topic_chunks),
             }
-            note_path.write_text(_compose_note(frontmatter, chunk.content), encoding="utf-8")
-            written += 1
+            note_path.write_text(
+                _compose_note(frontmatter, _compose_aggregate_body(topic_parts[1], topic_chunks)),
+                encoding="utf-8",
+            )
+            self._archive_legacy_chunk_notes(folder, keep=note_path)
+            written += len(topic_chunks)
         self.sync_wiki_index()
         return written
 
@@ -141,6 +154,20 @@ class KnowledgeWorkspace:
             raise IngestError("only notes under Notes/ can be edited")
         return target
 
+    def _archive_legacy_chunk_notes(self, folder: Path, *, keep: Path) -> None:
+        """Move old one-file-per-chunk generated notes out of Notes/."""
+        legacy_root = self.memory_dir / "legacy_notes"
+        for path in sorted(folder.glob("*.md")):
+            if path.resolve() == keep.resolve():
+                continue
+            meta, _ = _parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+            if not meta.get("chunk_id") or str(meta.get("aggregate", "")).lower() == "true":
+                continue
+            rel_parent = path.parent.relative_to(self.notes_dir)
+            target_dir = legacy_root / rel_parent
+            target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(_unique_archive_path(target_dir / path.name)))
+
     def topic_tree(self) -> list[dict[str, object]]:
         self.ensure_layout()
         tree: list[dict[str, object]] = []
@@ -191,12 +218,39 @@ def _compose_note(meta: dict[str, object], body: str) -> str:
         f"title: {meta.get('title', '')}",
         f"source: {meta.get('source', '')}",
         f"chunk_id: {meta.get('chunk_id', '')}",
+        f"aggregate: {str(meta.get('aggregate', False)).lower()}",
+        f"chunk_count: {meta.get('chunk_count', 1)}",
         "---",
         "",
         body.strip(),
         "",
     ]
     return "\n".join(lines)
+
+
+def _compose_aggregate_body(title: str, chunks: list[MemoryChunk]) -> str:
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        f"# {title} 汇总",
+        "",
+        f"> 更新时间：{timestamp}，共 {len(chunks)} 条。",
+        "",
+    ]
+    for chunk in sorted(chunks, key=lambda item: (item.created_at, item.chunk_id)):
+        created_at = chunk.created_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        lines.extend(
+            [
+                f"## {chunk.title}",
+                "",
+                f"- chunk_id: `{chunk.chunk_id}`",
+                f"- source: `{chunk.source.value}`",
+                f"- created_at: `{created_at}`",
+                "",
+                chunk.content.strip(),
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
@@ -220,6 +274,16 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
         else:
             meta[key] = value
     return meta, parts[2].strip()
+
+
+def _unique_archive_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(1, 10_000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise IngestError(f"too many archived note copies for {path.name}")
 
 
 def _safe_filename(title: str) -> str:
