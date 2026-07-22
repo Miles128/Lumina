@@ -9,8 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=71" />
+    <link rel="stylesheet" href="/assets/chat.css?v=72" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=11" />
+    <link rel="stylesheet" href="/assets/vendor/drawflow.min.css?v=1" />
     <script src="/assets/theme.js?v=2"></script>
   </head>
   <body>
@@ -234,13 +235,31 @@
 
       <div id="workflows-backdrop" class="overlay" hidden></div>
       <aside id="workflows-panel" class="sheet sheet-workflows" hidden>
-        <header class="sheet-head">
+        <header class="sheet-head sheet-head-workflows">
           <button id="btn-close-workflows" type="button" data-i18n-aria="action.close">×</button>
           <span data-i18n="workflows.title">工作流</span>
-          <button id="btn-workflow-new-sample" type="button" class="btn-text" data-i18n="workflows.newSample">新建示例</button>
+          <div class="workflows-head-actions">
+            <button id="btn-workflow-new-sample" type="button" class="btn-text" data-i18n="workflows.newSample">新建示例</button>
+            <button id="btn-workflow-save" type="button" class="btn-text" data-i18n="workflows.save" hidden>保存</button>
+            <button id="btn-workflow-run" type="button" class="btn-run" data-i18n="workflows.run" hidden>运行</button>
+          </div>
         </header>
-        <div class="sheet-body">
-          <nav id="workflows-nav" class="sheet-nav workflows-nav"></nav>
+        <div class="sheet-body sheet-body-workflows">
+          <nav id="workflows-nav" class="sheet-nav workflows-nav" aria-label="Workflow list"></nav>
+          <div class="workflows-editor" id="workflows-editor" hidden>
+            <aside class="workflows-palette" id="workflows-palette">
+              <p class="workflows-palette-label" data-i18n="workflows.palette">节点</p>
+              <button type="button" class="workflows-palette-btn" data-kind="agent">Agent</button>
+              <button type="button" class="workflows-palette-btn" data-kind="skill">Skill</button>
+              <button type="button" class="workflows-palette-btn" data-kind="branch">Branch</button>
+            </aside>
+            <div class="workflows-canvas-wrap">
+              <div id="workflow-drawflow" class="workflows-canvas"></div>
+            </div>
+            <aside class="workflows-inspector" id="workflows-inspector">
+              <p class="muted" data-i18n="workflows.selectNode">选中节点以编辑</p>
+            </aside>
+          </div>
           <div id="workflows-content" class="sheet-main workflows-main">
             <p class="muted" data-i18n="settings.loading">加载中…</p>
           </div>
@@ -265,13 +284,15 @@
     <script src="/assets/vendor/markdown-it.min.js?v=1"></script>
     <script src="/assets/vendor/purify.min.js?v=1"></script>
     <script src="/assets/markdown.js?v=1"></script>
-    <script src="/assets/i18n.js?v=16"></script>
+    <script src="/assets/i18n.js?v=17"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/lunar.js?v=3"></script>
     <script src="/assets/topbar.js?v=10"></script>
     <script src="/assets/settings.js?v=16"></script>
     <script src="/assets/skills.js?v=7"></script>
-    <script src="/assets/workflows.js?v=1"></script>
+    <script src="/assets/vendor/drawflow.min.js?v=1"></script>
+    <script src="/assets/workflow_graph.js?v=1"></script>
+    <script src="/assets/workflows.js?v=2"></script>
     <script src="/assets/chat.js?v=65"></script>
     <script src="/assets/conversation_map.js?v=10"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->

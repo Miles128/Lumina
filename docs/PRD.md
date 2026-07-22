@@ -366,7 +366,7 @@ spawn_subagent(worker) → file_write 需确认
 
 | # | 任务 | 说明 |
 |---|------|------|
-| **F26** | **Skill 编排（工作流 DAG）** | **实现中**：设计已拍板（`workflow-dag-design.md`）；后端 Store/Scheduler/`/api/workflows` 已落地；画布 UI 未交付 |
+| **F26** | **Skill 编排（工作流 DAG）** | **部分交付**：Store/Scheduler/API + Drawflow 画布编辑（列表/拖拽/保存/运行高亮）；高级暂停与 Skill 封装仍属后续 |
 | F20 | **Skill 自进化** | 基于用户反馈或执行失败自动更新/生成 SKILL.md / manifest.json + run.py（依赖 F26 或独立 skill 运行时） |
 | F21 | **反思记忆（Reflexion-style）** | **Done（MVP）**：失败 turn → reflect 子 agent → episodes 表扩展 → top-3 注入 system prompt |
 | F22 | **代码级自修复** | 在显式用户确认下，让子 Agent 修改 Lumina 自身源码并跑测试验证；默认关闭 |
