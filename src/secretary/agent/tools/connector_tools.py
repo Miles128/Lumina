@@ -155,7 +155,10 @@ class ListConnectorsTool(Tool):
         return "暂无已注册的连接器。"
 
     def _execute_via_registry(self) -> str | ToolResult:
-        providers = self._registry.list_providers()
+        registry = self._registry
+        if registry is None:
+            return "暂无已注册的连接器。"
+        providers = registry.list_providers()
         if not providers:
             return "暂无已注册的连接器。"
         blocks: list[str] = []
@@ -163,7 +166,7 @@ class ListConnectorsTool(Tool):
             source = _SOURCE_ALIASES.get(provider.name)
             if source is None:
                 continue
-            status_payload = self._registry.call_tool(
+            status_payload = registry.call_tool(
                 f"mcp_{provider.name}_status", {}
             )
             if isinstance(status_payload, dict) and "error" in status_payload:
@@ -185,7 +188,10 @@ class ListConnectorsTool(Tool):
         return "## 连接器\n\n" + "\n\n".join(blocks)
 
     def _execute_via_sync_service(self) -> str | ToolResult:
-        health = self._sync_service.get_stored_health()
+        sync_service = self._sync_service
+        if sync_service is None:
+            return "暂无已注册的连接器。"
+        health = sync_service.get_stored_health()
         if not health:
             return "暂无已注册的连接器。"
         blocks = [
@@ -252,8 +258,15 @@ class ConnectorStatusTool(Tool):
         return self._execute_via_sync_service(source)
 
     def _execute_via_registry(self, source: SourceKind) -> str | ToolResult:
+        registry = self._registry
+        if registry is None:
+            return ToolResult.failure(
+                "Error: no registry available",
+                error_type="internal",
+                retryable=False,
+            )
         provider = next(
-            (p for p in self._registry.list_providers() if p.name == source.value),
+            (p for p in registry.list_providers() if p.name == source.value),
             None,
         )
         if provider is None:
@@ -262,7 +275,7 @@ class ConnectorStatusTool(Tool):
                 error_type="not_found",
                 retryable=False,
             )
-        status_payload = self._registry.call_tool(f"mcp_{source.value}_status", {})
+        status_payload = registry.call_tool(f"mcp_{source.value}_status", {})
         if isinstance(status_payload, dict) and "error" in status_payload:
             return ToolResult.failure(
                 status_payload["error"],
@@ -270,7 +283,7 @@ class ConnectorStatusTool(Tool):
                 retryable=False,
             )
         return _format_provider_status(
-            source, provider.display_name, status_payload or {}
+            source, str(provider.display_name), status_payload or {}
         )
 
     def _execute_via_sync_service(self, source: SourceKind) -> str | ToolResult:
@@ -427,12 +440,13 @@ class SyncSourceTool(Tool):
         )
 
     def _provider_display_name(self, source: SourceKind) -> str:
+        fallback = SOURCE_LABELS.get(source, source.value)
         if self._mcp_manager is None:
-            return SOURCE_LABELS.get(source, source.value)
+            return fallback
         builtin = getattr(self._mcp_manager, "_builtin", None)
         if builtin is None:
-            return SOURCE_LABELS.get(source, source.value)
+            return fallback
         for provider in builtin.list_providers():
             if provider.name == source.value:
-                return provider.display_name
-        return SOURCE_LABELS.get(source, source.value)
+                return str(provider.display_name)
+        return fallback

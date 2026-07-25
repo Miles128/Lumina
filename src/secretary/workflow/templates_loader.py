@@ -14,19 +14,22 @@ def list_templates() -> list[dict[str, Any]]:
     root = resources.files("secretary.workflow").joinpath("templates")
     if not root.is_dir():
         return items
-    for path in sorted(root.iterdir()):
-        if not path.name.endswith(".json"):
+    entries = sorted(root.iterdir(), key=lambda p: p.name)
+    for path in entries:
+        filename = path.name
+        if not filename.endswith(".json"):
             continue
+        stem = filename[: -len(".json")]
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(data, dict):
             continue
-        name = str(data.get("name") or path.stem)
+        name = str(data.get("name") or stem)
         items.append(
             {
-                "id": path.stem,
+                "id": stem,
                 "name": name,
                 "version": int(data.get("version") or 1),
                 "node_count": len(data.get("nodes") or []),

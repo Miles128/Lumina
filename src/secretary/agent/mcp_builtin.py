@@ -99,13 +99,18 @@ class BuiltinMcpRegistry:
 class _ConnectorProvider:
     """Wrap a BaseConnector as a BuiltinMcpProvider exposing status + fetch."""
 
-    def __init__(self, source: SourceKind, display_name: str, connector_factory: Callable) -> None:
+    def __init__(
+        self,
+        source: SourceKind,
+        display_name: str,
+        connector_factory: Callable[[Any], Any],
+    ) -> None:
         self.name = source.value
         self.display_name = display_name
         self._source = source
         self._connector_factory = connector_factory
 
-    def _connector(self, settings: Any):
+    def _connector(self, settings: Any) -> Any:
         return self._connector_factory(settings)
 
     def status(self) -> dict[str, Any]:
@@ -158,8 +163,8 @@ def build_builtin_registry(settings: Any, sync_service: Any) -> BuiltinMcpRegist
         provider = _ConnectorProvider(source, display_name, factory)
 
         # Wire status: read from sync_service stored health (read-only, no CLI calls).
-        def make_status(src: SourceKind):
-            def _status(args):
+        def make_status(src: SourceKind) -> Callable[[dict[str, Any]], Any]:
+            def _status(args: dict[str, Any]) -> Any:
                 if sync_service is None:
                     return {"configured": False, "message": "sync service unavailable", "item_count": 0}
                 for item in sync_service.get_stored_health():
@@ -175,8 +180,11 @@ def build_builtin_registry(settings: Any, sync_service: Any) -> BuiltinMcpRegist
             return _status
 
         # Wire fetch: call connector.fetch() and serialize chunks to dict.
-        def make_fetch(src: SourceKind, fctry):
-            def _fetch(args):
+        def make_fetch(
+            src: SourceKind,
+            fctry: Callable[[Any], Any],
+        ) -> Callable[[dict[str, Any]], Any]:
+            def _fetch(args: dict[str, Any]) -> Any:
                 if settings is None:
                     return {"error": "settings unavailable"}
                 connector = fctry(settings)
@@ -200,8 +208,8 @@ def build_builtin_registry(settings: Any, sync_service: Any) -> BuiltinMcpRegist
             return _fetch
 
         # Override provider handlers with wired closures.
-        provider._status_handler = make_status(source)  # type: ignore[method-assign]
-        provider._fetch_handler = make_fetch(source, factory)  # type: ignore[method-assign]
+        provider._status_handler = make_status(source)  # type: ignore[assignment, method-assign]
+        provider._fetch_handler = make_fetch(source, factory)  # type: ignore[assignment, method-assign]
         reg.register(provider)
 
     return reg

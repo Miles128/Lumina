@@ -503,8 +503,9 @@ class AgentLoop:
                     and reply_defers_filesystem_work(reply)
                     and "list_dir" in self._tools
                 ):
-                    target = infer_list_dir_target(turn_user_message, reply)
-                    if target:
+                    retry_target = infer_list_dir_target(turn_user_message, reply)
+                    if retry_target:
+                        target = retry_target
                         auto_list_dir_used = True
                         list_tool = self._tools["list_dir"]
                         list_args = {"path": target}

@@ -113,7 +113,16 @@ class SyncService:
 
     def _sync_via_mcp(self, source: SourceKind) -> SyncResult:
         """Pull data via builtin MCP fetch tool and upsert chunks."""
-        raw = self._mcp_manager.call_tool(f"mcp_{source.value}_fetch", {})
+        mcp = self._mcp_manager
+        if mcp is None:
+            health = ConnectorHealth(
+                source=source,
+                status=ConnectorStatus.ERROR,
+                message="MCP manager unavailable",
+            )
+            self._store.update_sync_state(health)
+            return SyncResult(source=source, inserted=0, health=health)
+        raw = mcp.call_tool(f"mcp_{source.value}_fetch", {})
         if isinstance(raw, dict) and "error" in raw:
             health = ConnectorHealth(
                 source=source,

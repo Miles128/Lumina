@@ -274,15 +274,25 @@ class McpManager:
             full_name = server_name
             args = tool_name
             if self._builtin.has_tool(full_name):
-                return self._builtin.call_tool(full_name, args)
+                result = self._builtin.call_tool(full_name, args)
+                if isinstance(result, str):
+                    return result
+                if isinstance(result, dict):
+                    return result
+                return {"result": result}
             raise RuntimeError(f"Unknown builtin tool (no 2-arg remote support): {full_name}")
         # Remote 3-arg form: call_tool(server_name, tool_name, arguments, *, timeout)
         assert tool_name is not None and arguments is not None
         remote_name = tool_name if isinstance(tool_name, str) else str(tool_name)
-        return self._run(  # type: ignore[no-any-return]
+        remote_result = self._run(
             lambda: self._async_call_tool(server_name, remote_name, arguments),
             timeout=timeout + 5,
         )
+        if isinstance(remote_result, str):
+            return remote_result
+        if isinstance(remote_result, dict):
+            return remote_result
+        return {"result": remote_result}
 
     def shutdown(self) -> None:
         try:

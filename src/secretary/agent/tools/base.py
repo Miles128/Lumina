@@ -70,7 +70,7 @@ def _classify_error_string(text: str) -> tuple[str, bool]:
     return "internal", False
 
 
-def _coerce_to_tool_result(raw: str | ToolResult, tool_name: str = "") -> ToolResult:
+def _coerce_to_tool_result(raw: str | ToolResult | object, tool_name: str = "") -> ToolResult:
     """把工具输出统一转为 ToolResult。
 
     - 已经是 ToolResult 的直接返回

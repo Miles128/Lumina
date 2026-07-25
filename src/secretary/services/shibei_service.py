@@ -362,10 +362,12 @@ def format_shibei_context_block(payload: dict[str, Any] | None) -> str:
     lines.append("需要更深检索时可再调用 shibei_search。")
 
     body_lines: list[str] = []
+    doc_results = results if isinstance(results, list) else []
+    mem_results = memories if isinstance(memories, list) else []
     if has_docs:
         body_lines.append("")
         body_lines.append("### 相关文档")
-        for item in results[:5]:
+        for item in doc_results[:5]:
             if not isinstance(item, dict):
                 continue
             source = str(item.get("source") or item.get("file_path") or "")
@@ -380,7 +382,7 @@ def format_shibei_context_block(payload: dict[str, Any] | None) -> str:
     if has_mem:
         body_lines.append("")
         body_lines.append("### 相关记忆")
-        for memory in memories[:5]:
+        for memory in mem_results[:5]:
             if not isinstance(memory, dict):
                 continue
             category = str(memory.get("category") or "")

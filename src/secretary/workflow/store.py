@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from secretary.workflow.models import WorkflowDef
 
@@ -48,7 +49,7 @@ class WorkflowStore:
             raise WorkflowStoreError(f"workflow not found: {name}")
         path.unlink()
 
-    def save_run(self, run_id: str, payload: dict) -> Path:
+    def save_run(self, run_id: str, payload: dict[str, Any]) -> Path:
         runs_dir = self._root / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
         path = runs_dir / f"{run_id}.json"
@@ -58,7 +59,7 @@ class WorkflowStore:
         )
         return path
 
-    def get_run(self, run_id: str) -> dict:
+    def get_run(self, run_id: str) -> dict[str, Any]:
         cleaned = (run_id or "").strip()
         if not cleaned or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
             raise WorkflowStoreError(f"invalid run id: {run_id!r}")

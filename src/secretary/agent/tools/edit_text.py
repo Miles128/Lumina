@@ -181,7 +181,7 @@ def format_line_diff(before: str, after: str, *, path_label: str = "file") -> st
 
 def build_confirm_diff_preview(
     tool_name: str,
-    arguments: dict,
+    arguments: dict[str, object],
     working_dir: Path,
 ) -> str:
     """Build a read-only diff preview for write/edit confirmations."""

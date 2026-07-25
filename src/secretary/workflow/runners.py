@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -35,7 +36,9 @@ class AgentRunner(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def build_skill_runner(manager: ExecutableSkillManager):
+def build_skill_runner(
+    manager: ExecutableSkillManager,
+) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
     def skill_runner(name: str, inputs: dict[str, Any]) -> dict[str, Any]:
         skill = manager.get_skill(name)
         if skill is None or not skill.is_executable:

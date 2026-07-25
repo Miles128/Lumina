@@ -490,9 +490,9 @@ def _render_template(
 
 def _compare(actual: Any, op: str, expected: Any) -> bool:
     if op == "eq":
-        return actual == expected
+        return bool(actual == expected)
     if op == "neq":
-        return actual != expected
+        return bool(actual != expected)
     if op == "contains":
         return expected in (actual or "")
     raise WorkflowRunError(f"unsupported branch op: {op}")
