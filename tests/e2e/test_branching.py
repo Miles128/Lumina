@@ -537,7 +537,7 @@ def test_rollback_archive_and_restore(chat_page: tuple[Page, _MockChatBackend]) 
     expect(page.locator("#messages .message.archived")).to_have_count(0)
 
     # 5. Turn on "show archived".
-    page.locator(".sidebar-archive-btn").click()
+    page.locator("#btn-show-archived").click()
 
     # 6. Archived messages reappear, greyed (user2 + bot2).
     expect(page.locator("#messages .message")).to_have_count(4)

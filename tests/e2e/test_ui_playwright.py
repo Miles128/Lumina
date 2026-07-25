@@ -97,10 +97,10 @@ def test_ui_sync_button_triggers_api(page: Page) -> None:
     page.route("**/api/sync/**", track_sync)
     page.goto("/")
     _open_settings(page)
-    platform_btn = page.locator("#settings-nav .settings-nav-group").nth(1).locator(
-        "button.settings-nav-item"
-    ).nth(1)
-    platform_btn.click()
-    page.locator('[data-action="sync"]').click()
+    # Connectors live under Tools → MCP as builtin providers.
+    page.locator('#settings-nav [data-key="tools_mcp"]').click()
+    sync_btn = page.locator("[data-builtin-sync]").first
+    expect(sync_btn).to_be_visible(timeout=10_000)
+    sync_btn.click()
     page.wait_for_timeout(800)
-    assert sync_hits, "expected POST /api/sync/{source} from settings sync button"
+    assert sync_hits, "expected POST /api/sync/{source} from MCP builtin sync button"
