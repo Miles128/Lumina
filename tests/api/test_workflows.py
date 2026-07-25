@@ -85,3 +85,57 @@ def test_workflows_crud_and_run(tmp_path: Path) -> None:
     finally:
         app.state.workflow_store = original_store
         app.state.workflow_scheduler = original_scheduler
+
+
+def test_workflows_templates_and_resume(tmp_path: Path) -> None:
+    client = TestClient(app)
+    original_store = app.state.workflow_store
+    original_scheduler = app.state.workflow_scheduler
+    store = WorkflowStore(tmp_path / "workflows")
+
+    def agent_runner(prompt: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        return {"reply": prompt}
+
+    app.state.workflow_store = store
+    app.state.workflow_scheduler = WorkflowScheduler(agent_runner=agent_runner)
+    try:
+        templates = client.get("/api/workflows/templates")
+        assert templates.status_code == 200
+        ids = {item["id"] for item in templates.json()["templates"]}
+        assert "research" in ids
+
+        created = client.post(
+            "/api/workflows/templates/research",
+            json={"name": "research_demo"},
+        )
+        assert created.status_code == 200
+        assert created.json()["name"] == "research_demo"
+
+        paused = client.post(
+            "/api/workflows/research_demo/run",
+            json={"inputs": {"topic": "Lumina"}},
+        )
+        assert paused.status_code == 200
+        body = paused.json()
+        assert body["status"] == "paused"
+        assert body["pause_node_id"] == "review"
+        run_id = body["run_id"]
+
+        resumed = client.post(
+            f"/api/workflows/runs/{run_id}/resume",
+            json={"approved": True, "note": "ok"},
+        )
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "completed"
+    finally:
+        app.state.workflow_store = original_store
+        app.state.workflow_scheduler = original_scheduler
+
+
+def test_agent_policy_endpoint() -> None:
+    client = TestClient(app)
+    response = client.get("/api/agent/policy")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["max_spawn_depth"] == 1
+    assert any(item["name"] == "worker" for item in body["archetypes"])

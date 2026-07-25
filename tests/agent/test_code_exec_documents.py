@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from secretary.agent.agent_profile import AgentProfile, resolve_parent_tools
+from secretary.agent.confirmation_policy import tool_requires_confirmation
 from secretary.agent.tools.code_exec import CodeExecTool
 from secretary.agent.tools.documents import ReadDocumentTool
+from secretary.agent.tools.fs import FileReadTool, ListDirTool
+from secretary.services.file_auth import FileAuthService
 
 
 def test_code_exec_runs_snippet(tmp_path: Path) -> None:
@@ -27,13 +31,68 @@ def test_code_exec_rejects_empty(tmp_path: Path) -> None:
     assert tool.execute({"code": "  "}, tmp_path).startswith("Error:")
 
 
-def test_code_exec_blocks_open_outside_cwd(tmp_path: Path) -> None:
+def test_code_exec_reads_workspace_absolute(tmp_path: Path) -> None:
+    data = tmp_path / "numbers.txt"
+    data.write_text("1\n2\n3\n", encoding="utf-8")
     tool = CodeExecTool()
+    out = tool.execute(
+        {
+            "code": (
+                f"print(sum(int(line) for line in open({str(data)!r})))\n"
+            )
+        },
+        tmp_path,
+    )
+    assert "6" in out
+
+
+def test_code_exec_reads_workspace_relative(tmp_path: Path) -> None:
+    (tmp_path / "sample.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    tool = CodeExecTool()
+    out = tool.execute(
+        {"code": "print(open('sample.csv').read().strip())\n"},
+        tmp_path,
+    )
+    assert "1,2" in out
+
+
+def test_code_exec_blocks_write_to_workspace(tmp_path: Path) -> None:
+    target = tmp_path / "owned.txt"
+    target.write_text("keep", encoding="utf-8")
+    tool = CodeExecTool()
+    out = tool.execute(
+        {"code": f"open({str(target)!r}, 'w').write('hacked')\n"},
+        tmp_path,
+    )
+    assert target.read_text(encoding="utf-8") == "keep"
+    assert "Error" in out or "PermissionError" in out or "sandbox" in out.lower()
+
+
+def test_code_exec_allows_write_inside_sandbox(tmp_path: Path) -> None:
+    tool = CodeExecTool()
+    out = tool.execute(
+        {
+            "code": (
+                "open('out.txt', 'w').write('ok')\n"
+                "print(open('out.txt').read())\n"
+            )
+        },
+        tmp_path,
+    )
+    assert "ok" in out
+    assert "Error" not in out.split("[stderr]")[0]
+
+
+def test_code_exec_blocks_open_outside_cwd(tmp_path: Path) -> None:
     secret = tmp_path / "secret.txt"
     secret.write_text("top-secret", encoding="utf-8")
-    # Snippet runs in a temp cwd; opening the host path should be denied.
+    # Snippet runs with workspace=tmp_path so absolute under workspace is allowed.
+    # Outside both sandbox and workspace must fail.
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("top-secret", encoding="utf-8")
+    tool = CodeExecTool()
     out = tool.execute(
-        {"code": f"print(open({str(secret)!r}).read())"},
+        {"code": f"print(open({str(outside)!r}).read())"},
         tmp_path,
     )
     assert "top-secret" not in out
@@ -53,6 +112,30 @@ def test_code_exec_blocks_network_socket(tmp_path: Path) -> None:
         tmp_path,
     )
     assert "Error" in out or "PermissionError" in out or "sandbox" in out.lower()
+
+
+def test_code_exec_session_grant_skips_confirmation(tmp_path: Path) -> None:
+    tool = CodeExecTool()
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    needs, kind = tool_requires_confirmation(
+        tool, {"code": "print(1)"}, working_dir=tmp_path, file_auth=auth
+    )
+    assert needs is True
+    assert kind == "action"
+    auth.grant_session_code_exec()
+    needs2, kind2 = tool_requires_confirmation(
+        tool, {"code": "print(1)"}, working_dir=tmp_path, file_auth=auth
+    )
+    assert needs2 is False
+    assert kind2 == ""
+
+
+def test_ask_profile_includes_code_exec_plan_excludes(tmp_path: Path) -> None:
+    tools = [ListDirTool(), FileReadTool(), CodeExecTool()]
+    ask = {t.name for t in resolve_parent_tools(AgentProfile.ASK, tools, spawn_tool=None)}
+    plan = {t.name for t in resolve_parent_tools(AgentProfile.PLAN, tools, spawn_tool=None)}
+    assert "code_exec" in ask
+    assert "code_exec" not in plan
 
 
 def test_read_document_xlsx(tmp_path: Path) -> None:

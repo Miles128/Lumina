@@ -9,9 +9,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from secretary.workflow.models import WorkflowDef, WorkflowEdge, WorkflowNode
+from secretary.workflow.pause import WorkflowNodePaused
 
 SkillRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
-AgentRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
+# (prompt, inputs, config) — config may be omitted by legacy 2-arg callables
+AgentRunner = Callable[..., dict[str, Any]]
+AgentResume = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
 
@@ -24,17 +27,21 @@ class WorkflowRunError(ValueError):
 class NodeStepResult:
     node_id: str
     kind: str
-    status: str  # completed | failed | skipped
+    status: str  # completed | failed | skipped | paused
     outputs: dict[str, Any] = field(default_factory=dict)
     error: str = ""
 
 
 @dataclass
 class WorkflowRunResult:
-    status: str  # completed | failed
+    status: str  # completed | failed | paused
     steps: list[NodeStepResult] = field(default_factory=list)
     node_outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: str = ""
+    pause_node_id: str = ""
+    pause_prompt: str = ""
+    pause_kind: str = ""  # human_review | confirm
+    checkpoint: dict[str, Any] = field(default_factory=dict)
 
 
 def topological_order(
@@ -73,15 +80,23 @@ class WorkflowScheduler:
         *,
         skill_runner: SkillRunner | None = None,
         agent_runner: AgentRunner | None = None,
+        agent_resume: AgentResume | None = None,
     ) -> None:
         self._skill_runner = skill_runner
         self._agent_runner = agent_runner
+        self._agent_resume = agent_resume
+        if agent_resume is None and agent_runner is not None:
+            resume_fn = getattr(agent_runner, "resume", None)
+            if callable(resume_fn):
+                self._agent_resume = resume_fn
 
     def run(
         self,
         workflow: WorkflowDef,
         *,
         inputs: dict[str, Any] | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        resume_payload: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         inputs = dict(inputs or {})
         order = topological_order(workflow.nodes, workflow.edges)
@@ -95,8 +110,110 @@ class WorkflowScheduler:
         activated: set[tuple[str, str, str]] = set()
         node_outputs: dict[str, dict[str, Any]] = {"__inputs__": inputs}
         steps: list[NodeStepResult] = []
+        skip_until = ""
+
+        if checkpoint:
+            for key, value in (checkpoint.get("node_outputs") or {}).items():
+                if isinstance(value, dict):
+                    node_outputs[key] = dict(value)
+            for item in checkpoint.get("steps") or []:
+                if not isinstance(item, dict):
+                    continue
+                steps.append(
+                    NodeStepResult(
+                        node_id=str(item.get("node_id") or ""),
+                        kind=str(item.get("kind") or ""),
+                        status=str(item.get("status") or "completed"),
+                        outputs=dict(item.get("outputs") or {}),
+                        error=str(item.get("error") or ""),
+                    )
+                )
+            for triple in checkpoint.get("activated") or []:
+                if isinstance(triple, (list, tuple)) and len(triple) == 3:
+                    activated.add((str(triple[0]), str(triple[1]), str(triple[2])))
+            skip_until = str(checkpoint.get("pause_node_id") or "")
 
         for node_id in order:
+            gate_cleared = False
+            # Resume: skip until the paused node, then apply human decision
+            if skip_until:
+                if node_id != skip_until:
+                    continue
+                steps = [s for s in steps if not (s.node_id == node_id and s.status == "paused")]
+                node = by_id[node_id]
+                if resume_payload is None:
+                    raise WorkflowRunError("resume_payload required for paused node")
+                approved = bool(resume_payload.get("approved", True))
+                note = str(resume_payload.get("note") or "")
+                if not approved:
+                    return WorkflowRunResult(
+                        status="failed",
+                        steps=steps
+                        + [
+                            NodeStepResult(
+                                node_id=node_id,
+                                kind=node.kind,
+                                status="failed",
+                                error="human rejected",
+                                outputs={"approved": False, "note": note},
+                            )
+                        ],
+                        node_outputs={
+                            k: v for k, v in node_outputs.items() if k != "__inputs__"
+                        },
+                        error=f"node {node_id} rejected by human",
+                    )
+                agent_state = dict(checkpoint.get("agent_state") or {}) if checkpoint else {}
+                if agent_state and node.kind == "agent":
+                    if self._agent_resume is None:
+                        raise WorkflowRunError("agent_resume is not configured")
+                    try:
+                        outputs = dict(self._agent_resume(agent_state, resume_payload))
+                    except WorkflowNodePaused as paused:
+                        return self._paused_result(
+                            steps=steps,
+                            node_outputs=node_outputs,
+                            activated=activated,
+                            inputs=inputs,
+                            node_id=node_id,
+                            kind=node.kind,
+                            paused=paused,
+                        )
+                    steps.append(
+                        NodeStepResult(
+                            node_id=node_id,
+                            kind=node.kind,
+                            status="completed",
+                            outputs=outputs,
+                        )
+                    )
+                    node_outputs[node_id] = outputs
+                    for edge in outbound.get(node_id, []):
+                        activated.add((edge.from_id, edge.to_id, edge.port))
+                    skip_until = ""
+                    resume_payload = None
+                    continue
+                if node.kind == "human_review":
+                    outputs = {"approved": True, "note": note}
+                    steps.append(
+                        NodeStepResult(
+                            node_id=node_id,
+                            kind=node.kind,
+                            status="completed",
+                            outputs=outputs,
+                        )
+                    )
+                    node_outputs[node_id] = outputs
+                    for edge in outbound.get(node_id, []):
+                        activated.add((edge.from_id, edge.to_id, edge.port))
+                    skip_until = ""
+                    resume_payload = None
+                    continue
+                # agent + confirm_before: cleared gate, execute agent body
+                gate_cleared = True
+                skip_until = ""
+                resume_payload = None
+
             node = by_id[node_id]
             edges_in = inbound.get(node_id, [])
             if edges_in:
@@ -113,8 +230,47 @@ class WorkflowScheduler:
             else:
                 active_in = []
 
+            # Pause points: human_review, or agent with confirm_before (first hit)
+            needs_pause = (
+                not gate_cleared
+                and (
+                    node.kind == "human_review"
+                    or (node.kind == "agent" and bool(node.config.get("confirm_before")))
+                )
+            )
+            already_done = any(
+                s.node_id == node_id and s.status == "completed" for s in steps
+            )
+            if needs_pause and not already_done:
+                prompt = str(
+                    node.config.get("prompt")
+                    or node.config.get("confirm_prompt")
+                    or ("请确认后继续" if node.kind != "human_review" else "请人工审阅后继续")
+                )
+                pause_kind = "human_review" if node.kind == "human_review" else "confirm"
+                return self._paused_result(
+                    steps=steps,
+                    node_outputs=node_outputs,
+                    activated=activated,
+                    inputs=inputs,
+                    node_id=node_id,
+                    kind=node.kind,
+                    pause_prompt=prompt,
+                    pause_kind=pause_kind,
+                )
+
             try:
                 outputs = self._execute_node(node, inputs, node_outputs)
+            except WorkflowNodePaused as paused:
+                return self._paused_result(
+                    steps=steps,
+                    node_outputs=node_outputs,
+                    activated=activated,
+                    inputs=inputs,
+                    node_id=node_id,
+                    kind=node.kind,
+                    paused=paused,
+                )
             except Exception as exc:
                 step = NodeStepResult(
                     node_id=node_id,
@@ -182,12 +338,81 @@ class WorkflowScheduler:
                 raise WorkflowRunError("agent_runner is not configured")
             template = str(node.config.get("prompt_template") or "")
             prompt = _render_template(template, workflow_inputs, node_outputs)
-            return dict(self._agent_runner(prompt, mapped))
+            try:
+                result = self._agent_runner(prompt, mapped, dict(node.config))
+            except TypeError:
+                result = self._agent_runner(prompt, mapped)
+            return dict(result)
 
         if node.kind == "branch":
             return self._eval_branch(node, workflow_inputs, node_outputs)
 
+        if node.kind == "human_review":
+            # Should be handled by pause/resume path before execute
+            return {
+                "approved": True,
+                "note": str(node.config.get("default_note") or ""),
+            }
+
         raise WorkflowRunError(f"unsupported node kind: {node.kind}")
+
+    def _paused_result(
+        self,
+        *,
+        steps: list[NodeStepResult],
+        node_outputs: dict[str, dict[str, Any]],
+        activated: set[tuple[str, str, str]],
+        inputs: dict[str, Any],
+        node_id: str,
+        kind: str,
+        pause_prompt: str = "",
+        pause_kind: str = "",
+        paused: WorkflowNodePaused | None = None,
+        agent_state: dict[str, Any] | None = None,
+    ) -> WorkflowRunResult:
+        prompt = pause_prompt
+        kind_name = pause_kind
+        state = dict(agent_state or {})
+        if paused is not None:
+            prompt = paused.pause_prompt
+            kind_name = paused.pause_kind
+            state = dict(paused.agent_state)
+        steps = list(steps) + [
+            NodeStepResult(
+                node_id=node_id,
+                kind=kind,
+                status="paused",
+                outputs={"prompt": prompt},
+            )
+        ]
+        public_outputs = {k: v for k, v in node_outputs.items() if k != "__inputs__"}
+        checkpoint: dict[str, Any] = {
+            "node_outputs": public_outputs,
+            "steps": [
+                {
+                    "node_id": s.node_id,
+                    "kind": s.kind,
+                    "status": s.status,
+                    "outputs": s.outputs,
+                    "error": s.error,
+                }
+                for s in steps
+            ],
+            "activated": [list(item) for item in activated],
+            "pause_node_id": node_id,
+            "inputs": inputs,
+        }
+        if state:
+            checkpoint["agent_state"] = state
+        return WorkflowRunResult(
+            status="paused",
+            steps=steps,
+            node_outputs=public_outputs,
+            pause_node_id=node_id,
+            pause_prompt=prompt,
+            pause_kind=kind_name,
+            checkpoint=checkpoint,
+        )
 
     def _map_inputs(
         self,

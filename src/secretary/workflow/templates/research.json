@@ -1,0 +1,36 @@
+{
+  "name": "research",
+  "version": 1,
+  "inputs_schema": { "topic": "string" },
+  "outputs_schema": {},
+  "nodes": [
+    {
+      "id": "draft",
+      "kind": "agent",
+      "config": {
+        "prompt_template": "围绕主题「{{topic}}」列出 5 个调研要点与待查来源（只读分析，不写文件）。"
+      },
+      "on_failure": "stop"
+    },
+    {
+      "id": "review",
+      "kind": "human_review",
+      "config": {
+        "prompt": "确认调研要点是否可接受？通过后生成摘要。"
+      },
+      "on_failure": "stop"
+    },
+    {
+      "id": "summary",
+      "kind": "agent",
+      "config": {
+        "prompt_template": "根据上文要点，写一段简短调研摘要。主题：{{topic}}。前置输出：{{draft.summary}}{{draft.text}}{{draft.reply}}"
+      },
+      "on_failure": "stop"
+    }
+  ],
+  "edges": [
+    { "from": "draft", "to": "review", "port": "default" },
+    { "from": "review", "to": "summary", "port": "default" }
+  ]
+}

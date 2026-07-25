@@ -114,6 +114,8 @@
       { key: "agent_llm", label: t("settings.llm"), status: agentConfig?.status || "not_configured" },
       { key: "agent_soul", label: t("settings.soul"), status: "ready" },
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
+      { key: "agent_delegation", label: t("settings.delegation"), status: "ready" },
+      { key: "agent_harness", label: t("settings.harness"), status: "ready" },
       { key: "profile", label: t("settings.profile") },
     ]) {
       agentGroup.appendChild(buildNavItem(item));
@@ -209,6 +211,14 @@
     }
     if (key === "agent_memory") {
       renderAgentMemoryPane();
+      return;
+    }
+    if (key === "agent_delegation") {
+      void renderAgentDelegationPane();
+      return;
+    }
+    if (key === "agent_harness") {
+      void renderAgentHarnessPane();
       return;
     }
     if (key === "agent_mcp" || key === "tools_mcp") {
@@ -766,6 +776,158 @@
     } catch (error) {
       showFeedback(feedback, "error", `清除失败：${error.message}`);
     }
+  }
+
+  function collectHarnessPayload() {
+    return {
+      harness: {
+        max_tool_rounds: Number(document.getElementById("harness-max-rounds")?.value || 20),
+        light_max_steps: Number(document.getElementById("harness-light-steps")?.value || 3),
+        compaction_max_tokens: Number(document.getElementById("harness-compact-tokens")?.value || 24000),
+        compaction_keep_tail: Number(document.getElementById("harness-keep-tail")?.value || 8),
+        trace_retention: document.getElementById("harness-trace-retention")?.value || "full",
+        trace_retain_days: Number(document.getElementById("harness-trace-days")?.value || 30),
+        max_tool_output_chars: Number(document.getElementById("harness-tool-output")?.value || 12000),
+      },
+    };
+  }
+
+  async function saveHarnessSettings() {
+    const feedback = document.getElementById("harness-feedback");
+    try {
+      agentConfig = await window.SecretaryAPI.request(
+        "PUT",
+        "/api/agent/config",
+        collectHarnessPayload(),
+      );
+      showFeedback(feedback, "ok", t("settings.harness.saved"));
+    } catch (error) {
+      showFeedback(feedback, "error", `保存失败：${error.message}`);
+    }
+  }
+
+  async function renderAgentHarnessPane() {
+    contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
+    try {
+      agentConfig = await window.SecretaryAPI.request("GET", "/api/agent/config");
+    } catch (error) {
+      contentEl.innerHTML = `<p class="error">加载失败：${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    const h = agentConfig?.harness || {};
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <h3>${escapeHtml(t("settings.harness"))}</h3>
+          <p>${escapeHtml(t("settings.harness.desc"))}</p>
+        </header>
+        <section class="settings-fields">
+          <label class="settings-field">
+            <span>max_tool_rounds</span>
+            <input id="harness-max-rounds" type="number" min="1" max="64" value="${escapeHtml(String(h.max_tool_rounds ?? 20))}" />
+          </label>
+          <label class="settings-field">
+            <span>light_max_steps</span>
+            <input id="harness-light-steps" type="number" min="1" max="16" value="${escapeHtml(String(h.light_max_steps ?? 3))}" />
+          </label>
+          <label class="settings-field">
+            <span>compaction_max_tokens</span>
+            <input id="harness-compact-tokens" type="number" min="4000" max="128000" value="${escapeHtml(String(h.compaction_max_tokens ?? 24000))}" />
+          </label>
+          <label class="settings-field">
+            <span>compaction_keep_tail</span>
+            <input id="harness-keep-tail" type="number" min="2" max="64" value="${escapeHtml(String(h.compaction_keep_tail ?? 8))}" />
+          </label>
+          <label class="settings-field">
+            <span>trace_retention</span>
+            <select id="harness-trace-retention">
+              <option value="full" ${h.trace_retention === "full" ? "selected" : ""}>full</option>
+              <option value="summary" ${h.trace_retention === "summary" ? "selected" : ""}>summary</option>
+              <option value="off" ${h.trace_retention === "off" ? "selected" : ""}>off</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span>trace_retain_days</span>
+            <input id="harness-trace-days" type="number" min="0" max="365" value="${escapeHtml(String(h.trace_retain_days ?? 30))}" />
+          </label>
+          <label class="settings-field">
+            <span>max_tool_output_chars</span>
+            <input id="harness-tool-output" type="number" min="500" max="100000" value="${escapeHtml(String(h.max_tool_output_chars ?? 12000))}" />
+          </label>
+        </section>
+        <div class="platform-actions">
+          <button type="button" class="primary" id="harness-save">${escapeHtml(t("action.save"))}</button>
+          <span id="harness-feedback" class="settings-feedback" aria-live="polite"></span>
+        </div>
+        <p class="muted">子 Agent 深度硬限 depth=1 不可配置绕过。委派说明见「${escapeHtml(t("settings.delegation"))}」。</p>
+      </div>`;
+    document.getElementById("harness-save")?.addEventListener("click", () => {
+      void saveHarnessSettings();
+    });
+  }
+
+  async function renderAgentDelegationPane() {
+    contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
+    let policy;
+    try {
+      policy = await window.SecretaryAPI.request("GET", "/api/agent/policy");
+    } catch (error) {
+      contentEl.innerHTML = `<p class="error">加载失败：${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    const archetypes = Array.isArray(policy?.archetypes) ? policy.archetypes : [];
+    const profiles = Array.isArray(policy?.profiles) ? policy.profiles : [];
+    const kinds = Array.isArray(policy?.confirm_kinds) ? policy.confirm_kinds : [];
+    const grants = policy?.session_grants || {};
+    const notes = Array.isArray(policy?.notes) ? policy.notes : [];
+    const archRows = archetypes
+      .map(
+        (a) =>
+          `<tr><td>${escapeHtml(a.name)}</td><td>${a.can_write ? "读写" : "只读"}</td>` +
+          `<td>${a.can_spawn ? "是" : "否"}</td><td>${escapeHtml((a.tools || []).slice(0, 6).join(", "))}${
+            (a.tools || []).length > 6 ? "…" : ""
+          }</td></tr>`,
+      )
+      .join("");
+    const profileRows = profiles
+      .map(
+        (p) =>
+          `<tr><td>${escapeHtml(p.label || p.id)}</td><td>${p.can_write ? "可写" : "只读"}</td>` +
+          `<td>${p.can_spawn ? "可委派" : "不可委派"}</td></tr>`,
+      )
+      .join("");
+    contentEl.innerHTML = `
+      <div class="settings-pane">
+        <header class="settings-pane-head">
+          <h3>${escapeHtml(t("settings.delegation"))}</h3>
+          <p>只读说明当前 harness 的委派深度、子 Agent 权限与确认策略。不改变运行时行为。</p>
+        </header>
+        <section class="settings-fields">
+          <p class="platform-meta">子 Agent 深度上限：<strong>${escapeHtml(
+            String(policy?.max_spawn_depth ?? 1),
+          )}</strong>
+          · 每轮最多 spawn：${escapeHtml(String(policy?.max_spawns_per_turn ?? 3))}
+          · 并行 explore：${escapeHtml(String(policy?.max_parallel_explore ?? 3))}</p>
+        </section>
+        <h4>主会话 Profile</h4>
+        <table class="settings-table"><thead><tr><th>模式</th><th>写盘</th><th>委派</th></tr></thead>
+        <tbody>${profileRows}</tbody></table>
+        <h4>子 Agent Archetype</h4>
+        <table class="settings-table"><thead><tr><th>类型</th><th>权限</th><th>再 spawn</th><th>工具（摘要）</th></tr></thead>
+        <tbody>${archRows}</tbody></table>
+        <h4>需确认的操作</h4>
+        <ul class="settings-list">${kinds
+          .map((k) => `<li><code>${escapeHtml(k.id)}</code> — ${escapeHtml(k.label)}</li>`)
+          .join("")}</ul>
+        <h4>当前会话授权</h4>
+        <ul class="settings-list">
+          <li>永久读授权：${grants.permanent_read ? "已开" : "未开"}</li>
+          <li>本会话新建文件免确认：${grants.session_write_new ? "已开" : "未开"}</li>
+          <li>本会话 code_exec 免确认：${grants.session_code_exec ? "已开" : "未开"}</li>
+        </ul>
+        <h4>说明</h4>
+        <ul class="settings-list">${notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
+      </div>`;
   }
 
   const SOUL_PRESETS = {

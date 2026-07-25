@@ -19,6 +19,27 @@
   let currentThread = "";
   let treeData = null;
   let isOpen = false;
+  /** @type {{ turnId: string, status: string, archetype: string } | null} */
+  let liveOverlay = null;
+
+  const ROLE_LABELS = {
+    human: "人",
+    main_agent: "主 Agent",
+  };
+  const STATUS_LABELS = {
+    pending: "待答",
+    active: "当前",
+    done: "完成",
+    rolled_back: "已回滚",
+    running: "进行中",
+    waiting_confirm: "待确认",
+  };
+  const ARCHETYPE_LABELS = {
+    explore: "explore",
+    worker: "worker",
+    verify: "verify",
+    plan: "plan",
+  };
 
   function t(key) {
     return window.LuminaI18n ? window.LuminaI18n.t(key) : key;
@@ -158,6 +179,49 @@
   function assistantPreview(node) {
     if (!node.has_assistant) return "（待回答）";
     return truncatePreview(node.assistant_preview) || "(灵犀)";
+  }
+
+  function resolveNodeStatus(node, isLeaf) {
+    if (liveOverlay && isLeaf && liveOverlay.status) {
+      const matchTurn =
+        !liveOverlay.turnId ||
+        liveOverlay.turnId === node.id ||
+        liveOverlay.turnId === node.user_message_id ||
+        liveOverlay.turnId === node.assistant_message_id;
+      if (matchTurn) return liveOverlay.status;
+    }
+    return String(
+      node.status ||
+        (node.archived
+          ? "rolled_back"
+          : node.has_assistant
+            ? node.active
+              ? "active"
+              : "done"
+            : "pending"),
+    );
+  }
+
+  function appendStatusChip(g, node, isLeaf, status) {
+    const parts = [];
+    const statusLabel = STATUS_LABELS[status];
+    if (statusLabel) parts.push(statusLabel);
+    if (
+      isLeaf &&
+      liveOverlay &&
+      liveOverlay.archetype &&
+      ARCHETYPE_LABELS[liveOverlay.archetype]
+    ) {
+      parts.push(ARCHETYPE_LABELS[liveOverlay.archetype]);
+    }
+    if (!parts.length) return;
+    const chip = document.createElementNS(SVG_NS, "text");
+    chip.setAttribute("class", `map-node-status map-status-${status}`);
+    chip.setAttribute("x", String(NODE_W - 8));
+    chip.setAttribute("y", "22");
+    chip.setAttribute("text-anchor", "end");
+    chip.textContent = parts.join(" · ");
+    g.appendChild(chip);
   }
 
   async function loadTree(threadId) {
@@ -327,13 +391,16 @@
       const isDone = activeSet.has(node.id) && !isLeaf;
       // branch: 不在活跃路径上的非叶子节点
       const isBranch = !activeSet.has(node.id) && !isLeaf;
+      const status = resolveNodeStatus(node, isLeaf);
+      const statusClass = status ? ` is-status-${status}` : "";
       const g = document.createElementNS(SVG_NS, "g");
       g.setAttribute(
         "class",
-        `map-node${isActive ? " is-active" : ""}${isArchived ? " is-archived" : ""}${isLeaf ? " is-leaf" : ""}${isDone ? " is-done" : ""}${isBranch ? " is-branch" : ""}`,
+        `map-node${isActive ? " is-active" : ""}${isArchived ? " is-archived" : ""}${isLeaf ? " is-leaf" : ""}${isDone ? " is-done" : ""}${isBranch ? " is-branch" : ""}${statusClass}`,
       );
       g.setAttribute("transform", `translate(${pos.x + PAD}, ${pos.y + PAD})`);
       g.dataset.nodeId = node.id;
+      g.dataset.status = status;
 
       const rect = document.createElementNS(SVG_NS, "rect");
       rect.setAttribute("width", String(NODE_W));
@@ -341,21 +408,23 @@
       rect.setAttribute("rx", "6");
       g.appendChild(rect);
 
+      const qRole = ROLE_LABELS[node.role_user] || ROLE_LABELS.human;
       const qLabel = document.createElementNS(SVG_NS, "text");
-      qLabel.setAttribute("class", "map-node-q-label");
+      qLabel.setAttribute("class", "map-node-q-label role-human");
       qLabel.setAttribute("x", "8");
       qLabel.setAttribute("y", "14");
-      qLabel.textContent = "问";
+      qLabel.textContent = qRole;
       g.appendChild(qLabel);
 
       const qLines = wrapPreviewLines(node.user_preview || "(提问)", 2);
-      appendMultilineText(g, "map-node-q-text", 22, 14, qLines.length ? qLines : ["(提问)"]);
+      appendMultilineText(g, "map-node-q-text", 28, 14, qLines.length ? qLines : ["(提问)"]);
 
+      const aRole = ROLE_LABELS[node.role_assistant] || ROLE_LABELS.main_agent;
       const aLabel = document.createElementNS(SVG_NS, "text");
-      aLabel.setAttribute("class", "map-node-a-label");
+      aLabel.setAttribute("class", "map-node-a-label role-main-agent");
       aLabel.setAttribute("x", "8");
       aLabel.setAttribute("y", "58");
-      aLabel.textContent = "答";
+      aLabel.textContent = aRole;
       g.appendChild(aLabel);
 
       const aLines = wrapPreviewLines(
@@ -365,13 +434,16 @@
       appendMultilineText(
         g,
         "map-node-a-text",
-        22,
+        48,
         58,
         aLines.length ? aLines : [node.has_assistant ? "(灵犀)" : "（待回答）"],
       );
 
+      appendStatusChip(g, node, isLeaf, status);
+
       const tooltip = document.createElementNS(SVG_NS, "title");
-      tooltip.textContent = `问：${userPreview(node)}\n答：${assistantPreview(node)}`;
+      const statusHint = STATUS_LABELS[status] || status;
+      tooltip.textContent = `${qRole}：${userPreview(node)}\n${aRole}：${assistantPreview(node)}\n状态：${statusHint}`;
       g.appendChild(tooltip);
 
       if (isLeaf) {
@@ -469,9 +541,31 @@
     });
   }
 
+  function applyLiveOverlay(detail) {
+    if (!detail || typeof detail !== "object") return;
+    const threadId = String(detail.thread_id || "");
+    if (threadId && currentThread && threadId !== currentThread) return;
+    const status = String(detail.status || "").trim();
+    const turnId = String(detail.turn_id || "").trim();
+    const archetype = String(detail.archetype || "").trim();
+    if (!status) {
+      liveOverlay = null;
+    } else {
+      liveOverlay = { turnId, status, archetype };
+    }
+    if (isOpen) render();
+  }
+
+  function bindLiveOverlay() {
+    document.addEventListener("conversation:map-live", (event) => {
+      applyLiveOverlay(event.detail);
+    });
+  }
+
   window.ConversationMapModule = {
     init() {
       bindToggleButton();
+      bindLiveOverlay();
     },
     open(threadId) {
       void open(threadId);
@@ -483,8 +577,10 @@
     isOpen() {
       return isOpen;
     },
+    applyLiveOverlay,
   };
 
   // Self-init so a missing/blocked bootstrap call cannot silently disable the map button.
   bindToggleButton();
+  bindLiveOverlay();
 })();

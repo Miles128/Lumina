@@ -29,6 +29,15 @@ def test_session_write_only_applies_to_new_files(tmp_path: Path) -> None:
     assert auth.needs_write_confirmation(existing, append=True) is True
 
 
+def test_session_code_exec_grant(tmp_path: Path) -> None:
+    auth = FileAuthService(tmp_path / "file_auth.json")
+    assert auth.has_session_code_exec() is False
+    auth.grant_session_code_exec()
+    assert auth.has_session_code_exec() is True
+    auth.clear_session_code_exec()
+    assert auth.has_session_code_exec() is False
+
+
 def test_write_kind_classification(tmp_path: Path) -> None:
     auth = FileAuthService(tmp_path / "file_auth.json")
     new_file = tmp_path / "new.txt"

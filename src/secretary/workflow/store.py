@@ -58,6 +58,18 @@ class WorkflowStore:
         )
         return path
 
+    def get_run(self, run_id: str) -> dict:
+        cleaned = (run_id or "").strip()
+        if not cleaned or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+            raise WorkflowStoreError(f"invalid run id: {run_id!r}")
+        path = self._root / "runs" / f"{cleaned}.json"
+        if not path.is_file():
+            raise WorkflowStoreError(f"run not found: {run_id}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise WorkflowStoreError(f"corrupt run: {run_id}")
+        return data
+
     def _path_for(self, name: str) -> Path:
         safe = self._validate_name(name)
         return self._root / f"{safe}.json"

@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from secretary.services.shibei_config import ShibeiConfigDocument, ShibeiConfigStore
-from secretary.services.shibei_service import ShibeiService, _format_search, shibei_empty_state
+from secretary.services.shibei_service import (
+    ShibeiService,
+    _format_search,
+    format_shibei_context_block,
+    shibei_empty_state,
+)
 
 
 def _write_shibei_project(root: Path, *, sources: list[str] | None = None) -> None:
@@ -33,6 +38,57 @@ def test_shibei_resolve_config_path(tmp_path: Path) -> None:
 
 def test_format_search_empty() -> None:
     assert "未在 Shibei" in _format_search({"query": "x", "total": 0, "results": []})
+
+
+def test_format_shibei_context_block_empty() -> None:
+    assert format_shibei_context_block({"results": [], "memories": []}) == ""
+
+
+def test_format_shibei_context_block_includes_docs_and_memories() -> None:
+    text = format_shibei_context_block(
+        {
+            "query_used": "Lumina harness",
+            "results": [
+                {
+                    "source": "prd.md",
+                    "score": 0.9,
+                    "text": "本地 harness Turn confirm",
+                }
+            ],
+            "memories": [
+                {"category": "project", "text": "Lumina 不做多 Agent 辩论"},
+            ],
+        }
+    )
+    assert "## Shibei 答前召回" in text
+    assert "prd.md" in text
+    assert "本地 harness" in text
+    assert "不做多 Agent 辩论" in text
+    assert "Lumina harness" in text
+
+
+def test_shibei_service_context_mock(tmp_path: Path) -> None:
+    shibei_root = tmp_path / "shibei"
+    _write_shibei_project(shibei_root)
+    store = ShibeiConfigStore(tmp_path / "shibei.json", data_dir=tmp_path / "data")
+    store.save(ShibeiConfigDocument(install_path=str(shibei_root)))
+    service = ShibeiService(store)
+
+    fake_brain = MagicMock()
+    fake_brain.context.return_value = {
+        "query_used": "面试",
+        "total": 1,
+        "results": [{"source": "prep.md", "text": "准备 STAR"}],
+        "memories": [],
+    }
+
+    with patch.object(service, "_resolve_src_path", return_value=shibei_root / "src"):
+        with patch.dict("sys.modules", {"shibei": MagicMock(Shibei=lambda _p: fake_brain)}):
+            payload = service.context("帮我准备面试")
+
+    assert payload["query_used"] == "面试"
+    fake_brain.context.assert_called_once()
+    assert fake_brain.context.call_args.args[0] == "帮我准备面试"
 
 
 def test_format_search_results() -> None:

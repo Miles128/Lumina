@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, nativeImage, dialog, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, session, nativeImage, dialog, nativeTheme, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { spawn, exec } = require("child_process");
@@ -122,13 +122,40 @@ function routeInternalUrl(url) {
   return false;
 }
 
+function isExternalUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function openExternalUrl(url) {
+  if (!isExternalUrl(url)) return;
+  shell.openExternal(url).catch(() => {
+    // ignore open failures (e.g. no handler for mailto)
+  });
+}
+
 function attachWindowOpenHandler(win) {
+  // Markdown / reference links use target=_blank. Deny in-app windows and
+  // open http(s)/mailto in the system browser instead of silently dropping.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    routeInternalUrl(url);
+    if (!routeInternalUrl(url)) {
+      openExternalUrl(url);
+    }
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (routeInternalUrl(url)) event.preventDefault();
+    if (routeInternalUrl(url)) {
+      event.preventDefault();
+      return;
+    }
+    if (isExternalUrl(url)) {
+      event.preventDefault();
+      openExternalUrl(url);
+    }
   });
 }
 

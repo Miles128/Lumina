@@ -12,6 +12,7 @@
   const openBtn = document.getElementById("btn-workflows");
   const closeBtn = document.getElementById("btn-close-workflows");
   const newSampleBtn = document.getElementById("btn-workflow-new-sample");
+  const fromTemplateBtn = document.getElementById("btn-workflow-from-template");
   const saveBtn = document.getElementById("btn-workflow-save");
   const runBtn = document.getElementById("btn-workflow-run");
   const Graph = window.LuminaWorkflowGraph;
@@ -45,6 +46,7 @@
   closeBtn?.addEventListener("click", closeWorkflows);
   backdrop.addEventListener("click", closeWorkflows);
   newSampleBtn?.addEventListener("click", createSample);
+  fromTemplateBtn?.addEventListener("click", () => void createFromTemplate());
   saveBtn?.addEventListener("click", saveActive);
   runBtn?.addEventListener("click", runActive);
 
@@ -277,7 +279,24 @@
             lastResult
               ? `<section class="workflows-section"><h3>${escapeHtml(
                   t("workflows.result")
-                )}</h3><pre class="workflows-pre">${escapeHtml(
+                )}</h3>${
+                  lastResult.status === "paused"
+                    ? `<p class="muted">${escapeHtml(
+                        lastResult.pause_prompt || "等待确认"
+                      )}</p>
+                <label>备注
+                  <input id="wf-resume-note" type="text" value="" />
+                </label>
+                <div class="workflows-actions">
+                  <button type="button" class="btn-run" id="btn-wf-approve">${escapeHtml(
+                    t("workflows.approve")
+                  )}</button>
+                  <button type="button" class="btn-text" id="btn-wf-reject">${escapeHtml(
+                    t("workflows.reject")
+                  )}</button>
+                </div>`
+                    : ""
+                }<pre class="workflows-pre">${escapeHtml(
                   JSON.stringify(lastResult, null, 2)
                 )}</pre></section>`
               : ""
@@ -287,6 +306,12 @@
           )}</button>
         </div>`;
       document.getElementById("btn-workflow-delete")?.addEventListener("click", deleteActive);
+      document.getElementById("btn-wf-approve")?.addEventListener("click", () =>
+        void resumeActive(true),
+      );
+      document.getElementById("btn-wf-reject")?.addEventListener("click", () =>
+        void resumeActive(false),
+      );
       return;
     }
 
@@ -300,10 +325,41 @@
           <input id="wf-field-skill" type="text" value="${escapeHtml(config.skill_name || "")}" />
         </label>`;
     } else if (kind === "agent") {
+      const mode = config.mode === "agent" ? "agent" : "llm";
+      const profile = config.profile === "build" ? "build" : "ask";
       fields = `
+        <label>mode
+          <select id="wf-field-mode">
+            <option value="llm"${mode === "llm" ? " selected" : ""}>llm（单次补全）</option>
+            <option value="agent"${mode === "agent" ? " selected" : ""}>agent（AgentLoop）</option>
+          </select>
+        </label>
+        <label>profile
+          <select id="wf-field-profile">
+            <option value="ask"${profile === "ask" ? " selected" : ""}>ask（只读工具）</option>
+            <option value="build"${profile === "build" ? " selected" : ""}>build（可写/shell）</option>
+          </select>
+        </label>
         <label>prompt_template
           <textarea id="wf-field-prompt" rows="5" spellcheck="false">${escapeHtml(
             config.prompt_template || ""
+          )}</textarea>
+        </label>
+        <label class="wf-check">
+          <input id="wf-field-confirm" type="checkbox"${
+            config.confirm_before ? " checked" : ""
+          } /> 运行前确认 (confirm_before)
+        </label>
+        <label>confirm_prompt
+          <input id="wf-field-confirm-prompt" type="text" value="${escapeHtml(
+            config.confirm_prompt || ""
+          )}" />
+        </label>`;
+    } else if (kind === "human_review") {
+      fields = `
+        <label>prompt
+          <textarea id="wf-field-review-prompt" rows="3" spellcheck="false">${escapeHtml(
+            config.prompt || "请确认后继续"
           )}</textarea>
         </label>`;
     } else if (kind === "branch") {
@@ -356,7 +412,24 @@
           lastResult
             ? `<section class="workflows-section"><h3>${escapeHtml(
                 t("workflows.result")
-              )}</h3><pre class="workflows-pre">${escapeHtml(
+              )}</h3>${
+                lastResult.status === "paused"
+                  ? `<p class="muted">${escapeHtml(
+                      lastResult.pause_prompt || "等待确认"
+                    )}</p>
+                <label>备注
+                  <input id="wf-resume-note" type="text" value="" />
+                </label>
+                <div class="workflows-actions">
+                  <button type="button" class="btn-run" id="btn-wf-approve">${escapeHtml(
+                    t("workflows.approve")
+                  )}</button>
+                  <button type="button" class="btn-text" id="btn-wf-reject">${escapeHtml(
+                    t("workflows.reject")
+                  )}</button>
+                </div>`
+                  : ""
+              }<pre class="workflows-pre">${escapeHtml(
                 JSON.stringify(lastResult, null, 2)
               )}</pre></section>`
             : ""
@@ -367,6 +440,12 @@
       </div>`;
 
     document.getElementById("btn-wf-apply")?.addEventListener("click", applyInspector);
+    document.getElementById("btn-wf-approve")?.addEventListener("click", () =>
+      void resumeActive(true),
+    );
+    document.getElementById("btn-wf-reject")?.addEventListener("click", () =>
+      void resumeActive(false),
+    );
     document.getElementById("btn-wf-remove-node")?.addEventListener("click", () => {
       if (!editor || !selectedDfId) return;
       editor.removeNodeId(`node-${selectedDfId}`);
@@ -397,7 +476,15 @@
     if (data.kind === "skill") {
       config.skill_name = document.getElementById("wf-field-skill")?.value?.trim() || "";
     } else if (data.kind === "agent") {
+      config.mode = document.getElementById("wf-field-mode")?.value || "llm";
+      config.profile = document.getElementById("wf-field-profile")?.value || "ask";
       config.prompt_template = document.getElementById("wf-field-prompt")?.value || "";
+      config.confirm_before = Boolean(document.getElementById("wf-field-confirm")?.checked);
+      config.confirm_prompt =
+        document.getElementById("wf-field-confirm-prompt")?.value?.trim() || "";
+    } else if (data.kind === "human_review") {
+      config.prompt =
+        document.getElementById("wf-field-review-prompt")?.value?.trim() || "请确认后继续";
     } else if (data.kind === "branch") {
       config.condition = {
         type: "expr",
@@ -444,7 +531,25 @@
       if (step.status === "completed") el.classList.add("wf-run-ok");
       else if (step.status === "failed") el.classList.add("wf-run-fail");
       else if (step.status === "skipped") el.classList.add("wf-run-skip");
+      else if (step.status === "paused") el.classList.add("wf-run-active");
     }
+  }
+
+  async function resumeActive(approved) {
+    const runId = lastResult?.run_id;
+    if (!runId) return;
+    const note = document.getElementById("wf-resume-note")?.value || "";
+    try {
+      lastResult = await window.SecretaryAPI.request(
+        "POST",
+        `/api/workflows/runs/${encodeURIComponent(runId)}/resume`,
+        { approved: Boolean(approved), note },
+      );
+    } catch (error) {
+      lastResult = { status: "failed", error: error.message || String(error) };
+    }
+    renderInspector();
+    applyRunHighlights(lastResult);
   }
 
   async function saveActive() {
@@ -518,6 +623,45 @@
     lastResult = null;
     destroyEditor();
     await refreshList();
+  }
+
+  async function createFromTemplate() {
+    let templates = [];
+    try {
+      const data = await window.SecretaryAPI.request("GET", "/api/workflows/templates");
+      templates = Array.isArray(data?.templates) ? data.templates : [];
+    } catch (error) {
+      window.alert(error.message || String(error));
+      return;
+    }
+    if (!templates.length) {
+      window.alert(t("workflows.noTemplates"));
+      return;
+    }
+    const labels = templates
+      .map((item, index) => `${index + 1}. ${item.name} (${item.id}, ${item.node_count} nodes)`)
+      .join("\n");
+    const choice = window.prompt(`${t("workflows.pickTemplate")}\n${labels}`, "1");
+    if (!choice) return;
+    const index = Number(choice) - 1;
+    const picked = templates[index];
+    if (!picked) return;
+    const name =
+      window.prompt(t("workflows.templateName"), `${picked.id}_${Date.now().toString(36).slice(-4)}`) ||
+      "";
+    if (!name.trim()) return;
+    try {
+      const created = await window.SecretaryAPI.request(
+        "POST",
+        `/api/workflows/templates/${encodeURIComponent(picked.id)}`,
+        { name: name.trim() },
+      );
+      activeName = created?.name || name.trim();
+      lastResult = null;
+      await refreshList();
+    } catch (error) {
+      window.alert(error.message || String(error));
+    }
   }
 
   async function createSample() {

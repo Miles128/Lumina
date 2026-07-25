@@ -1,0 +1,42 @@
+{
+  "name": "code_change",
+  "version": 1,
+  "inputs_schema": { "goal": "string" },
+  "outputs_schema": {},
+  "nodes": [
+    {
+      "id": "plan",
+      "kind": "agent",
+      "config": {
+        "mode": "agent",
+        "profile": "ask",
+        "prompt_template": "目标：{{goal}}\n可用只读工具查看工作区。请给出分步改码计划（文件、风险、验证方式）。不要直接改文件。"
+      },
+      "on_failure": "stop"
+    },
+    {
+      "id": "confirm",
+      "kind": "human_review",
+      "config": {
+        "prompt": "确认计划后，再进入执行节点（写盘工具仍会二次确认）。"
+      },
+      "on_failure": "stop"
+    },
+    {
+      "id": "handoff",
+      "kind": "agent",
+      "config": {
+        "mode": "agent",
+        "profile": "build",
+        "confirm_before": true,
+        "confirm_prompt": "确认进入 Build AgentLoop 执行？写盘/shell 仍会按策略二次确认。",
+        "prompt_template": "按计划执行必要改动。目标：{{goal}}。计划：{{plan.summary}}{{plan.text}}{{plan.reply}}"
+      },
+      "on_failure": "stop"
+    }
+  ],
+  "edges": [
+    { "from": "plan", "to": "confirm", "port": "default" },
+    { "from": "confirm", "to": "handoff", "port": "default" }
+  ]
+}

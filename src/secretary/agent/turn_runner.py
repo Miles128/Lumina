@@ -35,6 +35,8 @@ class AgentTurnPlan:
     # top-level list_dir preflight at step 0 so the model starts with real
     # entry names instead of hallucinating paths.
     explicit_working_dir: bool = False
+    compaction_max_tokens: int | None = None
+    compaction_keep_tail: int | None = None
 
 
 @dataclass
@@ -137,6 +139,8 @@ class TurnRunner:
                 after_tool_execution_hooks=hooks.after_tool_execution,
                 force_web_first_step=plan.force_web_first_step,
                 explicit_working_dir=plan.explicit_working_dir,
+                compaction_max_tokens=plan.compaction_max_tokens,
+                compaction_keep_tail=plan.compaction_keep_tail,
             )
             result = loop.run(plan.messages, temperature=temperature)
             if wrapped is not None and turn is not None:

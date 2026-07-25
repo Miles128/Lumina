@@ -32,6 +32,32 @@ def _new_message_id() -> str:
     return f"m_{uuid.uuid4().hex[:8]}"
 
 
+def annotate_turn_node(
+    *,
+    has_assistant: bool,
+    archived: bool,
+    active: bool,
+) -> dict[str, str]:
+    """FR-45: derived role/status labels for conversation-map turn nodes.
+
+    Roles are fixed (human / main_agent). Status is derived from tree flags only;
+    live waiting_confirm / subagent archetype come from SSE overlay on the client.
+    """
+    if archived:
+        status = "rolled_back"
+    elif not has_assistant:
+        status = "pending"
+    elif active:
+        status = "active"
+    else:
+        status = "done"
+    return {
+        "role_user": "human",
+        "role_assistant": "main_agent",
+        "status": status,
+    }
+
+
 def _migrate_thread(thread: dict[str, Any]) -> bool:
     """Backfill id/parent_id/archived on messages and active_leaf_id on thread.
 
@@ -667,6 +693,13 @@ class ChatThreadStore:
                 archived = bool(msg.get("archived", False)) or (
                     bool(assistant.get("archived", False)) if assistant else False
                 )
+                has_assistant = assistant is not None
+                turn_active = turn_id in active_ids
+                annotations = annotate_turn_node(
+                    has_assistant=has_assistant,
+                    archived=archived,
+                    active=turn_active,
+                )
                 nodes.append(
                     {
                         "id": turn_id,
@@ -675,9 +708,10 @@ class ChatThreadStore:
                         "assistant_message_id": assistant.get("id") if assistant else "",
                         "user_preview": user_preview,
                         "assistant_preview": assistant_preview,
-                        "has_assistant": assistant is not None,
+                        "has_assistant": has_assistant,
                         "archived": archived,
-                        "active": turn_id in active_ids,
+                        "active": turn_active,
+                        **annotations,
                     }
                 )
             return {

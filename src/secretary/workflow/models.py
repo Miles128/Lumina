@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class WorkflowNode:
     id: str
-    kind: str  # "skill" | "agent" | "branch"
+    kind: str  # "skill" | "agent" | "branch" | "human_review"
     config: dict[str, Any] = field(default_factory=dict)
     inputs_schema: dict[str, Any] = field(default_factory=dict)
     outputs_schema: dict[str, Any] = field(default_factory=dict)

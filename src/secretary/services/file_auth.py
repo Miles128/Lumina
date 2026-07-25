@@ -22,6 +22,7 @@ class FileAuthService:
         self._path = auth_path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._session_write_new = False
+        self._session_code_exec = False
         self._document = self._load()
 
     def has_permanent_read(self) -> bool:
@@ -43,6 +44,15 @@ class FileAuthService:
 
     def clear_session_write_new(self) -> None:
         self._session_write_new = False
+
+    def has_session_code_exec(self) -> bool:
+        return self._session_code_exec
+
+    def grant_session_code_exec(self) -> None:
+        self._session_code_exec = True
+
+    def clear_session_code_exec(self) -> None:
+        self._session_code_exec = False
 
     def needs_read_confirmation(self) -> bool:
         return not self._document.permanent_read

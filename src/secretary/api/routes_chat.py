@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from secretary.agent.chat_service import ChatService
 from secretary.agent.llm_client import llm_usage_scope
 from secretary.agent.progress_hub import ProgressHub
+from secretary.agent.trace_store import TraceStore
 from secretary.agent.turn_cancel import begin_turn, end_turn, request_cancel
 from secretary.api.deps import (
     build_progress_callback,
@@ -48,6 +49,34 @@ async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
         hub.stream(trace_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@router.get("/api/chat/traces/{trace_id}")
+def get_chat_trace(request: Request, trace_id: str) -> dict[str, object]:
+    """FR-51: load persisted reasoning / run trace nodes for a turn."""
+    store: TraceStore | None = getattr(request.app.state, "trace_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Trace store unavailable")
+    nodes = store.load(trace_id)
+    return {"trace_id": trace_id, "nodes": nodes, "count": len(nodes)}
+
+
+@router.get("/api/chat/traces/{trace_id}/export")
+def export_chat_trace(request: Request, trace_id: str) -> PlainTextResponse:
+    """FR-51: export a turn's reasoning trace as JSONL."""
+    store: TraceStore | None = getattr(request.app.state, "trace_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Trace store unavailable")
+    text = store.export_jsonl(trace_id)
+    if not text.strip():
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return PlainTextResponse(
+        text,
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f'attachment; filename="{trace_id}.jsonl"',
+        },
     )
 
 

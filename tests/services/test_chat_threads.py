@@ -400,6 +400,24 @@ def test_restore_archived_unflags_subtree(tmp_path: Path) -> None:
     store.restore_archived("t", "missing_id")
 
 
+def test_turn_node_annotations_pending_done_rolled_back() -> None:
+    from secretary.services.chat_threads import annotate_turn_node
+
+    pending = annotate_turn_node(has_assistant=False, archived=False, active=True)
+    assert pending["role_user"] == "human"
+    assert pending["role_assistant"] == "main_agent"
+    assert pending["status"] == "pending"
+
+    done = annotate_turn_node(has_assistant=True, archived=False, active=False)
+    assert done["status"] == "done"
+
+    active = annotate_turn_node(has_assistant=True, archived=False, active=True)
+    assert active["status"] == "active"
+
+    rolled = annotate_turn_node(has_assistant=True, archived=True, active=False)
+    assert rolled["status"] == "rolled_back"
+
+
 def test_thread_tree_view_structure_and_active_flags(tmp_path: Path) -> None:
     store = ChatThreadStore(tmp_path / "chat_threads.json")
     store.replace_all(current_id="t", threads=[])
@@ -430,7 +448,13 @@ def test_thread_tree_view_structure_and_active_flags(tmp_path: Path) -> None:
             "has_assistant",
             "archived",
             "active",
+            "role_user",
+            "role_assistant",
+            "status",
         } <= set(n.keys())
+        assert n["role_user"] == "human"
+        assert n["role_assistant"] == "main_agent"
+        assert n["status"] in {"pending", "done", "active", "rolled_back"}
 
     active_flags = {n["id"]: n["active"] for n in nodes}
     # active path is u1 -> u2 -> a2, so only the forked turn (a2) is active

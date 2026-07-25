@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from secretary.agent.harness_config import HarnessConfig
 from secretary.agent.llm_config import (
     LlmConfig,
     is_placeholder_api_key,
@@ -54,6 +55,7 @@ class AgentConfigDocument(BaseModel):
     agent_profile: str = Field(default="auto", pattern="^(auto|build|ask|plan)$")
     shell_working_dir: str = ""
     hooks: dict[str, Any] = Field(default_factory=dict)
+    harness: HarnessConfig = Field(default_factory=HarnessConfig)
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ class AgentConfigView:
     status: str
     status_message: str
     active_source: str
+    harness: HarnessConfig
 
 
 class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
@@ -97,6 +100,11 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
                 or value == "********"
                 or is_placeholder_api_key(str(value))
             ):
+                continue
+            if key == "harness" and isinstance(value, dict):
+                harness_merged = dict(merged.get("harness") or {})
+                harness_merged.update(value)
+                merged["harness"] = harness_merged
                 continue
             merged[key] = value
         if payload.get("provider") and payload["provider"] != current.provider:
@@ -130,6 +138,10 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
             temperature=current.temperature,
             max_history_turns=current.max_history_turns,
             response_style=current.response_style,
+            harness=current.harness,
+            hooks=current.hooks,
+            agent_profile=current.agent_profile,
+            shell_working_dir=current.shell_working_dir,
         )
         self.save(document)
         return document
@@ -168,6 +180,7 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
             status=status,
             status_message=message,
             active_source=resolved.source if resolved else "none",
+            harness=document.harness,
         )
 
 

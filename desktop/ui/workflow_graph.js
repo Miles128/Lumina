@@ -16,6 +16,7 @@
     skill: { inputs: 1, outputs: 1 },
     agent: { inputs: 1, outputs: 1 },
     branch: { inputs: 1, outputs: 2 },
+    human_review: { inputs: 1, outputs: 1 },
   };
 
   function kindIo(kind) {
@@ -56,6 +57,9 @@
     }
     if (kind === "branch") {
       return node.config?.condition?.path || node.id;
+    }
+    if (kind === "human_review") {
+      return node.config?.prompt || "人工确认";
     }
     return node.id;
   }
@@ -218,6 +222,19 @@
         },
         inputs_schema: {},
         outputs_schema: {},
+        on_failure: "stop",
+      };
+    }
+    if (kind === "human_review") {
+      return {
+        id,
+        kind: "human_review",
+        config: {
+          prompt: "请确认后继续",
+          _canvas: { x: 120, y: 140 },
+        },
+        inputs_schema: {},
+        outputs_schema: { approved: "boolean", note: "string" },
         on_failure: "stop",
       };
     }

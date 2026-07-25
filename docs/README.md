@@ -8,7 +8,8 @@
 |----|------|
 | 品类 | 本地优先的**通用 Agent 生产力工具**（非个人 AI 秘书） |
 | 已交付差异 | 对话地图 · harness · Build/Ask/Plan/Auto · MCP |
-| 规划差异 | Skill 编排 / 工作流 DAG（[workflow-dag-design.md](workflow-dag-design.md)，F26，未产品化） |
+| 规划差异 | Skill 编排 / 工作流 DAG（F26，高级能力仍后续） |
+| 已交付（MVP） | 思考链可追溯（FR-51）· Harness 可定制参数（FR-52） |
 | 外部集成 | **只做标准 MCP 或 CLI**；平台专用 Connector = Legacy frozen |
 | 可选扩展 | Shibei 知识库、持久记忆 |
 

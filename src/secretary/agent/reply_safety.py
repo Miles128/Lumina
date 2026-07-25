@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from secretary.agent.loop_prompting import strip_tool_call_markup
 from secretary.agent.reply_safety_rules import (
     load_forbidden_term_replacements,
     load_meta_reply_patterns,
@@ -12,6 +13,15 @@ from secretary.agent.reply_safety_rules import (
 )
 
 _UNPROFESSIONAL_REPLACEMENT = "我这次判断失误"
+
+# Re-export for callers / tests that import from reply_safety.
+__all__ = (
+    "contains_profanity",
+    "is_third_person_meta_reply",
+    "sanitize_user_facing_reply",
+    "strip_reasoning_chain",
+    "strip_tool_call_markup",
+)
 
 
 def is_third_person_meta_reply(text: str) -> bool:
@@ -62,6 +72,7 @@ def sanitize_user_facing_reply(reply: str, user_message: str) -> str:
     first when an LLM is available.
     """
     output = strip_reasoning_chain(reply)
+    output = strip_tool_call_markup(output)
     if is_third_person_meta_reply(output):
         output = (
             f"抱歉，刚才那句不对。\n"

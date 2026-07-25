@@ -102,6 +102,27 @@ class ShibeiService:
         payload = self._call("search", query=query.strip(), limit=limit, tag=tag)
         return _format_search(payload)
 
+    def context(
+        self,
+        message: str,
+        *,
+        limit: int = 5,
+        tag: str | None = None,
+        query: str | None = None,
+        write_hints: bool = False,
+    ) -> dict[str, Any]:
+        """答前上下文包（文档 + 记忆）。Lumina 每轮自动注入用；write_hints 默认关。"""
+        if not (message or "").strip():
+            return {"message": "", "query_used": "", "total": 0, "results": [], "memories": []}
+        return self._call(
+            "context",
+            message=message.strip(),
+            limit=limit,
+            tag=tag,
+            query=query,
+            write_hints=write_hints,
+        )
+
     def import_all(self, *, full: bool = False) -> ShibeiImportResult:
         payload = self._call("import_all", full=full)
         imported = int(payload.get("imported", payload.get("files", 0)))
@@ -192,6 +213,14 @@ class ShibeiService:
                     str(kwargs["query"]),
                     limit=int(kwargs.get("limit", 5)),
                     tag=kwargs.get("tag"),
+                )
+            elif method == "context":
+                result = brain.context(
+                    str(kwargs["message"]),
+                    limit=int(kwargs.get("limit", 5)),
+                    tag=kwargs.get("tag"),
+                    write_hints=bool(kwargs.get("write_hints", False)),
+                    query=kwargs.get("query"),
                 )
             elif method == "import_all":
                 result = brain.import_all(full=bool(kwargs.get("full", False)))
@@ -312,6 +341,60 @@ def shibei_empty_state(query: str, status: dict[str, Any] | None = None) -> dict
         "message": message,
         "actions": [dict(item) for item in SHIBEI_EMPTY_ACTIONS],
     }
+
+
+def format_shibei_context_block(payload: dict[str, Any] | None) -> str:
+    """Format Shibei context pack for system-prompt injection. Empty → \"\"."""
+    if not payload:
+        return ""
+    results = payload.get("results")
+    memories = payload.get("memories")
+    has_docs = isinstance(results, list) and bool(results)
+    has_mem = isinstance(memories, list) and bool(memories)
+    if not has_docs and not has_mem:
+        return ""
+
+    query = str(payload.get("query_used") or payload.get("query") or "").strip()
+    lines = ["## Shibei 答前召回"]
+    if query:
+        lines.append(f"（检索词：{query}）")
+    lines.append("以下内容已自动检索；回答个人/笔记类问题须优先依据于此，勿编造未出现的事实。")
+    lines.append("需要更深检索时可再调用 shibei_search。")
+
+    body_lines: list[str] = []
+    if has_docs:
+        body_lines.append("")
+        body_lines.append("### 相关文档")
+        for item in results[:5]:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or item.get("file_path") or "")
+            text = str(item.get("text") or "").strip().replace("\n", " ")
+            if len(text) > 240:
+                text = text[:240] + "…"
+            if not text:
+                continue
+            label = source or "chunk"
+            body_lines.append(f"- {label}: {text}")
+
+    if has_mem:
+        body_lines.append("")
+        body_lines.append("### 相关记忆")
+        for memory in memories[:5]:
+            if not isinstance(memory, dict):
+                continue
+            category = str(memory.get("category") or "")
+            text = str(memory.get("text") or "").strip().replace("\n", " ")
+            if len(text) > 200:
+                text = text[:200] + "…"
+            if not text:
+                continue
+            prefix = f"[{category}] " if category else ""
+            body_lines.append(f"- {prefix}{text}")
+
+    if not any(line.startswith("- ") for line in body_lines):
+        return ""
+    return "\n".join(lines + body_lines) + "\n\n"
 
 
 def _format_search(payload: dict[str, Any]) -> str:

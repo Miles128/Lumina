@@ -76,6 +76,89 @@ def test_scheduler_runs_linear_skill_then_agent() -> None:
     assert [step.node_id for step in result.steps] == ["n1", "n2"]
 
 
+def test_scheduler_human_review_pauses_and_resumes() -> None:
+    wf = WorkflowDef(
+        name="review",
+        nodes=[
+            WorkflowNode(
+                id="a",
+                kind="agent",
+                config={"prompt_template": "hi"},
+            ),
+            WorkflowNode(
+                id="gate",
+                kind="human_review",
+                config={"prompt": "ok?"},
+            ),
+            WorkflowNode(
+                id="b",
+                kind="agent",
+                config={"prompt_template": "after"},
+            ),
+        ],
+        edges=[
+            WorkflowEdge(from_id="a", to_id="gate"),
+            WorkflowEdge(from_id="gate", to_id="b"),
+        ],
+    )
+
+    def agent_runner(prompt: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        return {"reply": prompt}
+
+    scheduler = WorkflowScheduler(agent_runner=agent_runner)
+    paused = scheduler.run(wf, inputs={})
+    assert paused.status == "paused"
+    assert paused.pause_node_id == "gate"
+    assert paused.pause_prompt == "ok?"
+
+    done = scheduler.run(
+        wf,
+        inputs={},
+        checkpoint=paused.checkpoint,
+        resume_payload={"approved": True, "note": "lgtm"},
+    )
+    assert done.status == "completed"
+    assert done.node_outputs["gate"]["approved"] is True
+    assert "after" in done.node_outputs["b"]["reply"]
+
+
+def test_scheduler_agent_confirm_before_pauses() -> None:
+    wf = WorkflowDef(
+        name="confirm",
+        nodes=[
+            WorkflowNode(
+                id="w",
+                kind="agent",
+                config={
+                    "confirm_before": True,
+                    "confirm_prompt": "run?",
+                    "prompt_template": "work",
+                },
+            ),
+        ],
+        edges=[],
+    )
+    calls: list[str] = []
+
+    def agent_runner(prompt: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        calls.append(prompt)
+        return {"reply": prompt}
+
+    scheduler = WorkflowScheduler(agent_runner=agent_runner)
+    paused = scheduler.run(wf)
+    assert paused.status == "paused"
+    assert paused.pause_kind == "confirm"
+    assert calls == []
+
+    done = scheduler.run(
+        wf,
+        checkpoint=paused.checkpoint,
+        resume_payload={"approved": True},
+    )
+    assert done.status == "completed"
+    assert calls == ["work"]
+
+
 def test_scheduler_branch_expr_routes_port() -> None:
     wf = WorkflowDef(
         name="branch-demo",

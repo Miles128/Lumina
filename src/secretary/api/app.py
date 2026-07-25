@@ -22,6 +22,7 @@ from secretary.agent.progress_hub import ProgressHub
 from secretary.agent.session_store import SessionStore
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul, save_soul
+from secretary.agent.trace_store import TraceStore
 from secretary.agent.turn_runner import TurnRunner
 from secretary.api.deps import svc
 from secretary.api.routes_chat import router as chat_router
@@ -33,6 +34,7 @@ from secretary.api.schemas import (
     AgentTestResponse,
     BackgroundTasksResponse,
     BriefingResponse,
+    HarnessConfigSchema,
     HealthResponse,
     MemorySearchResponse,
     PlatformCardResponse,
@@ -119,6 +121,11 @@ def _init_services() -> dict[str, object]:
         if mcp_config_store.ensure_filesystem_server(preferred_root):
             mcp_manager.reload()
     progress_hub = ProgressHub()
+    trace_store = TraceStore(settings.resolved_data_dir() / "traces")
+    try:
+        trace_store.prune(retain_days=agent_config_store.load().harness.trace_retain_days)
+    except Exception:
+        pass
     session_store = SessionStore(persistence_path=settings.resolved_data_dir() / "turns.json")
     turn_runner = TurnRunner(file_auth, session_store=session_store)
     chat_service = ChatService(
@@ -141,7 +148,10 @@ def _init_services() -> dict[str, object]:
     workflow_scheduler = WorkflowScheduler(
         skill_runner=build_skill_runner(exec_skills),
         agent_runner=build_agent_runner(
-            resolve_llm_config(settings, agent_config_store)
+            resolve_llm_config(settings, agent_config_store),
+            turn_runner=turn_runner,
+            file_auth=file_auth,
+            working_dir=workspace.root,
         ),
     )
     return {
@@ -157,11 +167,13 @@ def _init_services() -> dict[str, object]:
         "shibei_config_store": shibei_config_store,
         "shibei_service": shibei_service,
         "progress_hub": progress_hub,
+        "trace_store": trace_store,
         "session_store": session_store,
         "turn_runner": turn_runner,
         "workspace": workspace,
         "workflow_store": workflow_store,
         "workflow_scheduler": workflow_scheduler,
+        "file_auth": file_auth,
     }
 
 
@@ -480,6 +492,15 @@ def update_agent_soul(body: SoulUpdateRequest) -> SoulResponse:
     return SoulResponse(markdown=load_soul(settings.resolved_data_dir()), path=str(path))
 
 
+@app.get("/api/agent/policy")
+def get_agent_policy(request: Request) -> dict[str, object]:
+    """FR-46: harness delegation + confirmation policy summary (read-only)."""
+    from secretary.agent.policy_view import build_policy_view
+
+    file_auth = getattr(request.app.state, "file_auth", None)
+    return build_policy_view(file_auth)
+
+
 @app.get("/api/agent/config")
 def get_agent_config(request: Request) -> AgentConfigResponse:
     agent_config_store: AgentConfigStore = svc(request).agent_config_store
@@ -507,6 +528,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         status_message=view.status_message,
         active_source=view.active_source,
         providers=providers,
+        harness=HarnessConfigSchema.model_validate(view.harness.model_dump()),
     )
 
 
@@ -532,6 +554,8 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["agent_profile"] = body.agent_profile.strip()
     if body.shell_working_dir is not None:
         payload["shell_working_dir"] = body.shell_working_dir.strip()
+    if body.harness is not None:
+        payload["harness"] = body.harness.model_dump()
     agent_config_store.update(payload)
     agent_config_store.apply_to_settings(settings)
     return get_agent_config(request)
