@@ -42,7 +42,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
         tool_calls=(
             LlmToolCall(
                 id="call_write",
-                name="file_write",
+                name="write",
                 arguments={"path": "marker.txt", "content": "paused-subagent"},
             ),
         ),
@@ -54,7 +54,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
                     "id": "call_write",
                     "type": "function",
                     "function": {
-                        "name": "file_write",
+                        "name": "write",
                         "arguments": '{"path": "marker.txt", "content": "paused-subagent"}',
                     },
                 }
@@ -87,7 +87,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
     paused = spawn_tool.consume_paused()
     assert paused is not None
     assert paused.archetype == "worker"
-    assert paused.pending.tool_name == "file_write"
+    assert paused.pending.tool_name == "write"
 
     with (
         patch("secretary.agent.loop.requires_forced_read_tool", return_value=False),
@@ -141,7 +141,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
         tool_calls=(
             LlmToolCall(
                 id="call_write",
-                name="file_write",
+                name="write",
                 arguments={"path": "marker.txt", "content": "test"},
             ),
         ),
@@ -153,7 +153,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
                     "id": "call_write",
                     "type": "function",
                     "function": {
-                        "name": "file_write",
+                        "name": "write",
                         "arguments": '{"path": "marker.txt", "content": "test"}',
                     },
                 }
@@ -185,7 +185,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
         )
 
     assert result.pending_confirmation is not None
-    assert result.pending_confirmation.tool_name == "file_write"
+    assert result.pending_confirmation.tool_name == "write"
     assert "子 Agent" in result.reply
     assert len(paused_holder) == 1
     assert paused_holder[0].archetype == "worker"

@@ -9,7 +9,7 @@ from secretary.agent.tools.base import ToolCall
 
 # External data may contain prompt injection; delimit and instruct the model
 # not to follow instructions inside the markers.
-_UNTRUSTED_TOOLS = frozenset({"web_search", "web_fetch", "file_read"})
+_UNTRUSTED_TOOLS = frozenset({"web_search", "web_fetch", "file_read", "read"})
 _UNTRUSTED_BEGIN = "<untrusted_external_content>"
 _UNTRUSTED_END = "</untrusted_external_content>"
 

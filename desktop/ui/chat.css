@@ -696,6 +696,51 @@ html, body {
   overflow: hidden;
 }
 
+.turn-efficiency-metrics {
+  margin: 6px 12px 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
+}
+
+.turn-trace-actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 12px 0;
+}
+
+.turn-trace-actions .ghost.small {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0 16px;
+}
+
+.settings-table th,
+.settings-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.settings-table th {
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+.settings-list {
+  margin: 0 0 16px;
+  padding-left: 1.2em;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .agent-progress {
   margin-top: 6px;
   max-width: calc(100% - var(--chat-user-column-reserve));
@@ -801,8 +846,42 @@ html, body {
 }
 
 .agent-progress .progress-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
   font-weight: 400;
   color: var(--text-secondary);
+  text-align: left;
+  cursor: default;
+}
+
+.agent-progress li.is-expandable .progress-label {
+  cursor: pointer;
+}
+
+.agent-progress li.is-expandable .progress-label::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 4px solid currentColor;
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+
+.agent-progress li.is-expandable.is-open .progress-label::before {
+  transform: rotate(90deg);
+}
+
+.agent-progress .progress-label.is-static {
+  opacity: 0.85;
 }
 
 .agent-progress .progress-detail {
@@ -816,6 +895,10 @@ html, body {
   border-radius: 0;
   max-height: none;
   overflow: visible;
+}
+
+.agent-progress .progress-detail[hidden] {
+  display: none;
 }
 
 .agent-progress .progress-detail.markdown {
@@ -946,6 +1029,20 @@ html, body {
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.tp-lane-head.is-expandable {
+  cursor: pointer;
+}
+.tp-lane-head.is-expandable:hover .tp-lane-label {
+  color: var(--text);
 }
 .tp-lane-icon {
   font-size: 14px;
@@ -998,47 +1095,108 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
-.tp-lane-detail {
-  margin: 4px 0 0;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 1.45;
+.tp-sublanes > .tp-node {
+  margin-bottom: 6px;
 }
-.tp-lane-detail.markdown p,
-.tp-lane-detail.markdown ul,
-.tp-lane-detail.markdown ol,
-.tp-lane-detail.markdown pre,
-.tp-lane-detail.markdown blockquote {
-  margin: 0 0 6px;
-}
-.tp-lane-detail.markdown p:last-child,
-.tp-lane-detail.markdown ul:last-child,
-.tp-lane-detail.markdown ol:last-child,
-.tp-lane-detail.markdown pre:last-child,
-.tp-lane-detail.markdown blockquote:last-child {
+.tp-sublanes > .tp-node:last-child {
   margin-bottom: 0;
 }
 
-/* 工具芯片行（agent 自己的工具调用） */
+/* 工具 / 思考步骤：默认一行一条 */
 .tp-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   margin-top: 7px;
 }
+.tp-step {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+.tp-step-caret {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 4px solid currentColor;
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+.tp-step.is-open > .tp-chip .tp-step-caret,
+.tp-lane-head[aria-expanded="true"] .tp-step-caret,
+.tp-node.is-open > .tp-lane > .tp-lane-head .tp-step-caret {
+  transform: rotate(90deg);
+}
+.tp-step-detail,
+.tp-lane-detail {
+  width: 100%;
+  margin: 0;
+  padding: 2px 2px 4px 22px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.tp-step-detail[hidden],
+.tp-lane-detail[hidden] {
+  display: none;
+}
+.tp-detail-line {
+  display: block;
+  margin: 0 0 2px;
+  white-space: pre-wrap;
+}
+.tp-detail-line:last-child {
+  margin-bottom: 0;
+}
+.tp-detail-line.markdown p,
+.tp-detail-line.markdown ul,
+.tp-detail-line.markdown ol,
+.tp-detail-line.markdown pre,
+.tp-detail-line.markdown blockquote {
+  margin: 0;
+}
 .tp-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  padding: 3px 7px 3px 6px;
+  gap: 6px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 4px 8px;
   background: color-mix(in srgb, var(--bg) 62%, transparent);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 8px;
+  font: inherit;
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-secondary);
   overflow: hidden;
+}
+button.tp-chip {
+  cursor: pointer;
+  text-align: left;
+}
+button.tp-chip.is-expandable:hover {
+  border-color: var(--line-strong, var(--line));
+  color: var(--text);
+}
+.tp-chip.type-thought {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 6px;
+  padding-left: 4px;
+  color: var(--text-tertiary);
+}
+.tp-chip.type-thought .tp-chip-label {
+  color: var(--text-secondary);
+  font-weight: 400;
 }
 .tp-chip-icon {
   font-size: 11px;
@@ -1046,10 +1204,11 @@ html, body {
   flex-shrink: 0;
 }
 .tp-chip-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 160px;
 }
 .tp-chip.is-running {
   border-color: var(--sig-soft);
@@ -2616,6 +2775,22 @@ body.skill-col-resizing {
   margin-bottom: 8px;
 }
 
+.confirm-diff {
+  margin: 0.5rem 0 0;
+  padding: 0.65rem 0.75rem;
+  max-height: 16rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary, #3a3a3a);
+  background: color-mix(in srgb, var(--surface-2, #f3f3f3) 88%, transparent);
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border, #ddd) 80%, transparent);
+}
+
 .confirm-detail {
   font-size: 13px;
   color: var(--text-secondary);
@@ -2774,28 +2949,40 @@ body.ui-width-wide {
   background: var(--bg-subtle);
 }
 
-/* Message action buttons (fork / rollback / restore) — show on hover */
+/* Message action buttons — float above answer, out of document flow */
 .message {
   position: relative;
 }
 
 .msg-actions {
-  display: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  margin-left: 8px;
-  align-self: center;
+  gap: 2px;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  transform: translateY(calc(-100% - 4px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
 .message.user .msg-actions {
-  margin-left: 0;
-  margin-right: 8px;
+  right: auto;
+  left: 0;
 }
 
 .message:hover .msg-actions,
 .message:focus-within .msg-actions {
-  display: flex;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .msg-action-btn {
@@ -2808,6 +2995,7 @@ body.ui-width-wide {
   font-size: 11px;
   line-height: 1.4;
   cursor: pointer;
+  white-space: nowrap;
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 
@@ -3088,15 +3276,47 @@ body.map-view-open .chat-column > .fork-banner {
 
 .map-node-q-label,
 .map-node-a-label {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
   fill: var(--text-tertiary);
   pointer-events: none;
   user-select: none;
 }
 
-.map-node-a-label {
+.map-node-q-label.role-human {
+  fill: var(--text-secondary);
+}
+
+.map-node-a-label.role-main-agent {
+  fill: var(--sig);
+}
+
+.map-node-status {
+  font-size: 8px;
+  font-weight: 600;
   fill: var(--text-tertiary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.map-node.is-status-waiting_confirm .map-node-status,
+.map-status-waiting_confirm {
+  fill: var(--warn, #c90);
+}
+
+.map-node.is-status-running .map-node-status,
+.map-status-running {
+  fill: var(--sig);
+}
+
+.map-node.is-status-rolled_back .map-node-status,
+.map-status-rolled_back {
+  fill: var(--text-tertiary);
+}
+
+.map-node.is-status-pending .map-node-status,
+.map-status-pending {
+  fill: var(--text-secondary);
 }
 
 .map-node-q-text,

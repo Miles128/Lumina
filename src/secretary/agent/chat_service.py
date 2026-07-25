@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING, Any
 
 from secretary.agent.agent_profile import (
     AgentProfile,
-    default_max_steps_for_profile,
     effective_profile,
     parse_agent_profile,
     profile_system_appendix,
 )
 from secretary.agent.chat_tool_registry import ChatToolRegistry
 from secretary.agent.executable_skill import ExecutableSkillManager
+from secretary.agent.harness_config import HarnessConfig
 from secretary.agent.identity import (
     LUMINA_DEFAULT_STYLE,
     LUMINA_IDENTITY_SYSTEM_BLOCK,
@@ -75,6 +75,10 @@ from secretary.services.background_review import BackgroundReviewService
 from secretary.services.chat_threads import ChatThreadStore
 from secretary.services.file_auth import FileAuthService
 from secretary.services.profile_service import ProfileService
+from secretary.services.shibei_service import (
+    format_shibei_context_block,
+    shibei_ready_for_memory_read,
+)
 
 if TYPE_CHECKING:
     from secretary.agent.mcp_manager import McpManager
@@ -509,11 +513,12 @@ class ChatService:
                 is_filesystem_question,
                 is_personal_memory_question,
             )
+            from secretary.agent.loop_prompting import reply_contains_tool_call_markup
 
             if is_filesystem_question(cleaned) or is_personal_memory_question(cleaned):
                 decision = GateDecision(action=GateAction.CONTINUE, intent=decision.intent)
             else:
-                return self._run_direct(
+                direct = self._run_direct(
                     cleaned,
                     view.markdown,
                     hits,
@@ -521,6 +526,34 @@ class ChatService:
                     profile_excerpt,
                     progress_callback=progress_callback,
                 )
+                # DIRECT 路径禁止工具，但模型仍可能吐出 <function_calls> 空壳。
+                # 一旦泄漏（或 sanitize 后为空），升级为完整 AgentLoop 真执行工具。
+                leaked = (
+                    direct.route == "direct_tool_leak"
+                    or reply_contains_tool_call_markup(
+                        direct.raw_reply or direct.reply or ""
+                    )
+                    or not (direct.reply or "").strip()
+                )
+                if leaked:
+                    logger.warning(
+                        "direct reply leaked tool markup or empty; escalating to agent"
+                    )
+                    return self._run_agent(
+                        cleaned,
+                        view.markdown,
+                        hits,
+                        llm_config,
+                        profile_excerpt,
+                        decision=GateDecision(
+                            action=GateAction.CONTINUE,
+                            intent=decision.intent,
+                            reason="escalate_tool_leak",
+                        ),
+                        progress_callback=progress_callback,
+                        cancel_check=cancel_check,
+                    )
+                return direct
 
         return self._run_agent(
             cleaned,
@@ -576,6 +609,8 @@ class ChatService:
             self._file_auth.grant_permanent_read()
         if grant_session_write:
             self._file_auth.grant_session_write_new()
+        if pending.tool_name == "code_exec":
+            self._file_auth.grant_session_code_exec()
 
         if sub_state is not None:
             if spawn_tool is None:
@@ -891,6 +926,19 @@ class ChatService:
             if progress_callback and stream_started:
                 progress_callback(ProgressEvent(kind="reply_end", iteration=1))
             raw_reply = reply
+            from secretary.agent.loop_prompting import reply_contains_tool_call_markup
+
+            # 模型在「不要调用工具」的 DIRECT 路径仍吐出 XML 空壳 → 不落盘，交由上层升级 Agent。
+            if reply_contains_tool_call_markup(raw_reply):
+                return ChatResult(
+                    reply="",
+                    raw_reply=raw_reply,
+                    profile_excerpt=profile_excerpt,
+                    used_llm=True,
+                    memory_hits=len(hits),
+                    total_steps=1,
+                    route="direct_tool_leak",
+                )
             reply, verified, note = self._prepare_user_reply(raw_reply, cleaned, llm_config)
             self._memory.end_session(session_id, summary=reply[:200])
             self._append_history(cleaned, reply)
@@ -1063,9 +1111,14 @@ class ChatService:
             light_mode=light_mode,
             filesystem_turn=filesystem_turn,
         )
+        from secretary.agent.knowledge_work import intent_system_appendix
+        from secretary.agent.task_intent import resolve_task_intent
+
+        task_intent = resolve_task_intent(cleaned)
         system_prompt = (
             self._build_system_prompt(profile_markdown, hits, user_message=cleaned)
             + profile_system_appendix(profile)
+            + intent_system_appendix(task_intent)
         )
         session_id = self._get_or_create_session_id()
         self._memory.create_session(session_id)
@@ -1122,22 +1175,18 @@ class ChatService:
         with self._pending_lock:
             self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None
 
-        if profile is AgentProfile.PLAN:
-            max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
-        elif profile is AgentProfile.ASK:
-            max_steps = default_max_steps_for_profile(profile, filesystem_turn=filesystem_turn)
-        elif filesystem_turn:
-            max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=True)
-        elif light_mode:
-            max_steps = 3
-        else:
-            max_steps = default_max_steps_for_profile(AgentProfile.BUILD, filesystem_turn=False)
+        harness = self._harness_config()
+        max_steps = (
+            harness.light_max_steps if light_mode else harness.max_tool_rounds
+        )
 
         plan = AgentTurnPlan(
             messages=messages,
             max_steps=max_steps,
             tools=tools,
             explicit_working_dir=self._turn_working_dir is not None,
+            compaction_max_tokens=harness.compaction_max_tokens,
+            compaction_keep_tail=harness.compaction_keep_tail,
         )
 
         try:
@@ -1419,12 +1468,20 @@ class ChatService:
             return self._agent_config_store.load().temperature
         return 0.7
 
+    def _harness_config(self) -> HarnessConfig:
+        if self._agent_config_store is None:
+            return HarnessConfig()
+        return self._agent_config_store.load().harness
+
     def _build_loop_hooks(self, tools: list[Tool]) -> LoopHookBundle:
         from secretary.agent.hook_policies import HooksConfig, build_default_hooks
 
         raw_hooks: dict[str, object] = {}
         if self._agent_config_store is not None:
-            raw_hooks = dict(self._agent_config_store.load().hooks or {})
+            doc = self._agent_config_store.load()
+            raw_hooks = dict(doc.hooks or {})
+            # FR-52: harness.max_tool_output_chars overrides hooks block when set.
+            raw_hooks.setdefault("max_tool_output_chars", doc.harness.max_tool_output_chars)
         config = HooksConfig.from_mapping(raw_hooks)
         profile = self._current_agent_profile()
         # Hooks run without a turn message; auto resolves to build (full tools).
@@ -1564,6 +1621,20 @@ class ChatService:
             return ""
         return "\n".join(lines) + "\n\n"
 
+    def _build_shibei_context_block(self, user_message: str) -> str:
+        """Per-turn auto-recall from Shibei (docs + memories) into the system prompt."""
+        if not user_message.strip():
+            return ""
+        if not shibei_ready_for_memory_read(self._shibei_service):
+            return ""
+        assert self._shibei_service is not None
+        try:
+            payload = self._shibei_service.context(user_message, limit=5)
+        except Exception:
+            logger.exception("Shibei auto-context failed; continuing without recall")
+            return ""
+        return format_shibei_context_block(payload)
+
     def _build_system_prompt(
         self, profile_markdown: str, hits: list[MemoryChunk], user_message: str = ""
     ) -> str:
@@ -1611,12 +1682,13 @@ class ChatService:
             folders = "、".join(view.get("sources") or []) or "（未配置）"
             shibei_section = (
                 "\n\n## Shibei 知识库（读取记忆的主路径）\n"
-                "个人笔记、文档、面试资料等 **优先** 用 shibei_search 检索 Shibei 已有索引"
+                "每轮用户消息会**自动**做答前召回（见「Shibei 答前召回」）；"
+                "个人笔记、文档、面试资料等优先依据该召回，不足时再调 shibei_search"
                 "（config.yaml + ~/.shibei/db），**不需要** 先点 Lumina「同步」。\n"
                 f"- 监控文件夹：{folders}\n"
                 "- 检索为空时：shibei_import 增量导入，或在 Shibei 应用中 import\n"
                 "- search_memory 仅查 Lumina 连接器同步库，作为 Shibei 的备选\n"
-                "- 不要编造未出现在 shibei_search / search_memory 结果中的文档内容\n"
+                "- 不要编造未出现在答前召回 / shibei_search / search_memory 结果中的文档内容\n"
             )
         style_rule = (
             "- 语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
@@ -1635,6 +1707,7 @@ class ChatService:
             )
 
         reflections_block = self._build_reflections_block(user_message)
+        shibei_context_block = self._build_shibei_context_block(user_message)
         workspace_block = self._build_workspace_block()
 
         return prefix + (
@@ -1645,6 +1718,7 @@ class ChatService:
             f"{memory_block}\n"
             f"{memory_section}"
             f"{shibei_section}"
+            f"{shibei_context_block}"
             f"{notes_block}\n\n"
             f"{reflections_block}"
             "## 对话规则\n"

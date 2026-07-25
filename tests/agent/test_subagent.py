@@ -40,18 +40,20 @@ def _deps(tmp_path: Path) -> SubAgentDeps:
 def test_explore_archetype_resolves_read_only_tools(tmp_path: Path) -> None:
     tools = resolve_tools("explore", _deps(tmp_path))
     names = {tool.name for tool in tools}
-    assert "file_read" in names
-    assert "search_files" in names
+    assert "read" in names
+    assert "grep" in names
     assert "spawn_subagent" not in names
     assert "shell" not in names
+    assert "write" not in names
     assert "file_write" not in names
 
 
 def test_plan_sub_archetype_is_read_only(tmp_path: Path) -> None:
     tools = resolve_tools("plan", _deps(tmp_path))
     names = {tool.name for tool in tools}
-    assert "list_dir" in names
+    assert "ls" in names
     assert "spawn_subagent" not in names
+    assert "write" not in names
     assert "file_write" not in names
 
 
@@ -66,7 +68,8 @@ def test_worker_and_verify_archetypes_exist() -> None:
 def test_worker_includes_write_tools(tmp_path: Path) -> None:
     tools = resolve_tools("worker", _deps(tmp_path))
     names = {tool.name for tool in tools}
-    assert "file_write" in names
+    assert "write" in names
+    assert "edit" in names
     assert "shell" in names
     assert "spawn_subagent" not in names
 
@@ -89,7 +92,7 @@ def test_custom_archetype_from_lumina_dir(tmp_path: Path) -> None:
         memory=LuminaMemory(tmp_path),
         lumina_dir=tmp_path,
     ))
-    assert {t.name for t in tools} == {"file_read", "list_dir", "web_search"}
+    assert {t.name for t in tools} == {"read", "ls", "web_search"}
 
 
 def test_spawn_quota_blocks_excess_delegations(tmp_path: Path) -> None:

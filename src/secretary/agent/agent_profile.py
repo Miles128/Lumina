@@ -10,11 +10,16 @@ from secretary.agent.tools.base import Tool
 
 ASK_TOOL_NAMES = frozenset(
     {
-        "list_dir",
-        "file_read",
+        "ls",
+        "list_dir",  # alias
+        "read",
+        "file_read",  # alias
         "read_document",
-        "search_files",
-        "glob_files",
+        "grep",
+        "search_files",  # alias
+        "glob",
+        "glob_files",  # alias
+        "find",  # alias
         "search_memory",
         "session_search",
         "web_search",
@@ -26,6 +31,7 @@ ASK_TOOL_NAMES = frozenset(
         "clarify",
         "ask_user",
         "emit_card",
+        "code_exec",
         "browser_open",
         "browser_snapshot",
         "browser_screenshot",
@@ -35,7 +41,7 @@ ASK_TOOL_NAMES = frozenset(
     }
 )
 
-PLAN_TOOL_NAMES = ASK_TOOL_NAMES | frozenset(
+PLAN_TOOL_NAMES = (ASK_TOOL_NAMES - frozenset({"code_exec"})) | frozenset(
     {
         "todo",
         "skills_list",
@@ -76,11 +82,13 @@ _PLAN_MARKERS = (
     "里程碑",
 )
 
+# Bare 「写」 intentionally omitted — prose drafting is Ask via task_intent.
 _BUILD_MARKERS = (
-    "写",
-    "改",
+    "改一下",
     "删",
-    "创建",
+    "删除",
+    "创建文件",
+    "创建目录",
     "运行",
     "执行",
     "同步",
@@ -93,6 +101,7 @@ _BUILD_MARKERS = (
     "安装",
     "构建",
     "build",
+    "edit",
     "patch",
     "refactor",
     "重构",
@@ -100,6 +109,21 @@ _BUILD_MARKERS = (
     "git commit",
     "spawn",
     "委派",
+    "计算",
+    "统计",
+    "转换",
+    "解析",
+    "跑一下代码",
+    "跑段代码",
+    "csv",
+    "json",
+    "code_exec",
+    "保存到",
+    "保存为",
+    "写到",
+    "写入",
+    "覆盖",
+    "生成到",
 )
 
 _ASK_MARKERS = (
@@ -133,16 +157,54 @@ def resolve_auto_profile(
     filesystem_turn: bool = False,
 ) -> AgentProfile:
     """Pick ask/plan/build for Auto mode using rules (no extra LLM call)."""
-    text = user_message.strip().lower()
+    from secretary.agent.task_intent import (
+        TaskIntent,
+        has_code_mutate_signal,
+        has_persist_signal,
+        is_writing_plan_request,
+        resolve_task_intent,
+    )
+
+    text = user_message.strip()
     if not text:
         return AgentProfile.ASK
     if light_mode and not filesystem_turn:
         return AgentProfile.ASK
-    plan_hit = any(marker in text for marker in _PLAN_MARKERS)
-    build_hit = any(marker in text for marker in _BUILD_MARKERS)
-    ask_hit = any(marker in text for marker in _ASK_MARKERS)
-    if plan_hit and build_hit and any(marker in text for marker in ("规划", "方案", "步骤", "计划")):
+
+    lowered = text.lower()
+    intent = resolve_task_intent(text)
+    persist = has_persist_signal(text)
+    code_mutate = has_code_mutate_signal(text)
+    plan_hit = any(marker in text or marker in lowered for marker in _PLAN_MARKERS)
+    build_hit = any(marker in text or marker in lowered for marker in _BUILD_MARKERS)
+    ask_hit = any(marker in text or marker in lowered for marker in _ASK_MARKERS)
+    planning_language = any(
+        marker in text for marker in ("规划", "方案", "步骤", "计划")
+    )
+
+    # Plan a change (incl. refactor) without executing yet.
+    if (
+        plan_hit
+        and planning_language
+        and not persist
+        and not any(
+            marker in text or marker in lowered
+            for marker in ("运行", "执行", "提交", "git commit", "部署")
+        )
+    ):
         return AgentProfile.PLAN
+
+    if code_mutate or persist:
+        return AgentProfile.BUILD
+    if intent is TaskIntent.WRITING and is_writing_plan_request(text):
+        return AgentProfile.PLAN
+    if intent is TaskIntent.WRITING:
+        return AgentProfile.ASK
+    if intent is TaskIntent.RESEARCH:
+        return AgentProfile.ASK
+    if intent is TaskIntent.OFFICE:
+        return AgentProfile.ASK
+
     if build_hit or filesystem_turn:
         return AgentProfile.BUILD
     if plan_hit:
@@ -172,13 +234,14 @@ def profile_system_appendix(profile: AgentProfile) -> str:
     if profile is AgentProfile.AUTO:
         return (
             "\n\n## Agent mode: Auto\n"
-            "系统已根据本轮问题自动选择工具边界；只读检索优先 Ask，规划类走 Plan，"
+            "系统已根据本轮问题自动选择工具边界；只读检索优先 Ask（含 code_exec 计算），规划类走 Plan，"
             "写盘/shell/同步/委派仅在 Build 语义下启用。"
         )
     if profile is AgentProfile.ASK:
         return (
             "\n\n## Agent mode: Ask\n"
             "问答与检索模式：可读文件、搜记忆/Shibei、联网与浏览器只读操作；"
+            "可用 code_exec 做计算/解析（可读工作区，不可写回工作区）；"
             "不要修改文件、不要执行 shell、不要委派子 Agent。"
             "缺信息时用 ask_user 结构化追问。"
         )
@@ -186,11 +249,14 @@ def profile_system_appendix(profile: AgentProfile) -> str:
         return (
             "\n\n## Agent mode: Plan\n"
             "规划模式：只读分析 + todo/skills；输出结构化计划、风险与步骤；"
-            "不要修改文件、不要 shell、不要委派。需要执行时提示切换到 Build。"
+            "不要修改文件、不要 shell、不要 code_exec、不要委派。需要执行时提示切换到 Build。"
         )
     return (
         "\n\n## Agent mode: Build\n"
-        "执行模式：读写、shell、同步连接器、子 Agent 均可用；危险操作需用户确认。"
+        "执行模式：读写、shell、code_exec、同步连接器、子 Agent 均可用；危险操作需用户确认。\n"
+        "计算/解析/转换/统计优先 code_exec（可读工作区，禁写工作区）；"
+        "勿用 shell 的 python -c 替代；落盘用 write/edit；"
+        "code_exec 非零退出则改码再跑。"
     )
 
 

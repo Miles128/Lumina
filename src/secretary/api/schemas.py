@@ -95,6 +95,7 @@ class ChatResponse(BaseModel):
     confirmation_action_id: str = ""
     confirmation_risk_level: str = ""
     confirmation_kind: str = ""
+    confirmation_diff: str = ""
     allow_permanent_read: bool = False
     allow_session_write: bool = False
     grounding_verified: bool = True
@@ -223,6 +224,16 @@ class SoulUpdateRequest(BaseModel):
     markdown: str = Field(max_length=50_000)
 
 
+class HarnessConfigSchema(BaseModel):
+    max_tool_rounds: int = Field(default=20, ge=1, le=64)
+    light_max_steps: int = Field(default=3, ge=1, le=16)
+    compaction_max_tokens: int = Field(default=24_000, ge=4_000, le=128_000)
+    compaction_keep_tail: int = Field(default=8, ge=2, le=64)
+    trace_retention: str = Field(default="full", pattern="^(full|summary|off)$")
+    trace_retain_days: int = Field(default=30, ge=0, le=365)
+    max_tool_output_chars: int = Field(default=12_000, ge=500, le=100_000)
+
+
 class AgentConfigResponse(BaseModel):
     provider: str
     api_key_masked: str
@@ -237,6 +248,7 @@ class AgentConfigResponse(BaseModel):
     status_message: str
     active_source: str
     providers: list[dict[str, str]]
+    harness: HarnessConfigSchema = Field(default_factory=HarnessConfigSchema)
 
 
 class AgentConfigUpdateRequest(BaseModel):
@@ -249,6 +261,7 @@ class AgentConfigUpdateRequest(BaseModel):
     response_style: str = ""
     agent_profile: str = ""
     shell_working_dir: str | None = None
+    harness: HarnessConfigSchema | None = None
 
 
 class McpQuickstartFilesystemRequest(BaseModel):

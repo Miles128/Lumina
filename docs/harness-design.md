@@ -1,9 +1,11 @@
 # Lumina Harness Design · 自研 Runtime 设计原则
 
 > 产品定位：本地优先的**通用 Agent 生产力工具**（非个人 AI 秘书）。  
-> 参考 Claude Code、OpenCode、Hermes Agent 的**设计思路**，不嵌入它们的 runtime。  
+> 参考 Claude Code、OpenCode、Hermes Agent、Pi 的**设计思路**（薄 prompt / 权限过滤等），**不 fork、不嵌入**它们的 runtime。  
+> 子 Agent：**depth=1**（不可再 spawn）；多路 explore 由主 Agent 汇总；**不做**多 Agent 辩论。  
 > 抽象对比见 [4-harness-comparison.md](4-harness-comparison.md)、[subagent-loop-comparison.md](subagent-loop-comparison.md)。  
-> 产品需求与集成原则见 [PRD.md](PRD.md)。
+> 产品需求与集成原则见 [PRD.md](PRD.md)（v0.3.1）。  
+> PRD 新增一等公民：**思考链可记录/可追溯/可分析（FR-51）**、**Harness 大量可定制参数（FR-52）**。（FR-49/50 已用于工作流。）
 
 ---
 
@@ -12,6 +14,8 @@
 ```
 Harness（灵犀专有）
   ├── 路由 PromptGate · grounding · Electron SSE · 确认流
+  ├── 思考链 / 运行轨迹（可记录 · 可追溯 · 可分析）
+  ├── 可定制参数面（确认 · 委派 · compaction · 轮次 · 超时 · 路由 · 轨迹保留）
   └── AgentLoop（while: LLM → tool → history）
         └── spawn_subagent（子 loop，隔离 context，只回摘要）
 ```
@@ -97,10 +101,28 @@ Harness（灵犀专有）
 - [x] **智能 archetype（F24）**
 - [x] **结构化卡片（F25）**
 - [x] **Hooks 权限层**
-- [x] **Skill 编排 / 工作流 DAG（F26）** — **画布 MVP 已落地**（见 [workflow-dag-design.md](workflow-dag-design.md)）；暂停/封装仍属后续
+- [x] **Skill 编排 / 工作流 DAG（F26）** — 画布 + HumanReview/confirm_before + `mode=llm|agent`（AgentLoop 经 pause/resume；无 spawn）；见 [workflow-dag-design.md](workflow-dag-design.md)
 - [ ] 打包内嵌 Python（FR-27）— **Deferred**
 - [ ] IM 网关（FR-16）— **Deferred**
 - [ ] Git 只读工具（FR-37）— **Deferred**
+- [x] **`code_exec` 工作区只读沙箱** — 可读 `working_dir`、禁写回、禁网；Ask/Build + worker；会话内首次确认后免确认；见 [superpowers/specs/2026-07-23-code-exec-workspace-sandbox-design.md](superpowers/specs/2026-07-23-code-exec-workspace-sandbox-design.md)
+- [x] **思考链轨迹（FR-51）** — `TraceStore` → `~/.lumina/traces/{trace_id}.jsonl`；SSE 扇出记录；GET/export API；聊天侧导出
+- [x] **Harness 可定制参数面（FR-52）** — `HarnessConfig` 落盘 `agent.json`；max_tool_rounds / light / compaction / trace_retention / tool output；设置 → Harness 参数
+
+---
+
+### 思考链与可定制参数（产品约束）
+
+| 约束 | 说明 |
+|------|------|
+| 企业运行友好 | 轨迹支持合规抽检、事故复盘、质量评估；非「仅开发者日志」 |
+| 本地默认 | 不默认云端上报；保留策略可配置 |
+| 参数面 | 默认安全合理；高级旋钮可调；硬限（如 `MAX_SPAWN_DEPTH=1`）不可被配置绕过 |
+| 与可见性关系 | FR-46 解释策略 · FR-47 效率指标 · FR-51 轨迹数据 · FR-52 改策略 |
+
+### code_exec（解题沙箱）
+
+Agent 用 `code_exec` 写短 Python 解题：进程内 soft sandbox（非 Docker）。可读当前工作区；仅临时 cwd 可写；落盘回工作区必须 `write`/`edit`（别名 `file_write`/`patch`）。计算/解析优先 `code_exec`，勿用 `shell` 的 `python -c` 替代。
 
 ---
 

@@ -20,7 +20,7 @@ def test_read_never_requires_confirmation(tmp_path: Path) -> None:
     auth = FileAuthService(tmp_path / "file_auth.json")
     loop = AgentLoop(_llm_config(), tools=[ListDirTool()], file_auth=auth)
     needs_confirm, kind = loop._requires_confirmation(
-        loop._tools["list_dir"],
+        loop._tools["ls"],
         {"path": str(tmp_path)},
     )
     assert needs_confirm is False
@@ -35,7 +35,7 @@ def test_file_read_never_requires_confirmation(tmp_path: Path) -> None:
     sample.write_text("hello", encoding="utf-8")
     loop = AgentLoop(_llm_config(), tools=[FileReadTool()], file_auth=auth)
     needs_confirm, kind = loop._requires_confirmation(
-        loop._tools["file_read"],
+        loop._tools["read"],
         {"path": str(sample)},
     )
     assert needs_confirm is False
@@ -71,7 +71,7 @@ def test_write_new_requires_confirmation_without_session_grant(tmp_path: Path) -
     loop = AgentLoop(_llm_config(), tools=[FileWriteTool()], file_auth=auth)
     target = tmp_path / "new.txt"
     needs_confirm, kind = loop._requires_confirmation(
-        loop._tools["file_write"],
+        loop._tools["write"],
         {"path": str(target), "content": "hello"},
     )
     assert needs_confirm is True
@@ -85,7 +85,7 @@ def test_write_modify_always_requires_confirmation(tmp_path: Path) -> None:
     existing.write_text("old", encoding="utf-8")
     loop = AgentLoop(_llm_config(), tools=[FileWriteTool()], file_auth=auth)
     needs_confirm, kind = loop._requires_confirmation(
-        loop._tools["file_write"],
+        loop._tools["write"],
         {"path": str(existing), "content": "new"},
     )
     assert needs_confirm is True

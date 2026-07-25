@@ -40,7 +40,16 @@ def _registry(tmp_path: Path) -> ChatToolRegistry:
 def test_build_tools_includes_core_names(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     names = {tool.name for tool in registry.build_tools()}
+    assert "ls" in names
+    assert "list_dir" in names
+    assert "read" in names
     assert "file_read" in names
+    assert "grep" in names
+    assert "glob" in names
+    assert "find" in names
+    assert "write" in names
+    assert "edit" in names
+    assert "move" in names
     assert "glob_files" in names
     assert "ask_user" in names
     assert "search_memory" in names
@@ -87,9 +96,14 @@ def test_plan_resolve_tools_excludes_write_shell_and_delegation(tmp_path: Path) 
     )
     names = {tool.name for tool in tools}
 
+    assert "ls" in names or "list_dir" in names
+    assert "read" in names
     assert "file_read" in names
     assert "todo" in names
     assert "shell" not in names
     assert "file_write" not in names
+    assert "write" not in names
     assert "patch" not in names
+    assert "edit" not in names
+    assert "move" not in names
     assert "spawn_subagent" not in names

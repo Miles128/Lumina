@@ -8,7 +8,10 @@ from secretary.agent.tools.base import Tool
 PLAN_DENY_TOOL_NAMES = frozenset(
     {
         "file_write",
+        "write",
         "patch",
+        "edit",
+        "move",
         "file_delete",
         "shell",
         "code_exec",

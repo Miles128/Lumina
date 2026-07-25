@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from secretary.agent.p0_tools import PatchTool, SearchFilesTool
+from secretary.agent.p0_tools import EditTool, SearchFilesTool
 from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import (
     BUILTIN_ARCHETYPES,
@@ -17,7 +17,7 @@ from secretary.agent.subagent.policy import (
     WORKER_MAX_STEPS,
 )
 from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import FileReadTool, FileWriteTool, ListDirTool
+from secretary.agent.tools.fs import ListDirTool, ReadTool, WriteTool
 from secretary.agent.tools.memory_tools import SearchMemoryTool, SessionSearchTool
 from secretary.agent.tools.shell import ShellTool
 from secretary.agent.tools.web import WebFetchTool
@@ -37,7 +37,7 @@ class ArchetypeSpec:
 
 EXPLORE_PROMPT = (
     "You are a read-only research sub-agent for Lumina.\n"
-    "Use list_dir, file_read, read_document, search_files, search_memory, web_search, "
+    "Use ls, read, read_document, grep, search_memory, web_search, "
     "web_fetch, and session_search as needed.\n"
     "Do not modify files or spawn other agents.\n"
     "Report findings as concise bullet points; include file paths when relevant.\n"
@@ -46,7 +46,7 @@ EXPLORE_PROMPT = (
 
 WORKER_PROMPT = (
     "You are a worker sub-agent for Lumina.\n"
-    "You may read and modify the workspace using file_write, patch, shell, and code_exec.\n"
+    "You may read and modify the workspace using write, edit, move, shell, and code_exec.\n"
     "Use read_document for Excel/PDF/Word. Destructive or risky operations may pause "
     "for user confirmation.\n"
     "Do not spawn other agents. Return a concise summary of what you changed or found."
@@ -54,7 +54,7 @@ WORKER_PROMPT = (
 
 VERIFY_PROMPT = (
     "You are a verification sub-agent for Lumina (read-only).\n"
-    "Review the task using list_dir, file_read, read_document, search_files, "
+    "Review the task using ls, read, read_document, grep, "
     "and search_memory.\n\n"
     "Success criteria must be machine-verifiable. Check:\n"
     "- If a test was expected: does it exist and pass? (run shell if needed to verify)\n"
@@ -100,7 +100,7 @@ REFLECT_PROMPT = (
 
 PLAN_SUB_PROMPT = (
     "You are a planning sub-agent for Lumina (read-only).\n"
-    "Survey the workspace with list_dir, file_read, read_document, search_files, "
+    "Survey the workspace with ls, read, read_document, grep, "
     "and search_memory.\n"
     "Produce a structured plan: goals, steps, risks, and what worker/explore should do next.\n"
     "Do not modify files, run shell, or spawn other agents."
@@ -136,16 +136,17 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
             system_prompt=WORKER_PROMPT,
             tool_names=frozenset(
                 {
-                    "list_dir",
-                    "file_read",
+                    "ls",
+                    "read",
                     "read_document",
-                    "search_files",
+                    "grep",
                     "search_memory",
                     "web_search",
                     "web_fetch",
                     "session_search",
-                    "file_write",
-                    "patch",
+                    "write",
+                    "edit",
+                    "move",
                     "shell",
                     "code_exec",
                 }
@@ -160,10 +161,10 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
             system_prompt=REFLECT_PROMPT,
             tool_names=frozenset(
                 {
-                    "list_dir",
-                    "file_read",
+                    "ls",
+                    "read",
                     "read_document",
-                    "search_files",
+                    "grep",
                     "search_memory",
                     "web_search",
                     "web_fetch",
@@ -178,10 +179,10 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
             system_prompt=PLAN_SUB_PROMPT,
             tool_names=frozenset(
                 {
-                    "list_dir",
-                    "file_read",
+                    "ls",
+                    "read",
                     "read_document",
-                    "search_files",
+                    "grep",
                     "search_memory",
                     "web_search",
                     "web_fetch",
@@ -204,10 +205,10 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
         if spec.name == "explore":
             allowed = frozenset(
                 {
-                    "list_dir",
-                    "file_read",
+                    "ls",
+                    "read",
                     "read_document",
-                    "search_files",
+                    "grep",
                     "search_memory",
                     "web_search",
                     "web_fetch",
@@ -217,10 +218,10 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
         elif spec.name == "verify":
             allowed = frozenset(
                 {
-                    "list_dir",
-                    "file_read",
+                    "ls",
+                    "read",
                     "read_document",
-                    "search_files",
+                    "grep",
                     "search_memory",
                     "web_search",
                     "web_fetch",
@@ -230,25 +231,44 @@ def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
         else:
             return []
 
+    from secretary.agent.tools.fs import MoveTool
+
     factories: dict[str, Tool] = {
-        "list_dir": ListDirTool(),
-        "file_read": FileReadTool(),
+        "ls": ListDirTool(),
+        "read": ReadTool(),
         "read_document": ReadDocumentTool(),
-        "search_files": SearchFilesTool(),
+        "grep": SearchFilesTool(),
         "search_memory": SearchMemoryTool(deps.memory_store),
         "web_search": WebSearchTool(),
         "web_fetch": WebFetchTool(),
         "session_search": SessionSearchTool(deps.memory),
-        "file_write": FileWriteTool(),
-        "patch": PatchTool(),
+        "write": WriteTool(),
+        "edit": EditTool(),
+        "move": MoveTool(),
         "shell": ShellTool(),
         "code_exec": CodeExecTool(),
     }
+    # Legacy names in custom archetype frontmatter → canonical factories.
+    _name_aliases = {
+        "file_read": "read",
+        "file_write": "write",
+        "patch": "edit",
+        "list_dir": "ls",
+        "search_files": "grep",
+        "glob_files": "glob",
+        "find": "glob",
+    }
     tools: list[Tool] = []
+    seen: set[str] = set()
     for key in sorted(allowed):
-        tool = factories.get(key)
-        if tool is not None:
-            tools.append(tool)
+        canonical = _name_aliases.get(key, key)
+        if canonical in seen:
+            continue
+        tool = factories.get(canonical)
+        if tool is None:
+            continue
+        seen.add(canonical)
+        tools.append(tool)
     return tools
 
 

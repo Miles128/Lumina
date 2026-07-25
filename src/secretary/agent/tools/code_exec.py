@@ -1,4 +1,4 @@
-"""Sandboxed Python snippet execution (temp cwd, timeout, confirm required)."""
+"""Sandboxed Python snippet execution (workspace read-only, temp cwd write, confirm)."""
 
 from __future__ import annotations
 
@@ -41,16 +41,36 @@ _STRIP_ENV_PREFIXES = (
 _SANDBOX_BOOTSTRAP = '''\
 import builtins
 import os
+import shutil
 import socket
 import sys
 
-_ALLOWED_ROOT = os.path.realpath(os.getcwd())
+_SANDBOX_ROOT = os.path.realpath(os.getcwd())
+_WORKSPACE_ROOT = os.path.realpath(os.environ.get("LUMINA_WORKSPACE", _SANDBOX_ROOT))
 _ORIG_OPEN = builtins.open
 _ORIG_SOCKET = socket.socket
+_ORIG_REMOVE = os.remove
+_ORIG_UNLINK = getattr(os, "unlink", os.remove)
+_ORIG_RENAME = os.rename
+_ORIG_REPLACE = getattr(os, "replace", os.rename)
+_ORIG_RMDIR = os.rmdir
+_ORIG_SHUTIL_RMTree = shutil.rmtree
+_ORIG_SHUTIL_MOVE = shutil.move
+_ORIG_SHUTIL_COPY = shutil.copy
+_ORIG_SHUTIL_COPY2 = shutil.copy2
+_ORIG_SHUTIL_COPYTREE = shutil.copytree
 
 
-def _resolve_path(file):
-    if isinstance(file, (int,)):
+def _under(root, path):
+    return path == root or path.startswith(root + os.sep)
+
+
+def _is_write_mode(mode):
+    return isinstance(mode, str) and any(ch in mode for ch in "wax+")
+
+
+def _as_path(file):
+    if isinstance(file, int):
         return None
     try:
         path = os.fspath(file)
@@ -58,17 +78,108 @@ def _resolve_path(file):
         return None
     if not isinstance(path, str):
         return None
-    # Relative paths resolve under cwd; absolute must stay inside.
-    return os.path.realpath(path if os.path.isabs(path) else os.path.join(_ALLOWED_ROOT, path))
+    return path
 
 
-def _guarded_open(file, *args, **kwargs):
-    resolved = _resolve_path(file)
-    if resolved is not None:
-        allowed = resolved == _ALLOWED_ROOT or resolved.startswith(_ALLOWED_ROOT + os.sep)
-        if not allowed:
-            raise PermissionError(f"sandbox: cannot open outside cwd: {resolved}")
-    return _ORIG_OPEN(file, *args, **kwargs)
+def _resolve_under(root, path):
+    return os.path.realpath(path if os.path.isabs(path) else os.path.join(root, path))
+
+
+def _guarded_open(file, mode="r", *args, **kwargs):
+    path = _as_path(file)
+    if path is None:
+        return _ORIG_OPEN(file, mode, *args, **kwargs)
+    write = _is_write_mode(mode)
+    if write:
+        resolved = _resolve_under(_SANDBOX_ROOT, path)
+        if not _under(_SANDBOX_ROOT, resolved):
+            raise PermissionError(f"sandbox: cannot write outside sandbox cwd: {resolved}")
+        return _ORIG_OPEN(resolved, mode, *args, **kwargs)
+    # Read: relative prefers sandbox hit, else workspace; absolute must be under either root.
+    if os.path.isabs(path):
+        resolved = os.path.realpath(path)
+        if not (_under(_SANDBOX_ROOT, resolved) or _under(_WORKSPACE_ROOT, resolved)):
+            raise PermissionError(f"sandbox: cannot open outside workspace/sandbox: {resolved}")
+        return _ORIG_OPEN(file, mode, *args, **kwargs)
+    sand = _resolve_under(_SANDBOX_ROOT, path)
+    ws = _resolve_under(_WORKSPACE_ROOT, path)
+    if _under(_SANDBOX_ROOT, sand) and os.path.exists(sand):
+        return _ORIG_OPEN(sand, mode, *args, **kwargs)
+    if _under(_WORKSPACE_ROOT, ws) and os.path.exists(ws):
+        return _ORIG_OPEN(ws, mode, *args, **kwargs)
+    if not _under(_SANDBOX_ROOT, sand):
+        raise PermissionError(f"sandbox: cannot open outside workspace/sandbox: {sand}")
+    return _ORIG_OPEN(sand, mode, *args, **kwargs)
+
+
+def _assert_sandbox_write(path, op):
+    resolved = os.path.realpath(path if os.path.isabs(path) else os.path.join(_SANDBOX_ROOT, path))
+    if not _under(_SANDBOX_ROOT, resolved):
+        raise PermissionError(f"sandbox: cannot {op} outside sandbox cwd: {resolved}")
+    return resolved
+
+
+def _guarded_remove(path, *args, **kwargs):
+    _assert_sandbox_write(path, "remove")
+    return _ORIG_REMOVE(path, *args, **kwargs)
+
+
+def _guarded_unlink(path, *args, **kwargs):
+    _assert_sandbox_write(path, "unlink")
+    return _ORIG_UNLINK(path, *args, **kwargs)
+
+
+def _guarded_rename(src, dst, *args, **kwargs):
+    _assert_sandbox_write(src, "rename")
+    _assert_sandbox_write(dst, "rename")
+    return _ORIG_RENAME(src, dst, *args, **kwargs)
+
+
+def _guarded_replace(src, dst, *args, **kwargs):
+    _assert_sandbox_write(src, "replace")
+    _assert_sandbox_write(dst, "replace")
+    return _ORIG_REPLACE(src, dst, *args, **kwargs)
+
+
+def _guarded_rmdir(path, *args, **kwargs):
+    _assert_sandbox_write(path, "rmdir")
+    return _ORIG_RMDIR(path, *args, **kwargs)
+
+
+def _guarded_rmtree(path, *args, **kwargs):
+    _assert_sandbox_write(path, "rmtree")
+    return _ORIG_SHUTIL_RMTree(path, *args, **kwargs)
+
+
+def _guarded_move(src, dst, *args, **kwargs):
+    _assert_sandbox_write(src, "move")
+    _assert_sandbox_write(dst, "move")
+    return _ORIG_SHUTIL_MOVE(src, dst, *args, **kwargs)
+
+
+def _guarded_copy(src, dst, *args, **kwargs):
+    # Allow reading workspace via copy into sandbox only.
+    src_resolved = os.path.realpath(src if os.path.isabs(src) else os.path.join(_SANDBOX_ROOT, src))
+    if not (_under(_SANDBOX_ROOT, src_resolved) or _under(_WORKSPACE_ROOT, src_resolved)):
+        raise PermissionError(f"sandbox: cannot copy from outside workspace/sandbox: {src_resolved}")
+    _assert_sandbox_write(dst, "copy")
+    return _ORIG_SHUTIL_COPY(src, dst, *args, **kwargs)
+
+
+def _guarded_copy2(src, dst, *args, **kwargs):
+    src_resolved = os.path.realpath(src if os.path.isabs(src) else os.path.join(_SANDBOX_ROOT, src))
+    if not (_under(_SANDBOX_ROOT, src_resolved) or _under(_WORKSPACE_ROOT, src_resolved)):
+        raise PermissionError(f"sandbox: cannot copy from outside workspace/sandbox: {src_resolved}")
+    _assert_sandbox_write(dst, "copy")
+    return _ORIG_SHUTIL_COPY2(src, dst, *args, **kwargs)
+
+
+def _guarded_copytree(src, dst, *args, **kwargs):
+    src_resolved = os.path.realpath(src if os.path.isabs(src) else os.path.join(_SANDBOX_ROOT, src))
+    if not (_under(_SANDBOX_ROOT, src_resolved) or _under(_WORKSPACE_ROOT, src_resolved)):
+        raise PermissionError(f"sandbox: cannot copytree from outside workspace/sandbox: {src_resolved}")
+    _assert_sandbox_write(dst, "copytree")
+    return _ORIG_SHUTIL_COPYTREE(src, dst, *args, **kwargs)
 
 
 class _GuardedSocket(_ORIG_SOCKET):
@@ -78,10 +189,20 @@ class _GuardedSocket(_ORIG_SOCKET):
 
 builtins.open = _guarded_open
 socket.socket = _GuardedSocket
+os.remove = _guarded_remove
+os.unlink = _guarded_unlink
+os.rename = _guarded_rename
+os.replace = _guarded_replace
+os.rmdir = _guarded_rmdir
+shutil.rmtree = _guarded_rmtree
+shutil.move = _guarded_move
+shutil.copy = _guarded_copy
+shutil.copy2 = _guarded_copy2
+shutil.copytree = _guarded_copytree
 '''
 
 
-def _sandbox_env(tmp_path: Path) -> dict[str, str]:
+def _sandbox_env(tmp_path: Path, workspace: Path) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
@@ -93,6 +214,7 @@ def _sandbox_env(tmp_path: Path) -> dict[str, str]:
     env["TMPDIR"] = str(tmp_path)
     env["TEMP"] = str(tmp_path)
     env["TMP"] = str(tmp_path)
+    env["LUMINA_WORKSPACE"] = str(workspace.resolve())
     # Prefer our sitecustomize / bootstrap over user site.
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
@@ -103,9 +225,12 @@ class CodeExecTool(Tool):
     name = "code_exec"
     description = (
         "Run a short Python snippet in an isolated temporary working directory. "
-        "Stdout/stderr are captured. Network and filesystem access outside the "
-        "temp dir are blocked. REQUIRES user confirmation. "
-        "Prefer read_document for Excel/PDF/Word; use this for computation or parsing."
+        "May READ files under the current workspace (absolute path or relative name "
+        "resolved via workspace if not in the sandbox). Writes are allowed ONLY inside "
+        "the temp sandbox — never write the workspace from here; use write/edit "
+        "to persist. Network is blocked. REQUIRES user confirmation (once per session "
+        "after approval). Prefer read_document for Excel/PDF/Word; use this for "
+        "computation, parsing, transforms. On non-zero exit, fix the code and re-run."
     )
     needs_confirmation = True
     risk_level = "high"
@@ -140,6 +265,7 @@ class CodeExecTool(Tool):
 
         timeout = min(int(arguments.get("timeout", _DEFAULT_TIMEOUT) or _DEFAULT_TIMEOUT), _MAX_TIMEOUT)
         timeout = max(1, timeout)
+        workspace = working_dir.resolve()
 
         with tempfile.TemporaryDirectory(prefix="lumina-code-exec-") as tmp:
             tmp_path = Path(tmp)
@@ -161,7 +287,7 @@ class CodeExecTool(Tool):
                     text=True,
                     timeout=timeout,
                     cwd=str(tmp_path),
-                    env=_sandbox_env(tmp_path),
+                    env=_sandbox_env(tmp_path, workspace),
                 )
             except subprocess.TimeoutExpired:
                 return f"Error: code timed out after {timeout}s"

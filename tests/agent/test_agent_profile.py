@@ -31,6 +31,7 @@ def test_resolve_auto_profile_picks_plan_and_build() -> None:
     assert resolve_auto_profile("帮我规划一下重构步骤") is AgentProfile.PLAN
     assert resolve_auto_profile("把 README 改一下并运行测试") is AgentProfile.BUILD
     assert resolve_auto_profile("读取记忆：面试") is AgentProfile.ASK
+    assert resolve_auto_profile("帮我统计一下这个 csv") is AgentProfile.BUILD
 
 
 def test_effective_profile_passthrough_non_auto() -> None:
@@ -38,19 +39,23 @@ def test_effective_profile_passthrough_non_auto() -> None:
 
 
 def test_ask_profile_filters_to_read_only_tools(tmp_path) -> None:
+    from secretary.agent.tools.code_exec import CodeExecTool
+
     tools = [
         ListDirTool(),
         FileReadTool(),
         FileWriteTool(),
         ShellTool(),
+        CodeExecTool(),
         ClarifyTool(),
         AskUserTool(),
         TodoTool(TodoStore(tmp_path / "todo.json")),
     ]
     picked = resolve_parent_tools(AgentProfile.ASK, tools, spawn_tool=_SpawnStub())
     names = {tool.name for tool in picked}
-    assert "list_dir" in names
+    assert "ls" in names
     assert "ask_user" in names
+    assert "code_exec" in names
     assert "spawn_subagent" not in names
     assert "shell" not in names
     assert "todo" not in names
@@ -69,6 +74,7 @@ def test_plan_profile_includes_todo_and_skills(tmp_path) -> None:
     assert "todo" in names
     assert "skills_list" in names
     assert "file_write" not in names
+    assert "write" not in names
     assert "spawn_subagent" not in names
 
 
@@ -80,4 +86,4 @@ def test_build_profile_keeps_tools_and_spawn() -> None:
         spawn_tool=_SpawnStub(),
     )
     names = {tool.name for tool in picked}
-    assert names == {"list_dir", "file_read", "spawn_subagent"}
+    assert names == {"ls", "read", "spawn_subagent"}

@@ -27,18 +27,17 @@ def test_search_files_finds_content(tmp_path: Path) -> None:
     assert "lumina" in output
 
 
-def test_patch_creates_and_edits_file(tmp_path: Path) -> None:
-    tool = PatchTool()
-    created = tool.execute(
-        {"path": "new.txt", "old_text": "", "new_text": "version 1"},
+def test_edit_updates_existing_file(tmp_path: Path) -> None:
+    from secretary.agent.tools.fs import WriteTool
+
+    WriteTool().execute({"path": "new.txt", "content": "version 1"}, tmp_path)
+    tool = PatchTool()  # alias of EditTool
+    edited = tool.execute(
+        {"path": "new.txt", "oldText": "version 1", "newText": "version 2"},
         tmp_path,
     )
-    assert "created" in created
-    patched = tool.execute(
-        {"path": "new.txt", "old_text": "version 1", "new_text": "version 2"},
-        tmp_path,
-    )
-    assert "patched" in patched
+    text = edited if isinstance(edited, str) else (edited.content or str(edited))
+    assert "OK" in text or "edited" in text.lower()
     assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "version 2"
 
 

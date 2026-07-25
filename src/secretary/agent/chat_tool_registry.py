@@ -11,7 +11,14 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.agent.permission_guard import guard_tools_for_profile
 from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
 from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import FileDeleteTool, FileReadTool, FileWriteTool, ListDirTool
+from secretary.agent.tools.fs import (
+    AliasedTool,
+    FileDeleteTool,
+    ListDirTool,
+    MoveTool,
+    ReadTool,
+    WriteTool,
+)
 from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
 from secretary.agent.tools.shell import ShellTool
 from secretary.agent.tools.web import WebFetchTool
@@ -122,9 +129,9 @@ class ChatToolRegistry:
         from secretary.agent.p0_tools import (
             AskUserTool,
             ClarifyTool,
+            EditTool,
             GlobFilesTool,
             NotesTool,
-            PatchTool,
             SearchFilesTool,
             SkillsListTool,
             SkillViewTool,
@@ -138,19 +145,33 @@ class ChatToolRegistry:
         todo_path = self._settings.resolved_data_dir() / "todos" / f"{session_id}.json"
         notes_path = self._settings.resolved_data_dir() / "NOTES.md"
 
+        read_tool = self._get_or_create_tool("read", ReadTool)
+        write_tool = self._get_or_create_tool("write", WriteTool)
+        edit_tool = self._get_or_create_tool("edit", EditTool)
+        ls_tool = self._get_or_create_tool("ls", ListDirTool)
+        grep_tool = self._get_or_create_tool("grep", SearchFilesTool)
+        glob_tool = self._get_or_create_tool("glob", GlobFilesTool)
         tools: list[Tool] = [
-            self._get_or_create_tool("list_dir", ListDirTool),
-            self._get_or_create_tool("file_read", FileReadTool),
+            ls_tool,
+            AliasedTool("list_dir", ls_tool),
+            read_tool,
+            AliasedTool("file_read", read_tool),
             self._get_or_create_tool("read_document", ReadDocumentTool),
-            self._get_or_create_tool("search_files", SearchFilesTool),
-            self._get_or_create_tool("glob_files", GlobFilesTool),
+            grep_tool,
+            AliasedTool("search_files", grep_tool),
+            glob_tool,
+            AliasedTool("glob_files", glob_tool),
+            AliasedTool("find", glob_tool),
             self._get_or_create_tool("search_memory", lambda: SearchMemoryTool(self._store)),
             self._get_or_create_tool("web_search", WebSearchTool),
             self._get_or_create_tool("web_fetch", WebFetchTool),
             self._get_or_create_tool("memory", lambda: MemoryTool(self._memory)),
             self._get_or_create_tool("session_search", lambda: SessionSearchTool(self._memory)),
-            self._get_or_create_tool("file_write", FileWriteTool),
-            self._get_or_create_tool("patch", PatchTool),
+            write_tool,
+            AliasedTool("file_write", write_tool),
+            edit_tool,
+            AliasedTool("patch", edit_tool),
+            self._get_or_create_tool("move", MoveTool),
             self._get_or_create_tool("file_delete", FileDeleteTool),
             self._get_or_create_tool("shell", ShellTool),
             self._get_or_create_tool("code_exec", CodeExecTool),

@@ -27,6 +27,8 @@ _WORKER_MARKERS = (
     "implement",
     "fix",
     "patch",
+    "edit",
+    "write",
     "apply",
     "编辑",
     "删除文件",

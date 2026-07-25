@@ -7,6 +7,8 @@ from secretary.agent.tools.fs import (
     FileReadTool,
     FileWriteTool,
     ListDirTool,
+    ReadTool,
+    WriteTool,
 )
 from secretary.agent.tools.memory_tools import MemoryTool, SearchMemoryTool, SessionSearchTool
 from secretary.agent.tools.shell import (
@@ -23,12 +25,14 @@ __all__ = [
     "ListDirTool",
     "MemoryTool",
     "READABLE_MAX_BYTES",
+    "ReadTool",
     "SearchMemoryTool",
     "SessionSearchTool",
     "ShellTool",
     "Tool",
     "ToolCall",
     "WebFetchTool",
+    "WriteTool",
     "_infer_shell_call_from_text",
     "_is_read_only_shell_command",
     "_resolve_path",

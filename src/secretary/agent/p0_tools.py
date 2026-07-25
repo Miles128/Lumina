@@ -21,8 +21,11 @@ GLOB_MAX_RESULTS = 200
 
 
 class SearchFilesTool(Tool):
-    name = "search_files"
-    description = "Search file contents with ripgrep (or grep fallback). Returns matching paths and lines."
+    name = "grep"
+    description = (
+        "Search file contents with ripgrep (or grep fallback). "
+        "Returns matching paths and lines."
+    )
     needs_confirmation = False
     risk_level = "low"
     read_only = True
@@ -136,7 +139,7 @@ class SearchFilesTool(Tool):
 
 
 class GlobFilesTool(Tool):
-    name = "glob_files"
+    name = "glob"
     description = (
         "Find files by glob pattern (e.g. **/*.py, src/**/*.ts). "
         "Use for locating files by name/path, not content search."
@@ -200,13 +203,15 @@ class GlobFilesTool(Tool):
         return "\n".join(lines) + suffix
 
 
-class PatchTool(Tool):
-    name = "patch"
+class EditTool(Tool):
+    """Pi-aligned surgical edit: unique oldText → newText (file must exist)."""
+
+    name = "edit"
     description = (
-        "Replace exact text in a file (old_text -> new_text). Only the first match is replaced. "
-        "Use for precise edits. Requires confirmation when modifying existing files."
+        "Edit a file by replacing exact text. oldText must match uniquely "
+        "(including whitespace). Use write to create new files. Requires confirmation."
     )
-    needs_confirmation = False
+    needs_confirmation = True
     risk_level = "medium"
     read_only = False
 
@@ -214,49 +219,53 @@ class PatchTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path"},
-                "old_text": {"type": "string", "description": "Exact text to replace (empty to create file)"},
-                "new_text": {"type": "string", "description": "Replacement text"},
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to edit (relative or absolute)",
+                },
+                "oldText": {
+                    "type": "string",
+                    "description": "Exact text to find and replace (must match uniquely)",
+                },
+                "newText": {
+                    "type": "string",
+                    "description": "Replacement text",
+                },
             },
-            "required": ["path", "new_text"],
+            "required": ["path", "oldText", "newText"],
         }
 
     def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
-        if path.exists():
-            return f"📝 修改文件 `{path}`（精确替换）"
-        return f"📝 新建文件 `{path}`"
+        return f"📝 编辑文件 `{path}`（精确替换）"
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        from secretary.agent.tools.edit_text import apply_unique_edit
+
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
-        old_text = str(arguments.get("old_text", ""))
-        new_text = str(arguments.get("new_text", ""))
-        if not path.exists():
-            if old_text:
-                return ToolResult.failure(
-                    f"Error: file not found: {path}",
-                    error_type="not_found",
-                    retryable=False,
-                )
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(new_text, encoding="utf-8")
-            return f"OK: created {path} ({len(new_text)} chars)"
-        content = path.read_text(encoding="utf-8", errors="replace")
-        if not old_text:
+        old_text = str(
+            arguments.get("oldText")
+            if arguments.get("oldText") is not None
+            else arguments.get("old_text", "")
+        )
+        new_text = str(
+            arguments.get("newText")
+            if arguments.get("newText") is not None
+            else arguments.get("new_text", "")
+        )
+        result = apply_unique_edit(path, old_text=old_text, new_text=new_text)
+        if not result.ok:
             return ToolResult.failure(
-                "Error: old_text required when patching existing file",
+                result.error or "Error: edit failed",
                 error_type="validation",
                 retryable=False,
             )
-        if old_text not in content:
-            return ToolResult.failure(
-                "Error: old_text not found in file",
-                error_type="validation",
-                retryable=False,
-            )
-        updated = content.replace(old_text, new_text, 1)
-        path.write_text(updated, encoding="utf-8")
-        return f"OK: patched {path}"
+        fuzzy = " (fuzzy whitespace match)" if result.used_fuzzy else ""
+        return f"OK: edited {path}{fuzzy}"
+
+
+# Legacy name — same class / canonical tool name `edit`.
+PatchTool = EditTool
 
 
 class TodoTool(Tool):

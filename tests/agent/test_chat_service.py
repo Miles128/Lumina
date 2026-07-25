@@ -49,10 +49,21 @@ def test_build_tools_includes_p0_agent_tools(tmp_path: Path) -> None:
     service = _build_chat_service(tmp_path)
     names = {tool.name for tool in service._tool_registry.build_tools()}
     expected = {
+        "ls",
         "list_dir",
+        "read",
         "file_read",
         "read_document",
+        "grep",
+        "search_files",
+        "glob",
+        "glob_files",
+        "find",
+        "write",
         "file_write",
+        "edit",
+        "patch",
+        "move",
         "file_delete",
         "shell",
         "code_exec",
@@ -747,3 +758,54 @@ def test_build_system_prompt_skips_non_informative_reflections(tmp_path: Path) -
         profile_markdown="", hits=[], user_message="帮我构建项目"
     )
     assert "## 历史教训" not in prompt
+
+
+def test_build_system_prompt_auto_injects_shibei_context(tmp_path: Path) -> None:
+    """When Shibei is ready, each turn injects context into the system prompt."""
+    import secretary.agent.chat_service as chat_mod
+
+    service = _build_chat_service(tmp_path)
+    shibei = MagicMock()
+    shibei.is_enabled.return_value = True
+    shibei.status_view.return_value = {
+        "enabled": True,
+        "status": "ready",
+        "sources": ["/tmp/notes"],
+        "source_count": 3,
+    }
+    shibei.context.return_value = {
+        "query_used": "Lumina",
+        "results": [{"source": "note.md", "text": "本地 harness"}],
+        "memories": [{"category": "project", "text": "depth=1"}],
+    }
+    service._shibei_service = shibei
+
+    with patch.object(chat_mod, "shibei_ready_for_memory_read", return_value=True):
+        prompt = service._build_system_prompt(
+            profile_markdown="", hits=[], user_message="Lumina 架构是什么"
+        )
+
+    assert "## Shibei 答前召回" in prompt
+    assert "note.md" in prompt
+    assert "本地 harness" in prompt
+    shibei.context.assert_called_once()
+    assert shibei.context.call_args.args[0] == "Lumina 架构是什么"
+
+
+def test_build_system_prompt_skips_shibei_auto_context_when_not_ready(
+    tmp_path: Path,
+) -> None:
+    import secretary.agent.chat_service as chat_mod
+
+    service = _build_chat_service(tmp_path)
+    shibei = MagicMock()
+    shibei.is_enabled.return_value = False
+    service._shibei_service = shibei
+
+    with patch.object(chat_mod, "shibei_ready_for_memory_read", return_value=False):
+        prompt = service._build_system_prompt(
+            profile_markdown="", hits=[], user_message="你好"
+        )
+
+    assert "## Shibei 答前召回" not in prompt
+    shibei.context.assert_not_called()

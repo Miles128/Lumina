@@ -30,16 +30,24 @@ RiskKind = Literal["low", "medium", "high"]
 
 KNOWN_TOOLS = frozenset({
     "list_dir",
+    "ls",
     "file_read",
+    "read",
     "search_files",
+    "grep",
     "glob_files",
+    "glob",
+    "find",
     "search_memory",
     "web_search",
     "web_fetch",
     "memory",
     "session_search",
     "file_write",
+    "write",
     "patch",
+    "edit",
+    "move",
     "file_delete",
     "shell",
     "todo",
@@ -69,7 +77,7 @@ _CLASSIFY_SYSTEM = """你是输入路由器。根据用户消息判断意图，�
 - clarify_questions: 字符串数组，仅当 route=clarify 时填写 1-3 个追问（针对缺失信息提问，不重述需求）
 - suggested_tools: 字符串数组，可选工具名：
   search_memory, session_search, web_search, web_fetch,
-  file_read, list_dir, search_files, glob_files, memory, file_write, patch,
+  read, file_read, list_dir, search_files, glob_files, memory, write, file_write, edit, patch,
   file_delete, shell, todo, skills_list, skill_view, clarify, ask_user,
   list_connectors, connector_status, sync_source
 
@@ -149,6 +157,22 @@ FOLLOWUP_MARKERS = (
     "你非得问",
 )
 
+# 要求重新跑分析 / 再扫项目：必须进 AgentLoop 调工具，禁止 DIRECT。
+_REANALYZE_MARKERS = (
+    "再分析",
+    "重新分析",
+    "再看一遍",
+    "再扫一遍",
+    "再读一遍",
+    "重新读",
+    "再分析一遍",
+    "完整分析一遍",
+    "再完整分析",
+    "analyze again",
+    "re-analyze",
+    "reanalyze",
+)
+
 _TRIVIAL_EXACT = frozenset({
     "你好",
     "您好",
@@ -220,11 +244,14 @@ def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDeci
     if not history:
         return None
     text = message.strip()
+    lowered = text.lower()
     from secretary.agent.grounding import is_filesystem_question
     from secretary.agent.web_routing import is_web_search_query
 
     if is_filesystem_question(text):
         return GateDecision(action=GateAction.CONTINUE, reason="filesystem followup")
+    if any(marker in text or marker in lowered for marker in _REANALYZE_MARKERS):
+        return GateDecision(action=GateAction.CONTINUE, reason="reanalyze followup")
     if is_web_search_query(text):
         return None
     simple = rule_route_simple_direct(message)
@@ -236,9 +263,49 @@ def rule_route_followup(message: str, history: list[dict[str, str]]) -> GateDeci
         return GateDecision(action=GateAction.CONTINUE)
     if any(marker in text for marker in FOLLOWUP_MARKERS):
         return GateDecision(action=GateAction.CONTINUE)
+    # 上文在分析本地项目时，含糊的「再来」「继续」也走 Agent，避免 DIRECT 空转。
+    if _history_looks_like_project_analysis(history) and _is_vague_redo(text):
+        return GateDecision(action=GateAction.CONTINUE, reason="project redo followup")
     if _is_memory_light_query(text):
         return GateDecision(action=GateAction.LIGHT, reason="memory followup")
     return GateDecision(action=GateAction.DIRECT, reason="followup chat")
+
+
+def _history_looks_like_project_analysis(history: list[dict[str, str]]) -> bool:
+    blob = "\n".join(
+        str(item.get("content") or "") for item in history[-8:] if isinstance(item, dict)
+    )
+    markers = (
+        "完整分析",
+        "技术栈",
+        "源码",
+        "list_dir",
+        "file_read",
+    "read",
+        "package.json",
+        "StockResearch",
+        "React",
+        "LangGraph",
+        "项目结构",
+        "仓库",
+    )
+    return any(marker in blob for marker in markers)
+
+
+def _is_vague_redo(text: str) -> bool:
+    t = text.strip().lower()
+    return t in {
+        "再来",
+        "再来一次",
+        "继续",
+        "继续分析",
+        "重来",
+        "重做",
+        "再试",
+        "再试一次",
+        "again",
+        "retry",
+    }
 
 
 def rule_route(message: str) -> GateDecision | None:
@@ -362,6 +429,7 @@ def _is_local_file_request(text: str, lowered: str) -> bool:
         "简历",
         "list_dir",
         "file_read",
+    "read",
         "search_files",
         "读一下",
         "读取",

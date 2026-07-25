@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-READ_TOOL_NAMES = frozenset({"list_dir", "file_read", "search_files"})
+READ_TOOL_NAMES = frozenset(
+    {"list_dir", "ls", "read", "file_read", "search_files", "grep"}
+)
+# 文件「内容」核实：仅打开文件正文的工具；list_dir / search_files 不够。
+CONTENT_READ_TOOL_NAMES = frozenset({"read", "file_read"})
+_MCP_CONTENT_READ_HINTS = ("read_file", "read_text", "get_file_contents", "cat_file")
 MEMORY_TOOL_NAMES = frozenset(
     {"search_memory", "session_search", "shibei_search", "shibei_list_sources"}
 )
@@ -147,8 +152,79 @@ _FILE_QUESTION_MARKERS = (
     ".yml",
     ".toml",
     "list_dir",
+    "ls",
     "file_read",
+    "read",
     "search_files",
+    "grep",
+)
+
+# 只列目录 / 查有无：list_dir 即可，不强制 file_read。
+_LISTING_ONLY_MARKERS = (
+    "列出",
+    "列出来",
+    "列出所有",
+    "列出所有文件",
+    "里有哪些文件",
+    "目录里有哪些",
+    "文件夹里有哪些",
+    "哪些项目",
+    "项目有哪些",
+    "手上有哪些项目",
+    "项目结构",
+    "目录结构",
+    "ls ",
+    "ls\n",
+    "有没有",
+    "是否存在",
+    "存在吗",
+    "在不在",
+)
+
+# 需要打开文件正文才能答：未 file_read 不准回复。
+_CONTENT_QUESTION_MARKERS = (
+    "内容是什么",
+    "文件内容",
+    "读一下",
+    "读取文件",
+    "读取一下",
+    "打开看看",
+    "打开文件",
+    "打开读",
+    "总结",
+    "概括",
+    "摘要",
+    "讲了什么",
+    "写了什么",
+    "说了什么",
+    "实现了什么",
+    "里面写",
+    "里写了",
+    "代码怎么",
+    "代码是什么",
+    "作者是谁",
+    "谁写的",
+    "谁开发",
+    "维护者",
+    "author",
+    "cat ",
+    "summarize",
+    "what does",
+    "read this",
+    "read the",
+    "show me the content",
+    "看看这个文件",
+    "这个文件说",
+    "这个文件里",
+    "文件里有",
+    "package.json",
+    "readme.md",
+    "readme ",
+)
+
+_FILE_EXT_RE = re.compile(
+    r"\b[\w./-]+\.(?:py|js|ts|tsx|jsx|json|md|yaml|yml|toml|txt|csv|rs|go|java)\b",
+    re.IGNORECASE,
 )
 
 _CJK_START = re.compile(r"[\u4e00-\u9fff]")
@@ -261,6 +337,12 @@ _COMMAND_SUGGESTION_MARKERS = (
     "你可以跑", "建议执行", "不妨试试", "你可以试",
     "要不要", "试试看", "可以尝试", "你可以执行",
     "上次跑", "之前跑", "上次执行", "之前执行",
+)
+
+UNGROUNDED_CONTENT_FALLBACK = (
+    "这个问题需要先读取文件内容才能回答。"
+    "我还没有调用 file_read（或等价 MCP 读文件工具）打开目标文件，"
+    "因此不能编造或猜测文件正文。请允许我先读文件后再答复。"
 )
 
 UNGROUNDED_LISTING_FALLBACK = (
@@ -395,6 +477,62 @@ def has_read_grounding(used_tools: list[str]) -> bool:
     return False
 
 
+def is_content_read_tool(name: str) -> bool:
+    """Whether a tool name opens file body (file_read / MCP read_file equivalents)."""
+    if name in CONTENT_READ_TOOL_NAMES:
+        return True
+    lowered = name.lower()
+    return name.startswith("mcp_") and any(
+        hint in lowered for hint in _MCP_CONTENT_READ_HINTS
+    )
+
+
+def has_content_grounding(used_tools: list[str]) -> bool:
+    """True only when a tool that opens file body was used (not list_dir/search)."""
+    return any(is_content_read_tool(name) for name in used_tools)
+
+
+def is_file_content_question(message: str) -> bool:
+    """User asks about file body / authorship / summary — requires file_read."""
+    text = message.strip()
+    if not text:
+        return False
+    from secretary.agent.web_routing import is_web_search_query
+
+    if is_web_search_query(text):
+        return False
+    lowered = text.lower()
+    listing_only = any(
+        marker in text or marker in lowered for marker in _LISTING_ONLY_MARKERS
+    )
+    content_hit = any(
+        marker in text or marker in lowered for marker in _CONTENT_QUESTION_MARKERS
+    )
+    if content_hit and not listing_only:
+        return True
+    if content_hit and listing_only:
+        # e.g. "列出并总结 readme" — still needs content.
+        if any(
+            marker in text or marker in lowered
+            for marker in (
+                "总结",
+                "概括",
+                "内容",
+                "读一下",
+                "读取",
+                "summarize",
+                "author",
+                "作者",
+            )
+        ):
+            return True
+        return False
+    # Named source file usually implies content unless pure existence/listing.
+    if _FILE_EXT_RE.search(text) and not listing_only:
+        return True
+    return False
+
+
 def has_memory_grounding(used_tools: list[str]) -> bool:
     return any(name in MEMORY_TOOL_NAMES for name in used_tools)
 
@@ -486,11 +624,14 @@ def should_retry_for_grounding(
     reply: str,
     used_tools: list[str],
 ) -> bool:
-    if has_read_grounding(used_tools) or has_web_grounding(used_tools):
-        return False
     from secretary.agent.web_routing import is_web_search_query
 
-    if is_web_search_query(user_message):
+    if is_web_search_query(user_message) or has_web_grounding(used_tools):
+        return False
+    # 内容类：仅有 list_dir 仍必须重试，强制先 file_read。
+    if is_file_content_question(user_message) and not has_content_grounding(used_tools):
+        return True
+    if has_read_grounding(used_tools):
         return False
     if reply_simulates_file_listing(reply):
         return True
@@ -542,7 +683,20 @@ def requires_forced_read_tool(user_message: str, used_tools: list[str]) -> bool:
 
     if is_web_search_query(user_message) or has_web_grounding(used_tools):
         return False
+    if is_file_content_question(user_message) and not has_content_grounding(used_tools):
+        return True
     return is_filesystem_question(user_message) and not has_read_grounding(used_tools)
+
+
+def requires_forced_content_read(user_message: str, used_tools: list[str]) -> bool:
+    """Narrower force: content questions must call file_read (not list_dir)."""
+    from secretary.agent.web_routing import is_web_search_query
+
+    if is_web_search_query(user_message) or has_web_grounding(used_tools):
+        return False
+    return is_file_content_question(user_message) and not has_content_grounding(
+        used_tools
+    )
 
 
 def strip_forbidden_listing_patterns(reply: str) -> str:
@@ -737,6 +891,11 @@ def enforce_grounded_reply(
     if has_web_grounding(used_tools):
         return reply, True, grounding_note or "已通过 web_search / web_fetch 联网核实"
 
+    # 硬规则：内容类问题未打开文件正文 → 直接拦截（list_dir 不算）。
+    if is_file_content_question(user_message) and not has_content_grounding(used_tools):
+        note = grounding_note or "未调用 file_read 读取文件内容，已阻止未核实回复"
+        return UNGROUNDED_CONTENT_FALLBACK, False, note
+
     # Defense-in-depth: a reply that fabricates a 📁/📄 listing (the list_dir
     # output shape) without any read grounding is a hallucination even when
     # the user's question did not match the filesystem heuristic (e.g.
@@ -808,7 +967,7 @@ def collect_read_evidence(steps: list[Any]) -> ReadEvidence:
         arguments = getattr(tool_call, "arguments", {}) or {}
         output = str(tool_output)
         _absorb_not_found(evidence, output)
-        if name == "file_read":
+        if name in ("file_read", "read"):
             _absorb_file_read(evidence, arguments, output)
         elif name == "list_dir":
             _absorb_list_dir(evidence, output)
@@ -934,11 +1093,19 @@ def evidence_summary(evidence: ReadEvidence) -> str:
 
 
 GROUNDING_RETRY_USER = (
-    "[System] 你尚未用 list_dir、file_read 或 search_files 核实本地文件系统，"
-    "禁止编造路径、文件名或文件内容；禁止在正文里伪造 `$ ls` 输出、目录树（├──）或假装已列目录。"
-    "禁止只说「稍等」「查完告诉你」却不调用工具——必须在本轮内完成 list_dir 并给出结果。"
-    "请先调用只读工具查证，再仅复述工具返回的原始结果。"
+    "[System] 你尚未用只读工具核实本地文件系统。"
+    "若问题需要文件内容/作者/摘要：必须先调用 file_read（或等价 MCP 读文件）打开目标文件，"
+    "仅有 list_dir / search_files 不够，禁止根据目录名或常识编造正文。"
+    "若问题只需列目录：调用 list_dir。"
+    "禁止编造路径、文件名或文件内容；禁止伪造 `$ ls` 输出、目录树（├──）。"
+    "禁止只说「稍等」「查完告诉你」却不调用工具——必须在本轮内完成工具调用并仅复述工具结果。"
     "若文件不存在，明确说「未找到」，不要猜测。"
+)
+
+CONTENT_GROUNDING_RETRY_USER = (
+    "[System] 用户问题需要文件正文。你尚未调用 file_read（或等价 MCP 读文件工具）。"
+    "list_dir 只给出文件名，不能当内容依据。"
+    "请立即对目标路径调用 file_read，然后只根据工具返回的原文回答；禁止猜测。"
 )
 
 

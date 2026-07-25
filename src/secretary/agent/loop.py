@@ -18,15 +18,19 @@ from typing import Any
 from secretary.agent.confirmation_policy import tool_requires_confirmation
 from secretary.agent.context_compaction import compact_messages_if_needed
 from secretary.agent.grounding import (
+    CONTENT_GROUNDING_RETRY_USER,
     GROUNDING_RETRY_USER,
     collect_command_evidence,
     collect_read_evidence,
     enforce_grounded_reply,
     format_verify_retry,
+    has_content_grounding,
     has_read_grounding,
     infer_list_dir_target,
+    is_file_content_question,
     is_filesystem_question,
     reply_defers_filesystem_work,
+    requires_forced_content_read,
     requires_forced_read_tool,
     resolve_turn_user_message,
     sanitize_filesystem_reply,
@@ -155,6 +159,7 @@ class PendingConfirmation:
     description: str
     risk_level: str
     confirmation_kind: str = "action"
+    diff_preview: str = ""
 
 
 class AgentLoop:
@@ -176,9 +181,12 @@ class AgentLoop:
         after_tool_execution_hooks: list[AfterToolExecutionHook] | None = None,
         force_web_first_step: bool = False,
         explicit_working_dir: bool = False,
+        compaction_max_tokens: int | None = None,
+        compaction_keep_tail: int | None = None,
     ) -> None:
         self._llm_config = llm_config
-        self._tools = {t.name: t for t in (tools or _default_tools())}
+        raw_tools = list(tools or _default_tools())
+        self._tools = _index_tools(raw_tools)
         self._max_steps = max_steps
         self._working_dir = (working_dir or Path.home()).expanduser().resolve()
         if not self._working_dir.is_dir():
@@ -200,10 +208,12 @@ class AgentLoop:
         self._force_web_first_step = force_web_first_step
         self._web_forced_used = False
         self._explicit_working_dir = explicit_working_dir
-        # Cache tool schemas once: tool set is immutable after init, so
-        # [t.schema() for t in ...] and json.dumps need not run every loop step.
-        self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in self._tools.values()]
-        self._tool_names = ", ".join(self._tools.keys())
+        self._compaction_max_tokens = compaction_max_tokens
+        self._compaction_keep_tail = compaction_keep_tail
+        # Cache tool schemas once from the concrete tool list (not alias index),
+        # so legacy lookup aliases do not duplicate schemas sent to the model.
+        self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in raw_tools]
+        self._tool_names = ", ".join(t.name for t in raw_tools)
         # NOTE: _instruction_cache 不加锁。AgentLoop 实例不应被多线程并发使用
         # （run() 是有状态的同步循环，共享 _cancelled / messages / steps 等）。
         # 如未来需要并发复用同一实例，应改用 threading.Lock 保护缓存写入，
@@ -272,7 +282,14 @@ class AgentLoop:
                     iteration=iteration,
                 )
             )
-            compaction = compact_messages_if_needed(current_messages, self._llm_config)
+            compact_kwargs: dict[str, Any] = {}
+            if self._compaction_max_tokens is not None:
+                compact_kwargs["max_tokens"] = self._compaction_max_tokens
+            if self._compaction_keep_tail is not None:
+                compact_kwargs["keep_tail"] = self._compaction_keep_tail
+            compaction = compact_messages_if_needed(
+                current_messages, self._llm_config, **compact_kwargs
+            )
             current_messages = compaction.messages
             if compaction.triggered:
                 self._emit_progress(
@@ -289,11 +306,15 @@ class AgentLoop:
                     )
                 )
             payload = self._build_payload(current_messages, self._tool_schemas, native=self._native_tools_enabled)
-            force_read = requires_forced_read_tool(turn_user_message, used_tools)
+            force_content = requires_forced_content_read(turn_user_message, used_tools)
+            force_read = force_content or requires_forced_read_tool(
+                turn_user_message, used_tools
+            )
             needs_preflight = (
                 step_idx == 0
                 and not preflight_list_dir_used
                 and not has_read_grounding(used_tools)
+                and not force_content  # 内容问题直接强制 file_read，跳过仅 list_dir 预飞
                 and "list_dir" in self._tools
                 and (
                     is_filesystem_question(turn_user_message)
@@ -397,11 +418,20 @@ class AgentLoop:
                                 "请换一种路径或方式回答用户。"
                             ),
                         })
-                    force_read = False
+                    # 内容类问题：list_dir 预飞后仍强制 file_read，不准直接答。
+                    force_content = requires_forced_content_read(
+                        turn_user_message, used_tools
+                    )
+                    force_read = force_content or requires_forced_read_tool(
+                        turn_user_message, used_tools
+                    )
 
-            block_stream = force_read or (
+            block_stream = force_read or force_content or (
                 is_filesystem_question(turn_user_message)
                 and not has_read_grounding(used_tools)
+            ) or (
+                is_file_content_question(turn_user_message)
+                and not has_content_grounding(used_tools)
             )
             on_delta = None if block_stream else self._build_reply_delta_callback(iteration)
 
@@ -419,6 +449,7 @@ class AgentLoop:
                     payload,
                     self._tool_schemas,
                     force_read=force_read,
+                    force_content=force_content,
                     temperature=temperature,
                     on_delta=on_delta,
                 )
@@ -682,7 +713,13 @@ class AgentLoop:
                     grounding_retries += 1
                     shared_retries += 1
                     current_messages.append({"role": "assistant", "content": raw})
-                    current_messages.append({"role": "user", "content": GROUNDING_RETRY_USER})
+                    retry_prompt = (
+                        CONTENT_GROUNDING_RETRY_USER
+                        if is_file_content_question(turn_user_message)
+                        and not has_content_grounding(used_tools)
+                        else GROUNDING_RETRY_USER
+                    )
+                    current_messages.append({"role": "user", "content": retry_prompt})
                     continue
 
                 from secretary.agent.web_research import (
@@ -701,6 +738,43 @@ class AgentLoop:
                     shared_retries += 1
                     current_messages.append({"role": "assistant", "content": raw})
                     current_messages.append({"role": "user", "content": WEB_RETRY_USER})
+                    continue
+
+                from secretary.agent.knowledge_work import (
+                    OFFICE_RETRY_USER,
+                    RESEARCH_RETRY_USER,
+                    should_retry_for_office,
+                    should_retry_for_research_intent,
+                )
+
+                if (
+                    shared_retries < max_shared_retries
+                    and web_retries < max_web_retries
+                    and should_retry_for_research_intent(
+                        turn_user_message, reply, used_tools
+                    )
+                ):
+                    web_retries += 1
+                    shared_retries += 1
+                    current_messages.append({"role": "assistant", "content": raw})
+                    current_messages.append(
+                        {"role": "user", "content": RESEARCH_RETRY_USER}
+                    )
+                    continue
+
+                if (
+                    shared_retries < max_shared_retries
+                    and grounding_retries < max_grounding_retries
+                    and should_retry_for_office(
+                        turn_user_message, reply, used_tools
+                    )
+                ):
+                    grounding_retries += 1
+                    shared_retries += 1
+                    current_messages.append({"role": "assistant", "content": raw})
+                    current_messages.append(
+                        {"role": "user", "content": OFFICE_RETRY_USER}
+                    )
                     continue
 
                 evidence = collect_read_evidence(steps)
@@ -789,9 +863,16 @@ class AgentLoop:
                 tool_call.arguments,
             )
             if needs_confirm:
+                from secretary.agent.tools.edit_text import build_confirm_diff_preview
+
                 desc = tool.describe_action(tool_call.arguments, self._working_dir)
                 risk = tool.risk_level
                 action_id = f"act_{datetime.now(UTC).strftime('%H%M%S')}_{step_idx}"
+                diff_preview = build_confirm_diff_preview(
+                    tool_call.name,
+                    tool_call.arguments,
+                    self._working_dir,
+                )
                 pending = PendingConfirmation(
                     action_id=action_id,
                     tool_name=tool_call.name,
@@ -799,6 +880,7 @@ class AgentLoop:
                     description=desc,
                     risk_level=risk,
                     confirmation_kind=confirmation_kind,
+                    diff_preview=diff_preview,
                 )
                 step = StepResult(
                     thought=thought,
@@ -1388,13 +1470,22 @@ class AgentLoop:
         force_read: bool,
         temperature: float,
         on_delta: Callable[[str], None] | None,
+        force_content: bool = False,
     ) -> tuple[str, list[ToolCall], dict[str, Any] | None, bool]:
         if self._native_tools_enabled and tool_schemas:
+            content_schemas = self._content_tool_schemas(tool_schemas)
             read_schemas = self._read_tool_schemas(tool_schemas)
-            active_schemas = read_schemas if force_read and read_schemas else tool_schemas
+            if force_content and content_schemas:
+                active_schemas = content_schemas
+            elif force_read and read_schemas:
+                active_schemas = read_schemas
+            else:
+                active_schemas = tool_schemas
             openai_tools = schemas_to_openai_tools(active_schemas)
             if openai_tools:
-                tool_choice: str | dict[str, Any] = "required" if force_read else "auto"
+                tool_choice: str | dict[str, Any] = (
+                    "required" if (force_read or force_content) else "auto"
+                )
                 try:
                     result = chat_completion_with_tools(
                         self._llm_config,
@@ -1565,6 +1656,8 @@ class AgentLoop:
             )
 
         if first_confirm is not None:
+            from secretary.agent.tools.edit_text import build_confirm_diff_preview
+
             confirm_paired = batch_calls[-1]
             tool = self._tools.get(confirm_paired.name)
             desc = (
@@ -1580,6 +1673,11 @@ class AgentLoop:
                 description=desc,
                 risk_level=risk,
                 confirmation_kind=confirm_kind,
+                diff_preview=build_confirm_diff_preview(
+                    confirm_paired.name,
+                    confirm_paired.arguments,
+                    self._working_dir,
+                ),
             )
             step = StepResult(
                 thought=thought,
@@ -1665,6 +1763,18 @@ class AgentLoop:
                 read.append(schema)
         return read
 
+    def _content_tool_schemas(
+        self, tool_schemas: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Schemas that open file body — used when force_content=True."""
+        from secretary.agent.grounding import is_content_read_tool
+
+        return [
+            schema
+            for schema in tool_schemas
+            if is_content_read_tool(str(schema.get("name") or ""))
+        ]
+
     def _build_payload(
         self,
         messages: list[dict[str, str]],
@@ -1700,13 +1810,36 @@ class AgentLoop:
         return parse_tool_call_response(raw)
 
 
+def _index_tools(tools: list[Tool]) -> dict[str, Tool]:
+    """Index tools by name and map Pi↔legacy aliases for lookup."""
+    indexed = {tool.name: tool for tool in tools}
+    for legacy, canonical in (
+        ("file_read", "read"),
+        ("file_write", "write"),
+        ("patch", "edit"),
+        ("list_dir", "ls"),
+        ("search_files", "grep"),
+        ("glob_files", "glob"),
+        ("find", "glob"),
+    ):
+        if canonical in indexed and legacy not in indexed:
+            indexed[legacy] = indexed[canonical]
+        if legacy in indexed and canonical not in indexed:
+            indexed[canonical] = indexed[legacy]
+    return indexed
+
+
 def _default_tools() -> list[Tool]:
+    from secretary.agent.p0_tools import EditTool
+    from secretary.agent.tools.fs import MoveTool
     from secretary.agent.web_search import WebSearchTool
 
     return [
         ListDirTool(),
         FileReadTool(),
         FileWriteTool(),
+        EditTool(),
+        MoveTool(),
         FileDeleteTool(),
         ShellTool(),
         WebFetchTool(),

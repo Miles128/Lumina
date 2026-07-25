@@ -1,4 +1,4 @@
-"""File-system tools: list_dir, file_read, file_write, file_delete."""
+"""File-system tools: list_dir, read/write (Pi names), file_delete + aliases."""
 
 from __future__ import annotations
 
@@ -8,6 +8,38 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.tools.base import Tool, ToolResult, _resolve_path
+
+# Canonical Pi-aligned names + legacy aliases used across grounding / profiles.
+READ_TOOL_NAMES = frozenset({"read", "file_read"})
+WRITE_TOOL_NAMES = frozenset({"write", "file_write"})
+EDIT_TOOL_NAMES = frozenset({"edit", "patch"})
+MOVE_TOOL_NAMES = frozenset({"move"})
+LS_TOOL_NAMES = frozenset({"ls", "list_dir"})
+GREP_TOOL_NAMES = frozenset({"grep", "search_files"})
+GLOB_TOOL_NAMES = frozenset({"glob", "glob_files", "find"})
+
+
+class AliasedTool(Tool):
+    """Same implementation under a legacy tool name."""
+
+    def __init__(self, name: str, delegate: Tool) -> None:
+        self.name = name
+        self._delegate = delegate
+        self.description = (
+            f"{delegate.description} (alias of `{delegate.name}`; prefer `{delegate.name}`)."
+        )
+        self.needs_confirmation = delegate.needs_confirmation
+        self.risk_level = delegate.risk_level
+        self.read_only = delegate.read_only
+
+    def _parameters(self) -> dict[str, Any]:
+        return self._delegate._parameters()
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        return self._delegate.execute(arguments, working_dir)
+
+    def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        return self._delegate.describe_action(arguments, working_dir)
 
 READABLE_MAX_BYTES = 2 * 1024 * 1024
 
@@ -58,7 +90,7 @@ def _human_size(size: int) -> str:
 
 
 class ListDirTool(Tool):
-    name = "list_dir"
+    name = "ls"
     description = "List files and directories in a given path. Returns names, types, and sizes."
     needs_confirmation = False
     risk_level = "low"
@@ -173,7 +205,7 @@ class ListDirTool(Tool):
         header = f"📂 {path} ({len(lines)} entries)"
         footer = (
             "注：📁/📄 行是真实目录项名称，可直接用于回答「有哪些文件夹/项目」。"
-            "需要文件内容时用 file_read；Excel/PDF/Word 用 read_document；"
+            "需要文件内容时用 read；Excel/PDF/Word 用 read_document；"
             "按关键词找目录/文件用 search_files。"
             "不要对用户声称灵犀「没有读权限」或「只能看目录结构」。"
         )
@@ -184,8 +216,8 @@ class ListDirTool(Tool):
         return f"📂 列出目录 `{path}`"
 
 
-class FileReadTool(Tool):
-    name = "file_read"
+class ReadTool(Tool):
+    name = "read"
     description = (
         "Read the contents of a text file. No confirmation needed. "
         "For Excel/PDF/Word use read_document instead."
@@ -273,9 +305,12 @@ class FileReadTool(Tool):
         return f"📖 读取文件 `{path}`"
 
 
-class FileWriteTool(Tool):
-    name = "file_write"
-    description = "Write content to a file. REQUIRES user confirmation before executing."
+class WriteTool(Tool):
+    name = "write"
+    description = (
+        "Write content to a file (create or overwrite). "
+        "REQUIRES user confirmation before executing. Prefer edit for surgical changes."
+    )
     needs_confirmation = True
     risk_level = "medium"
     read_only = False
@@ -286,7 +321,10 @@ class FileWriteTool(Tool):
             "properties": {
                 "path": {"type": "string", "description": "File path to write"},
                 "content": {"type": "string", "description": "Content to write"},
-                "append": {"type": "boolean", "description": "Append instead of overwrite (default false)"},
+                "append": {
+                    "type": "boolean",
+                    "description": "Append instead of overwrite (default false)",
+                },
             },
             "required": ["path", "content"],
         }
@@ -330,6 +368,70 @@ class FileWriteTool(Tool):
         except Exception as exc:
             return ToolResult.failure(
                 f"Error writing file: {exc}",
+                error_type="internal",
+                retryable=False,
+            )
+
+
+class MoveTool(Tool):
+    name = "move"
+    description = (
+        "Move or rename a file. Destination must not already exist. "
+        "REQUIRES user confirmation. Directories are not supported in MVP."
+    )
+    needs_confirmation = True
+    risk_level = "medium"
+    read_only = False
+
+    def _parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "from_path": {"type": "string", "description": "Source file path"},
+                "to_path": {"type": "string", "description": "Destination file path"},
+            },
+            "required": ["from_path", "to_path"],
+        }
+
+    def describe_action(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        src = _resolve_path(str(arguments.get("from_path", "")), working_dir)
+        dst = _resolve_path(str(arguments.get("to_path", "")), working_dir)
+        return f"📦 移动文件 `{src}` → `{dst}`"
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        src = _resolve_path(str(arguments.get("from_path", "")), working_dir)
+        dst = _resolve_path(str(arguments.get("to_path", "")), working_dir)
+        if not src.exists():
+            return ToolResult.failure(
+                f"Error: source not found: {src}",
+                error_type="not_found",
+                retryable=False,
+            )
+        if not src.is_file():
+            return ToolResult.failure(
+                f"Error: source is not a file (directory move not supported): {src}",
+                error_type="validation",
+                retryable=False,
+            )
+        if dst.exists():
+            return ToolResult.failure(
+                f"Error: destination already exists: {dst}",
+                error_type="validation",
+                retryable=False,
+            )
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+            return f"OK: moved {src} → {dst}"
+        except PermissionError:
+            return ToolResult.failure(
+                f"Error: permission denied moving {src} → {dst}",
+                error_type="permission",
+                retryable=False,
+            )
+        except OSError as exc:
+            return ToolResult.failure(
+                f"Error moving file: {exc}",
                 error_type="internal",
                 retryable=False,
             )
@@ -384,3 +486,8 @@ class FileDeleteTool(Tool):
                 error_type="internal",
                 retryable=False,
             )
+
+
+# Backward-compatible class aliases (same canonical tool names).
+FileReadTool = ReadTool
+FileWriteTool = WriteTool

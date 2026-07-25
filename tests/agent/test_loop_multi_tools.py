@@ -28,8 +28,8 @@ def test_native_batch_executes_all_read_only_tools(tmp_path: Path) -> None:
     batch = ChatCompletionResult(
         content="",
         tool_calls=(
-            LlmToolCall(id="call_a", name="file_read", arguments={"path": str(a)}),
-            LlmToolCall(id="call_b", name="file_read", arguments={"path": str(b)}),
+            LlmToolCall(id="call_a", name="read", arguments={"path": str(a)}),
+            LlmToolCall(id="call_b", name="read", arguments={"path": str(b)}),
         ),
         assistant_message={
             "role": "assistant",
@@ -39,7 +39,7 @@ def test_native_batch_executes_all_read_only_tools(tmp_path: Path) -> None:
                     "id": "call_a",
                     "type": "function",
                     "function": {
-                        "name": "file_read",
+                        "name": "read",
                         "arguments": f'{{"path": "{a}"}}',
                     },
                 },
@@ -47,7 +47,7 @@ def test_native_batch_executes_all_read_only_tools(tmp_path: Path) -> None:
                     "id": "call_b",
                     "type": "function",
                     "function": {
-                        "name": "file_read",
+                        "name": "read",
                         "arguments": f'{{"path": "{b}"}}',
                     },
                 },
@@ -78,7 +78,7 @@ def test_native_batch_executes_all_read_only_tools(tmp_path: Path) -> None:
     ):
         result = loop.run([{"role": "user", "content": "读 a.txt 和 b.txt"}], temperature=0.0)
 
-    assert result.used_tools.count("file_read") == 2
+    assert result.used_tools.count("read") == 2
     outputs = [step.tool_output or "" for step in result.steps if step.tool_call]
     assert any("alpha" in out for out in outputs)
     assert any("beta" in out for out in outputs)

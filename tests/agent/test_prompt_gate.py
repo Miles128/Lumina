@@ -94,6 +94,21 @@ def test_rule_route_followup_simple_chat_goes_direct() -> None:
     assert decision.action == GateAction.DIRECT
 
 
+def test_rule_route_followup_reanalyze_goes_agent() -> None:
+    """「再分析一遍」必须走 AgentLoop，禁止 DIRECT 空转吐 function_calls。"""
+    history = [
+        {"role": "user", "content": "不对 这个项目 是 react"},
+        {
+            "role": "assistant",
+            "content": "## StockResearch — 完整分析\n前端 React，后端 Python",
+        },
+    ]
+    decision = rule_route_followup("再分析一遍", history)
+    assert decision is not None
+    assert decision.action == GateAction.CONTINUE
+    assert "reanalyze" in (decision.reason or "") or "analy" in (decision.reason or "")
+
+
 def test_rule_route_followup_memory_goes_light() -> None:
     history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hi"}]
     decision = rule_route_followup("总结一下我最近在读什么", history)

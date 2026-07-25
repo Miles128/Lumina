@@ -28,7 +28,9 @@ def tool_requires_confirmation(
             return True, "action"
         return False, ""
 
-    if tool.name == "file_write":
+    from secretary.agent.tools.fs import EDIT_TOOL_NAMES, MOVE_TOOL_NAMES, WRITE_TOOL_NAMES
+
+    if tool.name in WRITE_TOOL_NAMES:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
         append = bool(arguments.get("append", False))
         if file_auth is None:
@@ -39,18 +41,17 @@ def tool_requires_confirmation(
             return True, kind
         return False, ""
 
-    if tool.name == "patch":
+    if tool.name in EDIT_TOOL_NAMES:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
-        old_text = str(arguments.get("old_text", ""))
         if file_auth is None:
-            kind = "write_modify" if path.exists() and old_text else "write_new"
-            return True, kind
-        if path.exists() and not old_text:
-            return True, "write_modify"
+            return True, "write_modify" if path.exists() else "write_new"
         kind = file_auth.write_confirmation_kind(path, append=False)
         if file_auth.needs_write_confirmation(path, append=False):
             return True, kind
         return False, ""
+
+    if tool.name in MOVE_TOOL_NAMES:
+        return True, "write_move"
 
     if tool.name == "file_delete":
         return True, "write_delete"
@@ -62,6 +63,11 @@ def tool_requires_confirmation(
         if _is_read_only_shell_command(command):
             return False, ""
         return True, "shell"
+
+    if tool.name == "code_exec":
+        if file_auth is not None and file_auth.has_session_code_exec():
+            return False, ""
+        return True, "action"
 
     if tool.needs_confirmation:
         kind = "shell" if tool.name == "shell" else "action"

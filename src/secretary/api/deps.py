@@ -29,6 +29,7 @@ def to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> ChatR
         confirmation_action_id=pending.action_id if pending else "",
         confirmation_risk_level=pending.risk_level if pending else "",
         confirmation_kind=result.confirmation_kind,
+        confirmation_diff=(pending.diff_preview if pending else "") or "",
         allow_permanent_read=result.allow_permanent_read,
         allow_session_write=result.allow_session_write,
         grounding_verified=result.grounding_verified,
@@ -55,9 +56,22 @@ def build_progress_callback(
         return None
     hub: ProgressHub = request.app.state.progress_hub
     hub.open(trace_id)
+    trace_store = getattr(request.app.state, "trace_store", None)
+    retention = "full"
+    agent_config_store = getattr(request.app.state, "agent_config_store", None)
+    if agent_config_store is not None:
+        try:
+            retention = agent_config_store.load().harness.trace_retention
+        except Exception:
+            retention = "full"
 
     def callback(event: ProgressEvent) -> None:
         hub.publish(trace_id, event)
+        if trace_store is not None:
+            try:
+                trace_store.append(trace_id, event, retention=retention)
+            except Exception:
+                pass
 
     return callback
 

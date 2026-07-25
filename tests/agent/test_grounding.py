@@ -221,6 +221,57 @@ def test_should_retry_when_ungrounded() -> None:
     )
 
 
+def test_content_question_list_dir_alone_not_enough() -> None:
+    """内容类问题：仅 list_dir 不算已读文件内容，必须重试/强制 file_read。"""
+    from secretary.agent.grounding import (
+        UNGROUNDED_CONTENT_FALLBACK,
+        enforce_grounded_reply,
+        has_content_grounding,
+        is_file_content_question,
+        requires_forced_read_tool,
+        should_retry_for_grounding,
+    )
+
+    assert is_file_content_question("读一下 package.json")
+    assert is_file_content_question("总结 README.md")
+    assert not is_file_content_question("列出 ~/Documents/简历/")
+    assert has_content_grounding(["file_read"])
+    assert has_content_grounding(["mcp_filesystem_read_file"])
+    assert not has_content_grounding(["list_dir"])
+    assert not has_content_grounding(["search_files"])
+
+    assert requires_forced_read_tool("读一下 package.json", ["list_dir"])
+    assert not requires_forced_read_tool("读一下 package.json", ["file_read"])
+    assert not requires_forced_read_tool("列出 ~/Documents/简历/", ["list_dir"])
+
+    assert should_retry_for_grounding(
+        "读一下 package.json",
+        "里面有 react",
+        ["list_dir"],
+    )
+
+    reply, ok, note = enforce_grounded_reply(
+        "package.json 里依赖了 react 和 lodash",
+        "读一下 package.json",
+        ["list_dir"],
+        grounding_verified=False,
+        grounding_note="",
+    )
+    assert not ok
+    assert reply == UNGROUNDED_CONTENT_FALLBACK
+    assert "file_read" in note or "内容" in note
+
+    reply2, ok2, _ = enforce_grounded_reply(
+        "依赖里有 react",
+        "读一下 package.json",
+        ["file_read"],
+        grounding_verified=True,
+        grounding_note="已读",
+    )
+    assert ok2
+    assert "react" in reply2
+
+
 def test_collect_read_evidence_from_file_read() -> None:
     steps = [
         _FakeStep(

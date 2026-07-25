@@ -68,6 +68,12 @@
     stepCount: 0,
     panelVisible: false,
     expanded: false,
+    expandedNodeIds: new Set(),
+    toolCount: 0,
+    subagentCount: 0,
+    compactionBefore: 0,
+    compactionAfter: 0,
+    compactionCount: 0,
   };
 
   // Conversation tree branching state
@@ -874,7 +880,8 @@
     const bubbleClass = "bubble markdown";
     row.innerHTML = `<div class="${bubbleClass}">${renderMessageHtml(role, text)}</div>`;
     if (msgId) {
-      row.appendChild(buildMsgActionsEl(msgId, role, archived, thread));
+      // Float above the bubble; prepend so it sits at the answer's top edge.
+      row.insertBefore(buildMsgActionsEl(msgId, role, archived, thread), row.firstChild);
     }
     messagesEl.appendChild(row);
     scrollChatToBottom();
@@ -981,10 +988,16 @@
       `;
     }
 
+    const diffPreview = String(response.confirmation_diff || "").trim();
+    const diffBlock = diffPreview
+      ? `<pre class="confirm-diff">${LuminaUtils.escapeHtml(diffPreview)}</pre>`
+      : "";
+
     row.innerHTML = `
       <div class="bubble confirm-bubble">
         <div class="confirm-text markdown">${renderMarkdown(replyText)}</div>
         <div class="confirm-detail">${LuminaUtils.escapeHtml(description)}</div>
+        ${diffBlock}
         ${scopeBadge}
         ${riskBadge}
         <div class="confirm-actions">${actions}</div>
@@ -1186,7 +1199,18 @@
       stepCount: 0,
       panelVisible: false,
       expanded: false,
+      expandedNodeIds: new Set(),
+      toolCount: 0,
+      subagentCount: 0,
+      compactionBefore: 0,
+      compactionAfter: 0,
+      compactionCount: 0,
     };
+    const metricsEl = document.getElementById("turn-efficiency-metrics");
+    if (metricsEl) {
+      metricsEl.hidden = true;
+      metricsEl.textContent = "";
+    }
     if (subagentTreeEl) {
       subagentTreeEl.hidden = true;
       subagentTreeEl.innerHTML = "";
@@ -1234,7 +1258,115 @@
     return Math.max(progressSession.bufferedItems.length, progressSession.stepCount);
   }
 
+  function ensureTraceActions() {
+    let actionsEl = document.getElementById("turn-trace-actions");
+    if (!actionsEl && progressEl) {
+      actionsEl = document.createElement("div");
+      actionsEl.id = "turn-trace-actions";
+      actionsEl.className = "turn-trace-actions";
+      const exportBtn = document.createElement("button");
+      exportBtn.type = "button";
+      exportBtn.id = "turn-trace-export";
+      exportBtn.className = "ghost small";
+      exportBtn.textContent = t("chat.progress.exportTrace");
+      exportBtn.addEventListener("click", () => {
+        void exportActiveTrace();
+      });
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.id = "turn-trace-reload";
+      loadBtn.className = "ghost small";
+      loadBtn.textContent = t("chat.progress.loadTrace");
+      loadBtn.addEventListener("click", () => {
+        void reloadPersistedTrace();
+      });
+      actionsEl.appendChild(exportBtn);
+      actionsEl.appendChild(loadBtn);
+      progressEl.appendChild(actionsEl);
+    }
+    if (actionsEl) {
+      actionsEl.hidden = !activeTraceId;
+    }
+  }
+
+  async function exportActiveTrace() {
+    if (!activeTraceId) return;
+    try {
+      const res = await fetch(`/api/chat/traces/${encodeURIComponent(activeTraceId)}/export`);
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${activeTraceId}.jsonl`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.warn("export trace failed", error);
+    }
+  }
+
+  async function reloadPersistedTrace() {
+    if (!activeTraceId || !progressListEl) return;
+    try {
+      const data = await window.SecretaryAPI.request(
+        "GET",
+        `/api/chat/traces/${encodeURIComponent(activeTraceId)}`,
+      );
+      const nodes = Array.isArray(data?.nodes) ? data.nodes : [];
+      if (!nodes.length) return;
+      progressSession.hasThought = nodes.some(
+        (n) => n.kind === "tool_started" && n.detail,
+      );
+      // Append a compact summary of persisted nodes into the progress list.
+      const summary = document.createElement("li");
+      summary.className = "progress-item is-meta";
+      summary.textContent = `轨迹 ${nodes.length} 步 · ${nodes
+        .slice(0, 8)
+        .map((n) => n.label || n.kind)
+        .join(" → ")}${nodes.length > 8 ? "…" : ""}`;
+      progressListEl.appendChild(summary);
+      if (progressEl) progressEl.hidden = false;
+      if (progressToggleEl) progressToggleEl.hidden = false;
+    } catch (error) {
+      console.warn("reload trace failed", error);
+    }
+  }
+
+  function renderTurnEfficiencyMetrics() {
+    let metricsEl = document.getElementById("turn-efficiency-metrics");
+    if (!metricsEl && progressEl) {
+      metricsEl = document.createElement("div");
+      metricsEl.id = "turn-efficiency-metrics";
+      metricsEl.className = "turn-efficiency-metrics";
+      progressEl.appendChild(metricsEl);
+    }
+    ensureTraceActions();
+    if (!metricsEl) return;
+    const tools = progressSession.toolCount || 0;
+    const subs = progressSession.subagentCount || 0;
+    const comps = progressSession.compactionCount || 0;
+    if (!tools && !subs && !comps) {
+      metricsEl.hidden = true;
+      metricsEl.textContent = "";
+      return;
+    }
+    let comp = "—";
+    if (comps > 0) {
+      comp = `${progressSession.compactionBefore}→${progressSession.compactionAfter} tok`;
+    }
+    metricsEl.hidden = false;
+    metricsEl.textContent = t("chat.progress.metrics", {
+      tools: String(tools),
+      subs: String(subs),
+      comp,
+    });
+  }
+
   function updateProgressToggleLabel() {
+    renderTurnEfficiencyMetrics();
     if (!progressToggleLabelEl) return;
     const steps = progressStepCount();
     if (steps > 0) {
@@ -1285,6 +1417,7 @@
     const kind = String(event?.kind || "");
     if (kind === "pause_confirmation" || kind === "subagent_paused") return "paused";
     if (kind === "turn_completed") return event?.success === false ? "paused" : "done";
+    if (kind === "thought") return "done";
     if (kind.endsWith("_finished") || kind === "tool_finished" || kind === "iteration_completed") {
       return event?.success === false ? "failed" : "done";
     }
@@ -1297,6 +1430,7 @@
     if (kind.startsWith("turn_")) return "turn";
     if (kind.startsWith("subagent_")) return "subagent";
     if (kind === "pause_confirmation") return "pause";
+    if (kind === "thought") return "thought";
     if (kind.startsWith("tool_")) return "tool";
     if (kind.startsWith("iteration_")) return "iteration";
     return "event";
@@ -1315,6 +1449,11 @@
       const parent = subRunId ? `sub:${subRunId}` : turnId;
       return `${parent}:tool:${toolName || "tool"}:${iteration}`;
     }
+    if (kind === "thought") {
+      if (event?.item_id) return String(event.item_id);
+      const parent = subRunId ? `sub:${subRunId}` : turnId;
+      return `${parent}:thought:${iteration}:${progressSession.turnNodes.size}`;
+    }
     if (kind.startsWith("iteration_")) return `${turnId}:iteration:${iteration}`;
     return String(event?.item_id || `${turnId}:${kind}:${Date.now()}`);
   }
@@ -1324,12 +1463,44 @@
     const turnId = String(event?.turn_id || progressSession.turnRootId || "turn_local").trim();
     const subRunId = String(event?.sub_run_id || "").trim();
     if (kind.startsWith("turn_")) return "";
-    if (kind.startsWith("tool_") && subRunId) return `sub:${subRunId}`;
+    if ((kind.startsWith("tool_") || kind === "thought") && subRunId) return `sub:${subRunId}`;
     if (kind.startsWith("subagent_")) {
       const parentSubRunId = String(event?.parent_sub_run_id || "").trim();
       return parentSubRunId ? `sub:${parentSubRunId}` : turnId;
     }
     return turnId;
+  }
+
+  function splitThoughtFromToolDetail(detail) {
+    const text = String(detail || "").trim();
+    if (!text) return { thought: "", args: "" };
+    const parts = text.split(/\n\n+/);
+    if (parts.length < 2) return { thought: "", args: text };
+    return {
+      thought: parts[0].trim(),
+      args: parts.slice(1).join("\n\n").trim(),
+    };
+  }
+
+  function thoughtOneLine(detail) {
+    const line = String(detail || "")
+      .split(/\n/)
+      .map((s) => s.trim())
+      .find(Boolean);
+    if (!line) return t("chat.progress.thought");
+    return line.length > 96 ? `${line.slice(0, 96)}…` : line;
+  }
+
+  function renderDetailLines(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return "";
+    const chunks = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (chunks.length <= 1) {
+      return `<div class="tp-detail-line markdown">${renderMarkdown(raw)}</div>`;
+    }
+    return chunks
+      .map((line) => `<div class="tp-detail-line markdown">${renderMarkdown(line)}</div>`)
+      .join("");
   }
 
   function fallbackTurnNode(parentId) {
@@ -1348,10 +1519,35 @@
   function upsertTurnTreeNode(event, label) {
     const kind = String(event?.kind || "");
     if (kind.startsWith("reply_")) return;
-    const id = turnNodeId(event);
-    const parentId = turnParentId(event);
+
+    // Tool start often bundles "thought\\n\\nargs" — peel thought into its own row.
+    let working = event;
+    let workingLabel = label;
+    if (kind === "tool_started" && event?.detail) {
+      const split = splitThoughtFromToolDetail(String(event.detail));
+      if (split.thought) {
+        const toolId = turnNodeId(event);
+        upsertTurnTreeNode(
+          {
+            kind: "thought",
+            iteration: Number(event?.iteration) || 0,
+            detail: split.thought,
+            turn_id: event?.turn_id || progressSession.turnRootId || "",
+            sub_run_id: event?.sub_run_id || "",
+            item_id: `${toolId}:thought`,
+            schema_version: 2,
+          },
+          thoughtOneLine(split.thought),
+        );
+        working = { ...event, detail: split.args || "" };
+      }
+    }
+
+    const workingKind = String(working?.kind || "");
+    const id = turnNodeId(working);
+    const parentId = turnParentId(working);
     progressSession.hasTurnTree = true;
-    if (kind === "turn_started" || (!progressSession.turnRootId && parentId === "")) {
+    if (workingKind === "turn_started" || (!progressSession.turnRootId && parentId === "")) {
       progressSession.turnRootId = id;
     }
     if (parentId && !progressSession.turnNodes.has(parentId)) {
@@ -1360,7 +1556,7 @@
     const existing = progressSession.turnNodes.get(id) || {
       id,
       parentId,
-      type: turnNodeType(event),
+      type: turnNodeType(working),
       label: "",
       detail: "",
       status: "running",
@@ -1368,14 +1564,20 @@
       order: progressSession.turnNodes.size,
     };
     existing.parentId = existing.parentId || parentId;
-    existing.type = turnNodeType(event);
-    existing.label = label || existing.label || kind;
-    existing.toolName = String(event?.tool_name || existing.toolName || "");
-    existing.status = normalizeTurnStatus(event);
-    if (event?.detail) existing.detail = String(event.detail);
-    if (event?.goal && !existing.detail) existing.detail = String(event.goal);
-    if (event?.message && existing.type === "turn" && !existing.detail) {
-      existing.detail = String(event.message);
+    existing.type = turnNodeType(working);
+    if (workingKind === "thought") {
+      const thoughtText = String(working?.detail || "").trim();
+      existing.label = thoughtOneLine(thoughtText) || workingLabel || t("chat.progress.thought");
+      if (thoughtText) existing.detail = thoughtText;
+    } else {
+      existing.label = workingLabel || existing.label || workingKind;
+      if (working?.detail) existing.detail = String(working.detail);
+    }
+    existing.toolName = String(working?.tool_name || existing.toolName || "");
+    existing.status = normalizeTurnStatus(working);
+    if (working?.goal && !existing.detail) existing.detail = String(working.goal);
+    if (working?.message && existing.type === "turn" && !existing.detail) {
+      existing.detail = String(working.message);
     }
     progressSession.turnNodes.set(id, existing);
     if (parentId) {
@@ -1407,6 +1609,7 @@
     if (node.type === "tool") return toolIcon(node.toolName);
     switch (node.type) {
       case "turn": return ""; // no brain marker in progress UI
+      case "thought": return "💭";
       case "subagent": return "🧩";
       case "iteration": return "🔁";
       case "pause": return "⏸";
@@ -1434,20 +1637,49 @@
   }
 
   function renderChip(node) {
-    if (node.type === "iteration") {
+    const detailText = String(node.detail || "").trim();
+    // Thoughts: label already shows one line; expand only when there is more body.
+    const labelLine = String(node.label || "").trim();
+    const hasDetail =
+      Boolean(detailText) &&
+      (node.type !== "thought" || detailText !== labelLine);
+    const open =
+      hasDetail &&
+      progressSession.expandedNodeIds instanceof Set &&
+      progressSession.expandedNodeIds.has(node.id);
+    const chipClass =
+      node.type === "iteration"
+        ? `tp-chip is-iteration is-${escapeAttr(node.status)}`
+        : `tp-chip is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}`;
+    const iconHtml =
+      node.type === "iteration"
+        ? `<span class="tp-chip-icon">🔁</span>`
+        : `<span class="tp-chip-icon">${nodeIcon(node)}</span>`;
+    const statusHtml =
+      node.type === "iteration" || node.type === "thought" ? "" : statusDot(node.status);
+    const caret = hasDetail
+      ? `<span class="tp-step-caret" aria-hidden="true"></span>`
+      : "";
+    const chipInner =
+      caret +
+      iconHtml +
+      `<span class="tp-chip-label">${LuminaUtils.escapeHtml(node.label)}</span>` +
+      statusHtml;
+    if (!hasDetail) {
       return (
-        `<span class="tp-chip is-iteration is-${escapeAttr(node.status)}" title="${escapeAttr(node.label)}">` +
-        `<span class="tp-chip-icon">🔁</span>` +
-        `<span class="tp-chip-label">${LuminaUtils.escapeHtml(node.label)}</span>` +
-        `</span>`
+        `<div class="tp-step is-row" data-tp-id="${escapeAttr(node.id)}">` +
+        `<span class="${chipClass}" title="${escapeAttr(node.label)}">${chipInner}</span>` +
+        `</div>`
       );
     }
     return (
-      `<span class="tp-chip is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}" title="${escapeAttr(node.label)}">` +
-      `<span class="tp-chip-icon">${nodeIcon(node)}</span>` +
-      `<span class="tp-chip-label">${LuminaUtils.escapeHtml(node.label)}</span>` +
-      statusDot(node.status) +
-      `</span>`
+      `<div class="tp-step is-row${open ? " is-open" : ""}" data-tp-id="${escapeAttr(node.id)}">` +
+      `<button type="button" class="${chipClass} is-expandable" data-tp-toggle="${escapeAttr(node.id)}" ` +
+      `aria-expanded="${open ? "true" : "false"}" title="${escapeAttr(node.label)}">` +
+      chipInner +
+      `</button>` +
+      `<div class="tp-step-detail"${open ? "" : " hidden"}>${renderDetailLines(detailText)}</div>` +
+      `</div>`
     );
   }
 
@@ -1483,23 +1715,62 @@
     const label = (isRoot && node.type === "turn")
       ? (node.label && node.label !== "开始处理" ? node.label : t("chat.turn.root"))
       : node.label;
-    // Root turn detail often echoes the user message — keep focus on actions.
-    const detail = (!isRoot && node.detail)
-      ? `<div class="tp-lane-detail markdown">${renderMarkdown(node.detail)}</div>`
+    const detailText = String(node.detail || "").trim();
+    const canExpand = !isRoot && Boolean(detailText);
+    const open =
+      canExpand &&
+      progressSession.expandedNodeIds instanceof Set &&
+      progressSession.expandedNodeIds.has(node.id);
+    const headInner =
+      iconHtml +
+      `<span class="tp-lane-label">${LuminaUtils.escapeHtml(label)}</span>` +
+      statusMark(node.status);
+    const head = canExpand
+      ? `<button type="button" class="tp-lane-head is-expandable" data-tp-toggle="${escapeAttr(node.id)}" aria-expanded="${open ? "true" : "false"}">` +
+        `<span class="tp-step-caret" aria-hidden="true"></span>` +
+        headInner +
+        `</button>`
+      : `<div class="tp-lane-head">${headInner}</div>`;
+    const detail = canExpand
+      ? `<div class="tp-lane-detail"${open ? "" : " hidden"}>${renderDetailLines(detailText)}</div>`
       : "";
     return (
-      `<li class="tp-node is-${escapeAttr(node.type)} is-${escapeAttr(node.status)}${isRoot ? " is-root" : ""}">` +
+      `<li class="tp-node is-${escapeAttr(node.type)} is-${escapeAttr(node.status)}${isRoot ? " is-root" : ""}${open ? " is-open" : ""}">` +
       `<div class="tp-lane${isRoot ? " is-root" : ""}">` +
-        `<div class="tp-lane-head">` +
-          iconHtml +
-          `<span class="tp-lane-label">${LuminaUtils.escapeHtml(label)}</span>` +
-          statusMark(node.status) +
-        `</div>` +
+        head +
         detail +
         renderTurnChildren(node) +
       `</div>` +
       `</li>`
     );
+  }
+
+  function bindTurnTreeExpand() {
+    if (!subagentTreeEl || subagentTreeEl.dataset.expandBound === "1") return;
+    subagentTreeEl.dataset.expandBound = "1";
+    subagentTreeEl.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-tp-toggle]");
+      if (!toggle || !subagentTreeEl.contains(toggle)) return;
+      event.preventDefault();
+      const id = toggle.getAttribute("data-tp-toggle");
+      if (!id) return;
+      if (!(progressSession.expandedNodeIds instanceof Set)) {
+        progressSession.expandedNodeIds = new Set();
+      }
+      const willOpen = !progressSession.expandedNodeIds.has(id);
+      if (willOpen) progressSession.expandedNodeIds.add(id);
+      else progressSession.expandedNodeIds.delete(id);
+      // Prefer light DOM toggle; fall back to re-render if structure missing.
+      const step = toggle.closest(".tp-step, .tp-node");
+      const detail = step?.querySelector(".tp-step-detail, .tp-lane-detail");
+      if (detail) {
+        detail.hidden = !willOpen;
+        toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+        step.classList.toggle("is-open", willOpen);
+        return;
+      }
+      renderTurnTree();
+    });
   }
 
   function renderTurnTree() {
@@ -1509,6 +1780,7 @@
       subagentTreeEl.innerHTML = "";
       return;
     }
+    bindTurnTreeExpand();
     subagentTreeEl.hidden = false;
     subagentTreeEl.classList.add("turn-tree");
     const rootId = progressSession.turnRootId || [...progressSession.turnNodes.keys()][0];
@@ -1526,20 +1798,35 @@
 
   function createProgressDetailElement(detail) {
     const detailEl = document.createElement("div");
-    detailEl.className = "progress-detail markdown";
-    detailEl.innerHTML = renderMarkdown(detail);
+    detailEl.className = "progress-detail";
+    detailEl.innerHTML = renderDetailLines(detail);
     return detailEl;
   }
 
   function createProgressListItem(event, label) {
     const item = document.createElement("li");
-    const labelEl = document.createElement("div");
+    const labelEl = document.createElement("button");
+    labelEl.type = "button";
     labelEl.className = "progress-label";
     labelEl.textContent = label;
     item.appendChild(labelEl);
-    const detail = String(event?.detail || "").trim();
+    const detail = String(event?.detail || event?.message || "").trim();
     if (detail) {
-      item.appendChild(createProgressDetailElement(detail));
+      item.classList.add("is-expandable");
+      const detailEl = createProgressDetailElement(detail);
+      detailEl.hidden = true;
+      labelEl.setAttribute("aria-expanded", "false");
+      const toggle = () => {
+        const open = detailEl.hidden;
+        detailEl.hidden = !open;
+        item.classList.toggle("is-open", open);
+        labelEl.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+      labelEl.addEventListener("click", toggle);
+      item.appendChild(detailEl);
+    } else {
+      labelEl.disabled = true;
+      labelEl.classList.add("is-static");
     }
     const kind = String(event?.kind || "");
     if (isSubagentProgressEvent(event)) {
@@ -1648,16 +1935,25 @@
     if (kind !== "thought") {
       progressSession.stepCount += 1;
     }
+    // Thoughts become one-line rows in the turn / subagent tree.
+    if (kind === "thought" && (progressSession.hasTurnTree || progressSession.turnRootId)) {
+      progressSession.hasThought = true;
+      upsertTurnTreeNode(
+        {
+          ...event,
+          turn_id: event?.turn_id || progressSession.turnRootId || "",
+          schema_version: 2,
+        },
+        thoughtOneLine(event?.detail || label),
+      );
+      if (shouldShowProgressPanel()) flushProgressPanel();
+      return;
+    }
     if (Number(event?.schema_version || 0) >= 2 || event?.turn_id || event?.sub_run_id) {
       upsertTurnTreeNode(event, label);
       if (shouldShowProgressPanel()) {
         flushProgressPanel();
       }
-      return;
-    }
-    // Thoughts already land in raw output; skip flat-list noise once the tree exists.
-    if (kind === "thought" && progressSession.hasTurnTree) {
-      if (shouldShowProgressPanel()) flushProgressPanel();
       return;
     }
     const item = createProgressListItem(event, label);
@@ -1676,8 +1972,71 @@
     updateProgressToggleLabel();
   }
 
+  function emitMapLiveOverlay(event) {
+    const kind = String(event?.kind || "");
+    let status = "";
+    if (kind === "pause_confirmation" || kind === "subagent_paused") {
+      status = "waiting_confirm";
+    } else if (
+      kind === "subagent_started" ||
+      kind === "turn_started" ||
+      kind === "tool_started" ||
+      kind === "iteration_started"
+    ) {
+      status = "running";
+    } else if (
+      kind === "subagent_finished" ||
+      kind === "turn_completed" ||
+      kind === "done" ||
+      kind === "final_reply"
+    ) {
+      status = "";
+    } else {
+      return;
+    }
+    document.dispatchEvent(
+      new CustomEvent("conversation:map-live", {
+        detail: {
+          thread_id: String(event?.thread_id || currentThreadId || ""),
+          turn_id: String(event?.turn_id || event?.item_id || ""),
+          status,
+          archetype: String(event?.archetype || ""),
+        },
+      }),
+    );
+  }
+
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
+    emitMapLiveOverlay(event);
+    if (kind === "tool_finished") {
+      progressSession.toolCount = (progressSession.toolCount || 0) + 1;
+      progressSession.hasTools = true;
+    }
+    if (kind === "subagent_started") {
+      progressSession.subagentCount = (progressSession.subagentCount || 0) + 1;
+      progressSession.hasSubagent = true;
+    }
+    if (kind === "context_compacted") {
+      progressSession.compactionCount = (progressSession.compactionCount || 0) + 1;
+      // loop emits before→after as prompt_tokens / completion_tokens fields
+      const before = Number(event?.prompt_tokens || 0);
+      const after = Number(event?.completion_tokens || 0);
+      const detail = String(event?.detail || event?.message || "");
+      const m = detail.match(/(\d+)\s*→\s*(\d+)/);
+      progressSession.compactionBefore =
+        before || (m ? Number(m[1]) : progressSession.compactionBefore);
+      progressSession.compactionAfter =
+        after || (m ? Number(m[2]) : progressSession.compactionAfter);
+    }
+    if (
+      kind === "turn_completed" ||
+      kind === "tool_finished" ||
+      kind === "subagent_started" ||
+      kind === "context_compacted"
+    ) {
+      renderTurnEfficiencyMetrics();
+    }
     if (kind === "reply_start") {
       beginStreamingBubble();
     } else if (kind === "reply_delta" && event?.delta) {
@@ -1756,7 +2115,7 @@
       if (thread && msg.id === (thread.active_leaf_id || "")) {
         row.classList.add("is-active-leaf");
       }
-      row.appendChild(buildMsgActionsEl(msg.id, "bot", false, thread));
+      row.insertBefore(buildMsgActionsEl(msg.id, "bot", false, thread), row.firstChild);
     }
   }
 
