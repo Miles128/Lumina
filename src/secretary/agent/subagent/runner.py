@@ -18,6 +18,7 @@ from secretary.agent.idp import (
     build_envelope,
     get_idp_store,
     idp_progress_detail,
+    idp_sse_payload,
 )
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, LoopResult
@@ -294,18 +295,10 @@ class SubAgentRunner:
         )
 
         def _execute() -> LoopResult:
-            from secretary.agent.write_gate import write_gate_scope
+            from secretary.agent.write_gate import subagent_write_gate_scope
 
-            role = state.archetype if state.archetype in {
-                "explore",
-                "plan",
-                "worker",
-                "pro",
-                "con",
-                "referee",
-            } else "worker"
-            with write_gate_scope(
-                role=role,
+            with subagent_write_gate_scope(
+                archetype=state.archetype,
                 run_id=state.run_id,
                 workspace=working_dir,
                 unlocked=False,
@@ -506,18 +499,10 @@ class SubAgentRunner:
         )
 
         def _execute() -> LoopResult | SubAgentResumeState:
-            from secretary.agent.write_gate import write_gate_scope
+            from secretary.agent.write_gate import subagent_write_gate_scope
 
-            role = archetype if archetype in {
-                "explore",
-                "plan",
-                "worker",
-                "pro",
-                "con",
-                "referee",
-            } else "worker"
-            with write_gate_scope(
-                role=role,
+            with subagent_write_gate_scope(
+                archetype=archetype,
                 run_id=run_id,
                 workspace=working_dir,
                 unlocked=False,
@@ -629,7 +614,7 @@ class SubAgentRunner:
                 archetype=archetype,
                 goal=goal[:200],
                 subagent_status="running",
-                idp=record.to_dict(),
+                idp=idp_sse_payload(record),
             ),
         )
 
@@ -669,7 +654,7 @@ class SubAgentRunner:
                 goal=(goal or record.envelope.goal)[:200],
                 subagent_status=state,
                 success=bool(success) if success is not None else True,
-                idp=record.to_dict(),
+                idp=idp_sse_payload(record),
             ),
         )
 

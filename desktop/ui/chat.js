@@ -17,6 +17,19 @@
   const idpPanelListEl = document.getElementById("idp-panel-list");
   /** @type {Map<string, object>} */
   let idpRecords = new Map();
+  /** Fallback labels; prefer server `role_display_names` when present on snapshots. */
+  let idpRoleDisplayNames = {
+    root: "项目主管",
+    plan: "产品经理",
+    explore: "调研分析",
+    worker: "执行者",
+    verify: "调研分析",
+    pro: "方案主张",
+    con: "风险质询",
+    referee: "评审仲裁",
+    write_gate: "项目落地",
+  };
+  let idpTopology = { max_spawn_depth: 1 };
   const newThreadBtn = document.getElementById("btn-new-thread");
   const threadListEl = document.getElementById("thread-list");
   const chatForm = document.getElementById("chat-form");
@@ -1269,6 +1282,24 @@
     );
   }
 
+  function idpDisplayRole(archetype) {
+    const key = String(archetype || "").toLowerCase();
+    return idpRoleDisplayNames[key] || String(archetype || "?");
+  }
+
+  function applyIdpProtocolMeta(payload) {
+    if (!payload || typeof payload !== "object") return;
+    if (payload.role_display_names && typeof payload.role_display_names === "object") {
+      idpRoleDisplayNames = {
+        ...idpRoleDisplayNames,
+        ...payload.role_display_names,
+      };
+    }
+    if (payload.topology && typeof payload.topology === "object") {
+      idpTopology = { ...idpTopology, ...payload.topology };
+    }
+  }
+
   function renderIdpPanel() {
     if (!idpPanelEl || !idpPanelListEl) return;
     if (idpRecords.size === 0) {
@@ -1278,8 +1309,9 @@
     progressSession.hasIdp = true;
     idpPanelEl.hidden = false;
     if (idpPanelMetaEl) {
+      const depthCap = idpTopology.max_spawn_depth ?? 1;
       idpPanelMetaEl.textContent =
-        "channel=parent_child_only · peer=forbidden · return=summary_only · depth≤1";
+        `channel=parent_child_only · peer=forbidden · return=summary_only · depth≤${depthCap}`;
     }
     idpPanelListEl.innerHTML = "";
     for (const rec of idpRecords.values()) {
@@ -1290,7 +1322,8 @@
       head.className = "idp-panel-item-head";
       const arch = document.createElement("span");
       arch.className = "idp-panel-arch";
-      arch.textContent = String(env.archetype || "?");
+      arch.textContent = idpDisplayRole(env.archetype);
+      arch.title = String(env.archetype || "");
       const state = document.createElement("span");
       state.className = "idp-panel-state";
       state.textContent = String(rec.state || "");
@@ -2073,6 +2106,7 @@
     const kind = String(event?.kind || "");
     emitMapLiveOverlay(event);
     if (kind === "idp_update" && event?.idp) {
+      applyIdpProtocolMeta(event.idp);
       const runId = String(event.idp?.envelope?.run_id || event.sub_run_id || "");
       if (runId) {
         idpRecords.set(runId, event.idp);

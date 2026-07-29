@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 WriteRole = Literal[
     "root",
@@ -25,8 +25,37 @@ WriteRole = Literal[
     "write_gate",
 ]
 
-LANDING_ROLES = frozenset({"root", "referee", "write_gate"})
-DISPLAY_NAMES: dict[str, str] = {
+# Path segments — never hardcode ".lumina/proposals" at call sites.
+LUMINA_DIR_NAME: Final = ".lumina"
+PROPOSALS_DIR_NAME: Final = "proposals"
+PROPOSALS_REL_PARTS: Final[tuple[str, ...]] = (LUMINA_DIR_NAME, PROPOSALS_DIR_NAME)
+DEFAULT_RUN_ID: Final = "anon"
+
+# Roles that may write business paths when unlocked.
+LANDING_ROLES: Final[frozenset[str]] = frozenset({"root", "referee", "write_gate"})
+
+# Archetypes / debate roles that are always jailed to proposals when run_id is set.
+JAILED_ROLES: Final[frozenset[str]] = frozenset(
+    {"plan", "explore", "worker", "pro", "con"}
+)
+
+# Known write-gate roles (landing ∪ jailed). Unknown archetypes map via role_for_archetype.
+KNOWN_ROLES: Final[frozenset[str]] = LANDING_ROLES | JAILED_ROLES
+
+# Archetype → WriteGate role. verify is read-oriented but still jailed if it ever writes.
+_ARCHETYPE_ROLE_MAP: Final[dict[str, str]] = {
+    "root": "root",
+    "plan": "plan",
+    "explore": "explore",
+    "worker": "worker",
+    "verify": "explore",
+    "pro": "pro",
+    "con": "con",
+    "referee": "referee",
+    "write_gate": "write_gate",
+}
+
+DISPLAY_NAMES: Final[dict[str, str]] = {
     "root": "项目主管",
     "plan": "产品经理",
     "explore": "调研分析",
@@ -36,6 +65,9 @@ DISPLAY_NAMES: dict[str, str] = {
     "referee": "评审仲裁",
     "write_gate": "项目落地",
 }
+
+# Fallback when archetype is custom / unknown — treat as execution draft writer.
+DEFAULT_JAILED_ROLE: Final = "worker"
 
 
 class WriteGateError(PermissionError):
@@ -57,16 +89,36 @@ def get_write_gate() -> WriteGateContext:
     return _CTX.get() or WriteGateContext()
 
 
+def role_for_archetype(archetype: str) -> str:
+    """Map spawn archetype / debate role onto a WriteGate role."""
+    key = (archetype or "").strip().lower()
+    if key in _ARCHETYPE_ROLE_MAP:
+        return _ARCHETYPE_ROLE_MAP[key]
+    return DEFAULT_JAILED_ROLE
+
+
+def is_landing_role(role: str) -> bool:
+    return role in LANDING_ROLES
+
+
+def is_jailed_role(role: str) -> bool:
+    """Non-landing roles are jailed when a run_id is bound."""
+    return not is_landing_role(role)
+
+
 def display_name_for_role(role: str) -> str:
     return DISPLAY_NAMES.get(role, role)
 
 
+def normalize_run_id(run_id: str | None) -> str:
+    return (run_id or "").strip() or DEFAULT_RUN_ID
+
+
 def proposals_root(*, run_id: str, workspace: Path | None) -> Path:
     """Prefer workspace `.lumina/proposals/{run_id}`; fall back to ~/.lumina/proposals."""
-    rid = (run_id or "anon").strip() or "anon"
-    if workspace is not None:
-        return (workspace / ".lumina" / "proposals" / rid).resolve()
-    return (Path.home() / ".lumina" / "proposals" / rid).resolve()
+    rid = normalize_run_id(run_id)
+    base = workspace if workspace is not None else Path.home()
+    return (base.joinpath(*PROPOSALS_REL_PARTS, rid)).resolve()
 
 
 def is_proposals_path(path: Path, *, run_id: str, workspace: Path | None) -> bool:
@@ -96,7 +148,7 @@ def assert_write_allowed(path: Path, *, ctx: WriteGateContext | None = None) -> 
     except OSError as exc:
         raise WriteGateError(f"WriteGate: cannot resolve path {path}: {exc}") from exc
 
-    if role in LANDING_ROLES:
+    if is_landing_role(role):
         if gate.unlocked:
             return
         # Locked landing role may still write drafts.
@@ -142,3 +194,21 @@ def write_gate_scope(
         yield bound
     finally:
         _CTX.reset(token)
+
+
+@contextmanager
+def subagent_write_gate_scope(
+    *,
+    archetype: str,
+    run_id: str,
+    workspace: Path | None,
+    unlocked: bool = False,
+) -> Iterator[WriteGateContext]:
+    """Convenience: map archetype → role and bind the jail for a child run."""
+    with write_gate_scope(
+        role=role_for_archetype(archetype),
+        run_id=run_id,
+        workspace=workspace,
+        unlocked=unlocked,
+    ) as bound:
+        yield bound

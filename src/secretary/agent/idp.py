@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 ChannelPolicy = Literal["parent_child_only"]
 ReturnSchema = Literal["summary_only"]
@@ -27,15 +27,39 @@ LifecycleState = Literal[
     "cancel",
 ]
 
-CHANNEL: ChannelPolicy = "parent_child_only"
-RETURN_SCHEMA: ReturnSchema = "summary_only"
+PROTOCOL_ID: Final = "idp/v1"
+CHANNEL: Final[ChannelPolicy] = "parent_child_only"
+RETURN_SCHEMA: Final[ReturnSchema] = "summary_only"
 # Peer messaging is a protocol violation (not merely a product preference).
-PEER_CHANNEL_ALLOWED = False
+PEER_CHANNEL_ALLOWED: Final = False
+
+LIFECYCLE_STATES: Final[tuple[LifecycleState, ...]] = (
+    "spawn",
+    "running",
+    "pause_confirm",
+    "pause_ask",
+    "resume",
+    "result",
+    "fail",
+    "cancel",
+)
+CONFLICT_POLICIES: Final[tuple[ConflictPolicy, ...]] = (
+    "parent_synthesize",
+    "ask_user",
+    "verify_once",
+)
+
+# Truncation limits for observation / SSE payloads (single source of truth).
+GOAL_PREVIEW_CHARS: Final = 500
+CONTEXT_PREVIEW_CHARS: Final = 500
+SUMMARY_PREVIEW_CHARS: Final = 400
+TRANSITION_DETAIL_CHARS: Final = 300
 
 # Defaults mirror subagent.policy (imported lazily to avoid package cycle).
 _DEFAULT_MAX_SPAWN_DEPTH = 1
 _DEFAULT_MAX_SPAWNS_PER_TURN = 3
 _DEFAULT_MAX_PARALLEL_EXPLORE = 3
+_EMPTY_TRACE_KEY: Final = "_"
 
 
 def _topology() -> tuple[int, int, int]:
@@ -104,7 +128,7 @@ class DelegationEnvelope:
             "parent_run_id": self.parent_run_id,
             "depth": self.depth,
             "batch_id": self.batch_id,
-            "context": self.context[:500] if self.context else "",
+            "context": self.context[:CONTEXT_PREVIEW_CHARS] if self.context else "",
             "peer_channel_allowed": PEER_CHANNEL_ALLOWED,
         }
 
@@ -132,7 +156,11 @@ class DelegationRecord:
     def transition(self, state: LifecycleState, *, detail: str = "") -> None:
         self.state = state
         self.history.append(
-            LifecycleTransition(state=state, at=time.time(), detail=detail[:300])
+            LifecycleTransition(
+                state=state,
+                at=time.time(),
+                detail=detail[:TRANSITION_DETAIL_CHARS],
+            )
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -140,7 +168,7 @@ class DelegationRecord:
             "envelope": self.envelope.to_dict(),
             "state": self.state,
             "history": [h.to_dict() for h in self.history],
-            "summary_preview": self.summary_preview[:400],
+            "summary_preview": self.summary_preview[:SUMMARY_PREVIEW_CHARS],
             "success": self.success,
         }
 
@@ -150,7 +178,7 @@ class IdpTraceView:
     """Read-only snapshot for a turn/trace."""
 
     trace_id: str
-    protocol: str = "idp/v1"
+    protocol: str = PROTOCOL_ID
     channel: ChannelPolicy = CHANNEL
     peer_channel_allowed: bool = PEER_CHANNEL_ALLOWED
     max_spawn_depth: int = _DEFAULT_MAX_SPAWN_DEPTH
@@ -190,7 +218,7 @@ class IdpStore:
     ) -> DelegationRecord:
         if not trace_id:
             # Still track under empty key for unit tests without a chat turn.
-            trace_id = "_"
+            trace_id = _EMPTY_TRACE_KEY
         record = DelegationRecord(envelope=envelope, state="spawn")
         record.transition("spawn")
         with self._lock:
@@ -208,7 +236,7 @@ class IdpStore:
         summary_preview: str = "",
         success: bool | None = None,
     ) -> DelegationRecord | None:
-        key = trace_id or "_"
+        key = trace_id or _EMPTY_TRACE_KEY
         with self._lock:
             record = self._by_trace.get(key, {}).get(run_id)
             if record is None:
@@ -221,13 +249,13 @@ class IdpStore:
                 return None
             record.transition(state, detail=detail)
             if summary_preview:
-                record.summary_preview = summary_preview[:400]
+                record.summary_preview = summary_preview[:SUMMARY_PREVIEW_CHARS]
             if success is not None:
                 record.success = success
             return record
 
     def snapshot(self, trace_id: str) -> IdpTraceView:
-        key = trace_id or "_"
+        key = trace_id or _EMPTY_TRACE_KEY
         with self._lock:
             records = list(self._by_trace.get(key, {}).values())
         # Stable order: spawn time via first history entry
@@ -236,7 +264,7 @@ class IdpStore:
 
     def clear(self, trace_id: str) -> None:
         with self._lock:
-            self._by_trace.pop(trace_id or "_", None)
+            self._by_trace.pop(trace_id or _EMPTY_TRACE_KEY, None)
 
 
 _GLOBAL_STORE = IdpStore()
@@ -244,6 +272,12 @@ _GLOBAL_STORE = IdpStore()
 
 def get_idp_store() -> IdpStore:
     return _GLOBAL_STORE
+
+
+# Archetype-specific conflict defaults (overridden by parallel_batch).
+_ARCHETYPE_CONFLICT: Final[dict[str, ConflictPolicy]] = {
+    "verify": "verify_once",
+}
 
 
 def resolve_conflict_policy(
@@ -259,9 +293,7 @@ def resolve_conflict_policy(
     """
     if parallel_batch:
         return "parent_synthesize"
-    if archetype == "verify":
-        return "verify_once"
-    return "parent_synthesize"
+    return _ARCHETYPE_CONFLICT.get(archetype, "parent_synthesize")
 
 
 def build_envelope(
@@ -283,7 +315,7 @@ def build_envelope(
     max_depth, _, _ = _topology()
     return DelegationEnvelope(
         run_id=run_id,
-        goal=goal[:500],
+        goal=goal[:GOAL_PREVIEW_CHARS],
         archetype=archetype,
         tool_scope=scope,
         budget=DelegationBudget(
@@ -299,7 +331,7 @@ def build_envelope(
         parent_run_id=parent_run_id,
         depth=depth,
         batch_id=batch_id,
-        context=context[:500],
+        context=context[:CONTEXT_PREVIEW_CHARS],
     )
 
 
@@ -330,32 +362,22 @@ def idp_progress_detail(record: DelegationRecord) -> str:
 
 def protocol_constants() -> dict[str, Any]:
     """Static protocol surface for docs / settings / interview demos."""
+    from secretary.agent.write_gate import DISPLAY_NAMES
+
     depth, spawns, parallel = _topology()
     return {
-        "protocol": "idp/v1",
+        "protocol": PROTOCOL_ID,
         "channel": CHANNEL,
         "peer_channel_allowed": PEER_CHANNEL_ALLOWED,
         "return_schema": RETURN_SCHEMA,
-        "lifecycle": [
-            "spawn",
-            "running",
-            "pause_confirm",
-            "pause_ask",
-            "resume",
-            "result",
-            "fail",
-            "cancel",
-        ],
-        "conflict_policies": [
-            "parent_synthesize",
-            "ask_user",
-            "verify_once",
-        ],
+        "lifecycle": list(LIFECYCLE_STATES),
+        "conflict_policies": list(CONFLICT_POLICIES),
         "topology": {
             "max_spawn_depth": depth,
             "max_spawns_per_turn": spawns,
             "max_parallel_explore": parallel,
         },
+        "role_display_names": dict(DISPLAY_NAMES),
         "envelope_fields": [
             "goal",
             "archetype",
@@ -371,3 +393,14 @@ def protocol_constants() -> dict[str, Any]:
 def record_to_public_dict(record: DelegationRecord) -> dict[str, Any]:
     """Alias for tests / API."""
     return record.to_dict()
+
+
+def idp_sse_payload(record: DelegationRecord) -> dict[str, Any]:
+    """Observation dict for SSE — includes shared UI metadata once per event."""
+    from secretary.agent.write_gate import DISPLAY_NAMES
+
+    depth, _, _ = _topology()
+    payload = record.to_dict()
+    payload["role_display_names"] = dict(DISPLAY_NAMES)
+    payload["topology"] = {"max_spawn_depth": depth}
+    return payload
