@@ -90,6 +90,7 @@ Harness（灵犀专有）
 - [x] **Hermes runtime 解耦**：仅保留「设置 → 一键从 Hermes 导入」
 - [x] Shibei 空结果 → 自动 import 或 UI 引导
 - [x] ~~`spawn_cli_agent`（FR-30）~~ → **Removed**（勿恢复）
+- [x] **IDP（Internal Delegation Protocol）** — 委派信封/生命周期/信道/冲突策略协议化 + 只读观察面板（`idp.py` · SSE `idp_update` · `GET /api/chat/idp/{trace_id}`）
 - [ ] Explore 便宜模型路由 — **Deferred**
 - [x] ~~`mode: primary` 自定义主 Agent~~ → **不做**；用 Auto profile
 - [x] Web search API

@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.delegation import DelegationResult, format_subagent_result
+from secretary.agent.idp import (
+    LifecycleState,
+    build_envelope,
+    get_idp_store,
+    idp_progress_detail,
+)
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop, LoopResult
 from secretary.agent.progress_events import ProgressEvent, _archetype_display_name, emit_progress
@@ -121,6 +127,18 @@ class SubAgentRunner:
         # repeatedly spawning sub-agents that exhaust the turn quota.
         spawn_context.record_spawn()
 
+        tools = resolve_tools(archetype, self._deps)
+        tool_names = frozenset(t.name for t in tools)
+        self._idp_begin(
+            spawn_context,
+            run_id=run_id,
+            goal=goal,
+            archetype=archetype,
+            tool_names=tool_names,
+            max_rounds=spec.max_steps,
+            context=context,
+            progress_callback=progress_callback,
+        )
         self._emit(
             progress_callback,
             ProgressEvent(
@@ -134,7 +152,6 @@ class SubAgentRunner:
             ),
         )
 
-        tools = resolve_tools(archetype, self._deps)
         messages = build_messages(
             goal=goal, context=context, spec=spec,
             success_criteria=success_criteria,
@@ -181,6 +198,13 @@ class SubAgentRunner:
                 self._deps.memory.end_session(
                     child_session_id, summary="paused: awaiting confirmation"
                 )
+                self._idp_transition(
+                    spawn_context,
+                    run_id,
+                    "pause_confirm",
+                    detail=summary.pending.description,
+                    progress_callback=progress_callback,
+                )
                 return DelegationResult(
                     kind="subagent",
                     run_id=summary.run_id,
@@ -218,6 +242,21 @@ class SubAgentRunner:
                 "Note: changes were NOT merged back; handle the worktree manually."
             )
 
+        if "cancelled" in summary_text.lower():
+            terminal: LifecycleState = "cancel"
+        elif success:
+            terminal = "result"
+        else:
+            terminal = "fail"
+        self._idp_transition(
+            spawn_context,
+            run_id,
+            terminal,
+            detail=summary_text[:200],
+            summary_preview=summary_text,
+            success=success,
+            progress_callback=progress_callback,
+        )
         self._emit(
             progress_callback,
             ProgressEvent(
@@ -255,11 +294,27 @@ class SubAgentRunner:
         )
 
         def _execute() -> LoopResult:
-            return loop.resume_after_confirmation(
-                state.pending,
-                state.messages,
-                temperature=state.temperature,
-            )
+            from secretary.agent.write_gate import write_gate_scope
+
+            role = state.archetype if state.archetype in {
+                "explore",
+                "plan",
+                "worker",
+                "pro",
+                "con",
+                "referee",
+            } else "worker"
+            with write_gate_scope(
+                role=role,
+                run_id=state.run_id,
+                workspace=working_dir,
+                unlocked=False,
+            ):
+                return loop.resume_after_confirmation(
+                    state.pending,
+                    state.messages,
+                    temperature=state.temperature,
+                )
 
         pool = ThreadPoolExecutor(max_workers=1)
         future = pool.submit(_execute)
@@ -304,9 +359,24 @@ class SubAgentRunner:
                     pending_step=result.pending_step,
                     steps_completed=result.total_steps,
                     used_tools=list(result.used_tools),
+                    trace_id=state.trace_id,
                 )
                 if self._on_paused is not None:
                     self._on_paused(paused)
+                resume_ctx = SpawnContext(
+                    parent_session_id=state.parent_session_id,
+                    depth=0,
+                    trace_id=state.trace_id,
+                )
+                self._idp_transition(
+                    resume_ctx,
+                    state.run_id,
+                    "pause_confirm",
+                    detail=paused.pending.description,
+                    progress_callback=progress_callback,
+                    archetype=state.archetype,
+                    goal=state.goal,
+                )
                 self._emit(
                     progress_callback,
                     ProgressEvent(
@@ -329,6 +399,32 @@ class SubAgentRunner:
             )
             self._deps.memory.add_message(state.child_session_id, "assistant", summary[:MAX_MESSAGE_LEN])
             self._deps.memory.end_session(state.child_session_id, summary=summary[:200])
+            resume_ctx = SpawnContext(
+                parent_session_id=state.parent_session_id,
+                depth=0,
+                trace_id=state.trace_id,
+            )
+            self._idp_transition(
+                resume_ctx,
+                state.run_id,
+                "resume",
+                detail="confirmed",
+                progress_callback=progress_callback,
+                archetype=state.archetype,
+                goal=state.goal,
+            )
+            ok = not summary.startswith("Error:")
+            self._idp_transition(
+                resume_ctx,
+                state.run_id,
+                "result" if ok else "fail",
+                detail=summary[:200],
+                summary_preview=summary,
+                success=ok,
+                progress_callback=progress_callback,
+                archetype=state.archetype,
+                goal=state.goal,
+            )
             self._emit(
                 progress_callback,
                 ProgressEvent(
@@ -338,8 +434,8 @@ class SubAgentRunner:
                     sub_run_id=state.run_id,
                     archetype=state.archetype,
                     goal=state.goal[:200],
-                    subagent_status="done",
-                    success=True,
+                    subagent_status="done" if ok else "failed",
+                    success=ok,
                 ),
             )
             return summary
@@ -351,6 +447,22 @@ class SubAgentRunner:
                 )
             except Exception:
                 logger.debug("Failed to end session %s", state.child_session_id)
+            resume_ctx = SpawnContext(
+                parent_session_id=state.parent_session_id,
+                depth=0,
+                trace_id=state.trace_id,
+            )
+            self._idp_transition(
+                resume_ctx,
+                state.run_id,
+                "fail",
+                detail=str(exc),
+                summary_preview=str(exc),
+                success=False,
+                progress_callback=progress_callback,
+                archetype=state.archetype,
+                goal=state.goal,
+            )
             self._emit(
                 progress_callback,
                 ProgressEvent(
@@ -394,7 +506,23 @@ class SubAgentRunner:
         )
 
         def _execute() -> LoopResult | SubAgentResumeState:
-            result = loop.run(messages, temperature=self._deps.temperature)
+            from secretary.agent.write_gate import write_gate_scope
+
+            role = archetype if archetype in {
+                "explore",
+                "plan",
+                "worker",
+                "pro",
+                "con",
+                "referee",
+            } else "worker"
+            with write_gate_scope(
+                role=role,
+                run_id=run_id,
+                workspace=working_dir,
+                unlocked=False,
+            ):
+                result = loop.run(messages, temperature=self._deps.temperature)
             if result.pending_confirmation and result.messages_snapshot is not None:
                 paused = SubAgentResumeState(
                     run_id=run_id,
@@ -413,6 +541,7 @@ class SubAgentRunner:
                     pending_step=result.pending_step,
                     steps_completed=result.total_steps,
                     used_tools=list(result.used_tools),
+                    trace_id=spawn_context.trace_id if spawn_context else "",
                 )
                 if self._on_paused is not None:
                     self._on_paused(paused)
@@ -457,6 +586,92 @@ class SubAgentRunner:
         if isinstance(outcome, SubAgentResumeState):
             return outcome
         return format_subagent_result(outcome, run_id=run_id, archetype=archetype, goal=goal)
+
+    def _idp_begin(
+        self,
+        spawn_context: SpawnContext,
+        *,
+        run_id: str,
+        goal: str,
+        archetype: str,
+        tool_names: frozenset[str],
+        max_rounds: int,
+        context: str,
+        progress_callback: Callable[[ProgressEvent], None] | None,
+        parallel_batch: bool = False,
+        batch_id: str = "",
+    ) -> None:
+        envelope = build_envelope(
+            run_id=run_id,
+            goal=goal,
+            archetype=archetype,
+            tool_names=tool_names,
+            max_rounds=max_rounds,
+            depth=spawn_context.depth,
+            batch_id=batch_id,
+            context=context,
+            parallel_batch=parallel_batch,
+            timeout_sec=SUBAGENT_TIMEOUT_SEC,
+        )
+        store = get_idp_store()
+        store.begin(spawn_context.trace_id, envelope)
+        record = store.transition(spawn_context.trace_id, run_id, "running")
+        if record is None:
+            return
+        self._emit(
+            progress_callback,
+            ProgressEvent(
+                kind="idp_update",
+                iteration=0,
+                message=f"IDP spawn→running · {archetype}",
+                detail=idp_progress_detail(record),
+                sub_run_id=run_id,
+                archetype=archetype,
+                goal=goal[:200],
+                subagent_status="running",
+                idp=record.to_dict(),
+            ),
+        )
+
+    def _idp_transition(
+        self,
+        spawn_context: SpawnContext,
+        run_id: str,
+        state: LifecycleState,
+        *,
+        detail: str = "",
+        summary_preview: str = "",
+        success: bool | None = None,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
+        archetype: str = "",
+        goal: str = "",
+    ) -> None:
+        store = get_idp_store()
+        record = store.transition(
+            spawn_context.trace_id,
+            run_id,
+            state,
+            detail=detail,
+            summary_preview=summary_preview,
+            success=success,
+        )
+        if record is None:
+            return
+        self._emit(
+            progress_callback,
+            ProgressEvent(
+                kind="idp_update",
+                iteration=0,
+                message=f"IDP → {state}",
+                detail=idp_progress_detail(record),
+                sub_run_id=run_id,
+                archetype=archetype or record.envelope.archetype,
+                goal=(goal or record.envelope.goal)[:200],
+                subagent_status=state,
+                success=bool(success) if success is not None else True,
+                idp=record.to_dict(),
+            ),
+        )
 
     def _check_policy(
         self, spawn_context: SpawnContext, spec: ArchetypeSpec | None
@@ -549,6 +764,7 @@ class SubAgentRunner:
                         detail=event.detail,
                         sub_run_id=sub_run_id,
                         archetype=archetype,
+                        idp=event.idp,
                     )
                 )
             except Exception as exc:  # pragma: no cover

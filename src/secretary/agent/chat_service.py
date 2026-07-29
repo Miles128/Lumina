@@ -297,6 +297,7 @@ class ChatService:
             self._active_spawn_tool = self._tool_registry.make_spawn_tool(
                 llm_config,
                 parent_session_id=parent_session_id or None,
+                trace_id=_active_trace_id_var.get(),
             )
 
     def _set_pending(
@@ -1171,6 +1172,7 @@ class ChatService:
             filesystem_turn=filesystem_turn,
             light_mode=light_mode,
             llm_config=llm_config,
+            trace_id=_active_trace_id_var.get(),
         )
         with self._pending_lock:
             self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None

@@ -82,8 +82,9 @@ class ChatToolRegistry:
         filesystem_turn: bool,
         light_mode: bool,
         llm_config: LlmConfig,
+        trace_id: str = "",
     ) -> tuple[list[Tool], object | None]:
-        spawn_tool = self.make_spawn_tool(llm_config)
+        spawn_tool = self.make_spawn_tool(llm_config, trace_id=trace_id)
 
         if profile is AgentProfile.BUILD:
             if filesystem_turn:
@@ -250,9 +251,14 @@ class ChatToolRegistry:
         llm_config: LlmConfig,
         *,
         parent_session_id: str | None = None,
+        trace_id: str = "",
     ) -> SpawnSubagentTool:
         session_id = (parent_session_id or "").strip() or self._get_session_id()
-        spawn_context = SpawnContext(parent_session_id=session_id, depth=0)
+        spawn_context = SpawnContext(
+            parent_session_id=session_id,
+            depth=0,
+            trace_id=(trace_id or "").strip(),
+        )
         deps = SubAgentDeps(
             llm_config=llm_config,
             file_auth=self._file_auth,

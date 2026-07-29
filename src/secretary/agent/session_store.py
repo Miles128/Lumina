@@ -127,6 +127,8 @@ def pause_bundle_subagent(state: SubAgentResumeState) -> dict[str, Any]:
         "pending_step": _to_json(asdict(state.pending_step)) if state.pending_step else None,
         "steps_completed": state.steps_completed,
         "used_tools": list(state.used_tools),
+        "trace_id": state.trace_id,
+        "success_criteria": state.success_criteria,
     }
 
 
@@ -150,6 +152,8 @@ def pause_restore_subagent(data: dict[str, Any], llm_config: LlmConfig) -> SubAg
         pending_step=_step_from_dict(data.get("pending_step")),
         steps_completed=int(data.get("steps_completed") or 0),
         used_tools=[str(item) for item in data.get("used_tools", []) if isinstance(item, str)],
+        trace_id=str(data.get("trace_id") or ""),
+        success_criteria=str(data.get("success_criteria") or ""),
     )
 
 

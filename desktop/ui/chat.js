@@ -12,6 +12,11 @@
   const progressRawEl = document.getElementById("agent-raw-output");
   const progressRawSectionEl = document.getElementById("agent-raw-section");
   const subagentTreeEl = document.getElementById("subagent-tree");
+  const idpPanelEl = document.getElementById("idp-panel");
+  const idpPanelMetaEl = document.getElementById("idp-panel-meta");
+  const idpPanelListEl = document.getElementById("idp-panel-list");
+  /** @type {Map<string, object>} */
+  let idpRecords = new Map();
   const newThreadBtn = document.getElementById("btn-new-thread");
   const threadListEl = document.getElementById("thread-list");
   const chatForm = document.getElementById("chat-form");
@@ -64,6 +69,7 @@
     hasNetwork: false,
     hasThought: false,
     hasRawOutput: false,
+    hasIdp: false,
     rawOutput: "",
     stepCount: 0,
     panelVisible: false,
@@ -1195,6 +1201,7 @@
       hasNetwork: false,
       hasThought: false,
       hasRawOutput: false,
+      hasIdp: false,
       rawOutput: "",
       stepCount: 0,
       panelVisible: false,
@@ -1206,10 +1213,20 @@
       compactionAfter: 0,
       compactionCount: 0,
     };
+    idpRecords = new Map();
     const metricsEl = document.getElementById("turn-efficiency-metrics");
     if (metricsEl) {
       metricsEl.hidden = true;
       metricsEl.textContent = "";
+    }
+    if (idpPanelEl) {
+      idpPanelEl.hidden = true;
+    }
+    if (idpPanelListEl) {
+      idpPanelListEl.innerHTML = "";
+    }
+    if (idpPanelMetaEl) {
+      idpPanelMetaEl.textContent = "";
     }
     if (subagentTreeEl) {
       subagentTreeEl.hidden = true;
@@ -1247,8 +1264,54 @@
       progressSession.hasSubagent ||
       progressSession.hasThought ||
       progressSession.hasTurnTree ||
-      progressSession.hasRawOutput
+      progressSession.hasRawOutput ||
+      progressSession.hasIdp
     );
+  }
+
+  function renderIdpPanel() {
+    if (!idpPanelEl || !idpPanelListEl) return;
+    if (idpRecords.size === 0) {
+      idpPanelEl.hidden = true;
+      return;
+    }
+    progressSession.hasIdp = true;
+    idpPanelEl.hidden = false;
+    if (idpPanelMetaEl) {
+      idpPanelMetaEl.textContent =
+        "channel=parent_child_only · peer=forbidden · return=summary_only · depth≤1";
+    }
+    idpPanelListEl.innerHTML = "";
+    for (const rec of idpRecords.values()) {
+      const env = rec?.envelope || {};
+      const li = document.createElement("li");
+      li.className = "idp-panel-item";
+      const head = document.createElement("div");
+      head.className = "idp-panel-item-head";
+      const arch = document.createElement("span");
+      arch.className = "idp-panel-arch";
+      arch.textContent = String(env.archetype || "?");
+      const state = document.createElement("span");
+      state.className = "idp-panel-state";
+      state.textContent = String(rec.state || "");
+      head.appendChild(arch);
+      head.appendChild(state);
+      const goal = document.createElement("div");
+      goal.className = "idp-panel-goal";
+      goal.textContent = String(env.goal || "");
+      goal.title = String(env.goal || "");
+      const envelope = document.createElement("div");
+      envelope.className = "idp-panel-envelope";
+      const tools = Array.isArray(env.tool_scope) ? env.tool_scope.length : 0;
+      const rounds = env.budget?.max_rounds ?? "?";
+      envelope.textContent =
+        `conflict=${env.conflict_policy || "?"} · tools=${tools} · rounds≤${rounds}` +
+        (env.batch_id ? ` · batch=${env.batch_id}` : "");
+      li.appendChild(head);
+      li.appendChild(goal);
+      li.appendChild(envelope);
+      idpPanelListEl.appendChild(li);
+    }
   }
 
   function progressStepCount() {
@@ -2009,6 +2072,17 @@
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
     emitMapLiveOverlay(event);
+    if (kind === "idp_update" && event?.idp) {
+      const runId = String(event.idp?.envelope?.run_id || event.sub_run_id || "");
+      if (runId) {
+        idpRecords.set(runId, event.idp);
+      }
+      renderIdpPanel();
+      if (shouldShowProgressPanel()) {
+        flushProgressPanel();
+      }
+      return;
+    }
     if (kind === "tool_finished") {
       progressSession.toolCount = (progressSession.toolCount || 0) + 1;
       progressSession.hasTools = true;

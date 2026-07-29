@@ -49,3 +49,4 @@ class SubAgentResumeState:
     pending_step: StepResult | None = None
     steps_completed: int = 0
     used_tools: list[str] = field(default_factory=list)
+    trace_id: str = ""  # IDP observation key (parent turn trace)

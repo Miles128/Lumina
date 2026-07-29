@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.tools.base import Tool, ToolResult, _resolve_path
+from secretary.agent.write_gate import WriteGateError, assert_write_allowed
 
 # Canonical Pi-aligned names + legacy aliases used across grounding / profiles.
 READ_TOOL_NAMES = frozenset({"read", "file_read"})
@@ -347,6 +348,10 @@ class WriteTool(Tool):
         content = content_raw if isinstance(content_raw, str) else str(content_raw)
         append = arguments.get("append", False)
         try:
+            assert_write_allowed(path)
+        except WriteGateError as exc:
+            return ToolResult.failure(str(exc), error_type="permission", retryable=False)
+        try:
             path.parent.mkdir(parents=True, exist_ok=True)
             if append:
                 with open(path, "a", encoding="utf-8") as f:
@@ -420,6 +425,11 @@ class MoveTool(Tool):
                 retryable=False,
             )
         try:
+            assert_write_allowed(src)
+            assert_write_allowed(dst)
+        except WriteGateError as exc:
+            return ToolResult.failure(str(exc), error_type="permission", retryable=False)
+        try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.rename(dst)
             return f"OK: moved {src} → {dst}"
@@ -471,6 +481,10 @@ class FileDeleteTool(Tool):
                 error_type="not_found",
                 retryable=False,
             )
+        try:
+            assert_write_allowed(path)
+        except WriteGateError as exc:
+            return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         try:
             path.unlink()
             return f"OK: deleted {path}"

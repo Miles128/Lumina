@@ -1,8 +1,8 @@
 # Lumina · 灵犀 — Product Requirements Document
 
-**Version:** 0.3.1  
+**Version:** 0.3.2  
 **Author:** 四海 (myx28@qq.com)  
-**Last updated:** 2026-07-24  
+**Last updated:** 2026-07-30  
 **Status:** Active development · v0.3 harness focus · local Agent productivity
 
 <p align="center">
@@ -17,12 +17,12 @@
 
 **一句话：** 把强模型关进可控 harness——权限清楚、危险动作要确认、长任务可分支回看、子任务可委派但树不发散、思考链可追溯、行为参数可定制——让个人（及企业可控运行环境）把复杂事做完。
 
-**当前特色（已交付）：** 对话地图（分支 / 回滚 / 恢复）、Build / Ask / Plan / Auto、可调本地 harness、MCP / 工具扩展、子 Agent 委派（单层）。  
-**规划中的差异化能力：** Skill 编排（工作流 DAG，见 [workflow-dag-design.md](workflow-dag-design.md)）——画布 MVP 已落地，高级能力仍属后续；**思考链可记录 / 可追溯 / 可分析**（企业运行与审计友好）；**Harness 大量可定制参数**（确认、委派、compaction、工具轮次、模型路由等）——文档与营销勿写成「全量已上线」。  
+**当前特色（已交付）：** 对话地图（分支 / 回滚 / 恢复）、Build / Ask / Plan / Auto、可调本地 harness、MCP / 工具扩展、子 Agent 委派（默认单层）、Skill 工作流画布 MVP、思考链轨迹 MVP、Harness 可调参 MVP。  
+**规划中的差异化能力：** **受控深树 / 结构化对抗 / WriteGate / Mission Strip**（FR-53–56，见 [规格](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md)）；Skill DAG 高级能力仍属后续——文档与营销勿写成「全量已上线」。  
 **可选扩展：** Shibei 知识库、持久记忆——增强生产力，而非产品主叙事。  
 **外部集成原则：** 只做**标准 MCP**（stdio / SSE / Streamable HTTP）或 **CLI**（经 `shell` / MCP stdio 包装的外部命令）。**不再**为飞书/读书等平台维护一等公民自定义 Connector 产品面。
 
-> **用语：** 产品主叙事是 **harness · 委派 · 确认 · 对话地图 · 工作流 · 可追溯思考链 · 可定制运行参数**。可偶尔用「协作」描述人机共同推进任务，**不以**「Agent 协作 / Swarm / 多智能体辩论」作定位或宣传。
+> **用语：** 产品主叙事是 **harness · 委派 · 确认 · 对话地图 · 工作流 · 可追溯思考链 · 可定制运行参数**。可偶尔用「协作 / 编制」描述人机与岗位化子任务推进；UI 可用 Mission Strip（岗位名 + 进度）。**不以**「Agent 协作平台 / 自由 Swarm / 聊天室式多智能体」作定位或宣传。
 
 ### 设计原则
 
@@ -35,8 +35,9 @@
 | **Configurable harness** | **Harness 功能暴露大量可定制参数**（确认策略、委派上限、compaction、工具轮次、超时、模型/profile 路由、思考链保留策略等）；默认合理、高级可调；配置可持久化、可导出/复用，避免「黑盒运行时」 |
 | **Grounded** | 文件/记忆类回答必须基于工具输出；**内容类问题未 `file_read`（或等价 MCP 读文件）不准回复**（仅 `list_dir` 不够） |
 | **Harness-first** | 自研 Turn + AgentLoop + `spawn_subagent`；**不用 LangGraph**；**不 fork / 不嵌入 Pi · Hermes · OpenCode runtime** |
-| **Shallow tree** | 子 Agent **不可再 spawn**（`MAX_SPAWN_DEPTH=1`）；并行 explore 有上限；树不递归发散 |
-| **Parent decides** | 多路 explore 的汇总由**主 Agent**完成；可选一次 `verify` 或 `ask_user`；**不做**多 Agent 辩论 / 互相评审循环 |
+| **Controlled tree** | 默认浅树（`depth=1`）；可配 **受控深树** `max_depth≤2`（硬顶 3）；并行与总节点有预算；禁止无限发散 |
+| **Parent / referee decides** | 多路摘要由**项目主管**综合；可选 `verify` / `ask_user`；高分歧或高风险写路径可进入**结构化对抗**（方案主张 ↔ 风险质询，评审仲裁收束）；**禁止**子↔子自由总线与无限互撕 |
+| **WriteGate** | 子 Agent 只写隔离草稿（proposals）；**项目落地**仅主管/仲裁收尾经确认后写入业务路径 |
 | **Conversation map** | 线程内分支 / fork / rollback / restore 为已交付差异点；地图表达「任务怎么走过来」，不是组织协作平台 |
 | **Skill orchestration (planned)** | Skill DAG 与对话地图**产品入口分离**（回顾路径 vs 设计流程） |
 | **Integrations = MCP or CLI** | 外部能力只经标准 MCP 或 CLI；不新增平台专用 connector |
@@ -48,8 +49,8 @@
 
 - 多用户 / 云端后端 / 移动优先（**不等于**不做企业友好能力：思考链审计、可配置 harness 仍做）
 - 「个人秘书」人格产品叙事
-- **以「Agent 协作平台 / Swarm / 多智能体辩论」为产品定位**
-- **子 Agent 再 spawn、无限深度树、Agent 之间来回辩论**
+- **以「Agent 协作平台 / 自由 Swarm / 聊天室式多智能体」为产品定位**
+- **无限深度树、无预算并行、子↔子自由 peer 总线、无限互撕式辩论**（受控深树 depth≤2 与结构化对抗见规格，另述）
 - 为各 SaaS（飞书/微信读书/小红书等）继续扩展一等公民自定义 Connector
 - 无需确认的全自动 Agent
 - LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** runtime
@@ -69,27 +70,33 @@
 
 详见 [harness-design.md](harness-design.md)。
 
-### 委派模型（明确：不是辩论）
+### 委派模型（受控树 + 可选结构化对抗）
 
 ```
-主 Agent（Build）
-  ├── spawn explore ×N（≤3，只读，并行可选）──┐
-  ├── spawn worker（读写+shell，需确认）        ├──→ 只回 DelegationResult 摘要
-  └── spawn verify（可选，只读审查一次）───────┘
-         ↑
-   子 Agent 不可再 spawn（depth=1）
+项目主管（Build / Root）
+  ├── 调研分析 ×N（explore，只读，有并行上限）
+  ├── 产品经理（plan，可再拆一层，仅 deep_tree）
+  ├── 执行者（worker → 仅 proposals 草稿）
+  ├── [可选] 结构化对抗
+  │     方案主张 ←交替辩词→ 风险质询（默认≤6 轮，硬顶 12；仲裁可提前结束）
+  │     → 评审仲裁 synthesize
+  └── 项目落地（WriteGate.apply，需 confirm）
 
-汇总：主 Agent 综合摘要 → 必要时 ask_user / 一次 verify
-禁止：子↔子对话、多轮互评、辩论式 swarm
+深度：默认 shallow=1；deep_tree 可配 ≤2（硬顶 3）
+信道：父↔子；对抗为共享 transcript 交替发言（非 peer 总线）
+禁止：无限深度、子直写业务路径、自由互撕房间
 ```
 
 | 模式 | 是否做 | 说明 |
 |------|--------|------|
 | 单层委派 + 摘要回传 | **做**（已交付） | 降上下文、隔离工具权限 |
-| 并行 explore | **做**（有上限） | 分头查资料/代码，不是辩论 |
-| 一次 verify | **做**（archetype 已有） | 主 Agent 需要时派审查，不是互撕 |
+| 并行 explore | **做**（有上限） | 分头查资料/代码 |
+| 一次 verify | **做**（archetype 已有） | 主管需要时派审查 |
 | 人确认（confirm / ask_user） | **做** | 危险动作与关键歧义升给人 |
-| 多 Agent 辩论 / 互评循环 | **不做** | 贵、吵、难控；对个人生产力 ROI 低 |
+| 受控深树 depth≤2 | **规划**（FR-54） | 硬顶 3；仅 explore/plan 可再 spawn |
+| 结构化对抗 + WriteGate | **规划**（FR-53/55） | auto/force/off；落地只经项目落地 |
+| Mission Strip UI | **规划**（FR-56） | 岗位中文名 + 进度条 + 展开思考；对抗独立左右面板 |
+| 自由 peer 辩论房间 / 无限互撕 | **不做** | 贵、吵、难控 |
 
 ---
 
@@ -137,18 +144,19 @@
 | 联网 | `web_search`, `web_fetch` | 否 | API：Tavily/Brave/博查 + Serper/SerpAPI/Bing/Perplexity 预留；HTML 降级 |
 | 任务 | `todo`, `skills_list`, `skill_view` | 否 | 待办与技能（Skill **编排**见 F26） |
 | 交互 | `clarify`, **`ask_user`** | 否 | 追问；`ask_user` 支持选项，前端可点选 |
-| 委派 | `spawn_subagent` | 否 | 子 Agent（Build）；子不可再 spawn |
+| 委派 | `spawn_subagent` | 否 | 子 Agent（Build）；默认不可再 spawn；deep_tree 下仅 explore/plan 可再拆一层 |
 | MCP | `mcp_{server}_{tool}` | 视工具 | **现行外部集成主路径**：stdio / SSE / Streamable HTTP |
 | CLI | `shell`（及 MCP stdio 包装的 CLI） | shell：是* | **现行外部集成主路径**；非 `spawn_cli_agent` |
 | 浏览器 | `browser_*` | 否 | 按需注入；含 **`browser_screenshot`**（`agent-browser` CLI） |
 | 遗留 Sync | `list_connectors`, `connector_status`, `sync_source` | sync：是 | **Legacy frozen**；勿再扩展平台专用 connector |
 
-### 4.2 Sub-agent 工具集（`depth=1`，子 Agent 不可再 spawn）
+### 4.2 Sub-agent 工具集（默认 `depth=1`；deep_tree 见 FR-54）
 
 | Archetype | 工具 |
 |-----------|------|
-| explore / verify / plan | 只读 FS + 记忆 + 联网 |
-| worker | 只读 + `file_write` / `patch` / `shell` / `code_exec` |
+| explore / verify / plan | 只读 FS + 记忆 + 联网；（deep_tree）explore/plan 可再 `spawn_subagent` 一层 |
+| worker | 只读 + 写 **proposals 草稿** / `shell`（需确认）；**不直写业务路径**（WriteGate，FR-53） |
+| pro / con / referee | 对抗角色（FR-55）；读写限于辩词与 proposals；落地仅 referee/root |
 | 自定义 | `~/.lumina/subagents/*.md` frontmatter `tools:` 白名单 |
 
 ### 4.3 PromptGate 路由（与 Profile 正交）
@@ -404,7 +412,9 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 |------|------|------|
 | **CLI（现行）** | 用户经 `shell` 或 **MCP stdio** 调用的外部命令行工具 | 支持；外部集成主路径之一 |
 | **`spawn_cli_agent` / FR-30** | 外接编码 Agent 委派（codex/kimi 等） | **Removed**（2026-07） |
-| **委派 / sub-agent** | 主 Agent 单层 spawn；摘要回传 | 支持；**非**辩论、**非** swarm |
+| **委派 / sub-agent** | 主管 spawn 子任务；摘要回传；可选受控深树 | 支持；结构化对抗另见 FR-55 |
+| **IDP（Internal Delegation Protocol）** | 委派信封 / 生命周期 / 信道 / 冲突策略的类型化协议 | **Done（MVP）**；将扩展辩论 transcript / WriteGate；见 specs |
+| **Mission Strip** | 岗位化进度条（项目主管 / 调研分析 / …） | **规划**（FR-56）；非像素头像协作房 |
 | **协作（偶用）** | 人与 Agent 共同推进任务（确认、追问、地图回看） | 文案可用；**不作**产品品类名 |
 
 ---
@@ -416,7 +426,8 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | 单元测试 | CI 全绿 | **~559** passed（随 CI） |
 | 无 sync 读 Shibei | 零同步可问答 | Done |
 | Ask 模式不误写 | Plan/Ask 无 shell/write | Done |
-| 子 Agent 树深度 | 硬限 depth=1 | Done |
+| 子 Agent 树深度 | 默认 depth=1；可配 ≤2（硬顶 3） | Done（浅树）；深树见 FR-54 |
+| WriteGate | 子不可写业务路径；落地经确认 | 规划 FR-53 |
 | 冷启动（不含 LLM） | <30s | Manual QA |
 | 外部集成路径 | 仅 MCP / CLI | 原则已锁定；legacy connector 冻结 |
 | 上下文效率（方向） | compaction / 摘要委派可观测（FR-47） | Done |
@@ -442,7 +453,7 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 
 ### Next · v0.3 Harness 可见性与工作流（2026-07）
 
-方向：把已有 harness **说清楚、看得见、可调参、可追溯**；加深人机共进与企业可控运行体验；**不加**辩论式多 Agent。
+方向：把已有 harness **说清楚、看得见、可调参、可追溯**；加深人机共进与企业可控运行体验；在 WriteGate 约束下扩展**受控深树**与**结构化对抗**（非自由 Swarm）。详见 [controlled-tree design](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md)。
 
 | # | 任务 | 状态 | FR |
 |---|------|------|-----|
@@ -453,6 +464,10 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | **V5** | 可演示工作流模板（research / code_change） | **Done** | FR-50 / F26 |
 | **V6** | **思考链轨迹：记录 · 追溯 · 导出/分析**（企业运行友好） | **Done（MVP）** | FR-51 |
 | **V7** | **Harness 可定制参数面系统化**（配置 + 设置 UI + 参数表） | **Done（MVP）** | FR-52 |
+| **V8** | WriteGate + proposals 草稿隔离 | **Planned** | FR-53 |
+| **V9** | 受控深树 depth 可配 ≤2（硬顶 3） | **Planned** | FR-54 |
+| **V10** | 结构化对抗（auto/force/off，轮次 6/12，仲裁可提前结束） | **Planned** | FR-55 |
+| **V11** | Mission Strip + 辩论独立 UI（岗位中文名 / 进度 / 展开思考） | **Planned** | FR-56 |
 
 #### Paused / Deferred
 
@@ -465,7 +480,7 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | — | FR-27 打包内嵌 Python | **Deferred** |
 | — | FR-16 IM 网关 | **Deferred** |
 | — | FR-37 Git 只读工具 | **Deferred** |
-| — | **多 Agent 辩论 / 互评 swarm** | **明确不做** |
+| — | **自由 peer 辩论房间 / 无限互撕 swarm** | **明确不做**（结构化对抗走 FR-55） |
 | — | **Fork Pi 重写** | **明确不做** |
 
 #### Later · 平台（P2–P3）
@@ -492,14 +507,15 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 
 - LangGraph 迁移
 - **Fork / 嵌入 Pi、Hermes、OpenCode runtime**
-- **多 Agent 辩论、子 Agent 互 spawn、无限深度 swarm**
+- **自由 peer 辩论房间、无限深度 / 无预算 swarm、子 Agent 直写业务路径**
 - Orchestrator 第三种 Profile 回归
 - CLI provider / `spawn_cli_agent`（FR-30 已 Removed）
 - 为飞书/读书等 SaaS **新增或扩展**平台专用 Connector
 - `~/.lumina/subagents/*.md` 的 `mode: primary` 第四种主 Agent
 - 恢复桌面定位（改由 MCP/定时任务覆盖）
 - 将 Skill 编排（F26）未完成部分宣称为已上线
-- 以「Agent 协作平台」重定位产品
+- 以「Agent 协作平台 / 聊天室式多智能体」重定位产品
+- 像素头像 + 拟人昵称式 Agent 人设 UI（Mission Strip 用岗位名）
 
 ---
 
@@ -524,6 +540,7 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | Chat UI | `desktop/ui/chat.js` · `chat.css` |
 | Harness 设计 | [harness-design.md](harness-design.md) |
 | Skill DAG | [workflow-dag-design.md](workflow-dag-design.md) |
+| 受控深树 / 对抗 / Mission Strip | [superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md) |
 
 ---
 
@@ -537,8 +554,9 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | CLI vs sub-agent | **`spawn_cli_agent` 已删除**；CLI = MCP stdio / `shell` |
 | 主 Agent 扩展 | **Auto** 替代 `mode: primary` |
 | Runtime 底座 | **自研 Python harness**；不 fork Pi |
-| 子 Agent 拓扑 | **depth=1**；并行 explore 有上限；**无辩论** |
-| 歧义处理 | 主 Agent 综合 → `ask_user` 或一次 `verify` |
+| 子 Agent 拓扑 | 默认 **depth=1**；可配深树 ≤2（硬顶 3）；并行有预算 |
+| 对抗 / 落地 | 结构化对抗可选；WriteGate；见 FR-53–56 与 2026-07-30 规格 |
+| 歧义处理 | 主管综合 → `ask_user` / `verify` / 评审仲裁 |
 | Web search | **Done** |
 | Briefing/Think | 暂停；先 harness 可见性 |
 | Background Review | 活跃 |

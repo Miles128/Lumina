@@ -241,8 +241,13 @@ class EditTool(Tool):
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
         from secretary.agent.tools.edit_text import apply_unique_edit
+        from secretary.agent.write_gate import WriteGateError, assert_write_allowed
 
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
+        try:
+            assert_write_allowed(path)
+        except WriteGateError as exc:
+            return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         old_text = str(
             arguments.get("oldText")
             if arguments.get("oldText") is not None

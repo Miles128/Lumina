@@ -22,6 +22,10 @@
 | [workflow-dag-design.md](workflow-dag-design.md) | Skill 编排设计（规划中） |
 | [4-harness-comparison.md](4-harness-comparison.md) | 四家 harness 抽象对比（参考） |
 | [subagent-loop-comparison.md](subagent-loop-comparison.md) | Sub-agent 设计参考 |
+| [superpowers/specs/2026-07-27-idp-design.md](superpowers/specs/2026-07-27-idp-design.md) | Internal Delegation Protocol（委派协议化） |
+| [superpowers/specs/2026-07-27-tree-swarm-agent-design.md](superpowers/specs/2026-07-27-tree-swarm-agent-design.md) | 树状 swarm 早期方案（已被下条取代） |
+| [superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md) | **受控深树 · 结构化对抗 · Mission Strip**（现行规格；PRD 0.3.2） |
+| [superpowers/plans/2026-07-30-controlled-tree-adversarial-mission-strip.md](superpowers/plans/2026-07-30-controlled-tree-adversarial-mission-strip.md) | FR-53–56 实施计划（WriteGate 已开工） |
 | [reply-safety/](reply-safety/) | 回复过滤词表 |
 | [superpowers/](superpowers/) | 历史 specs/plans；执行前核对 PRD 是否废止 |
 
