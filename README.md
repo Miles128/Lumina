@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  Electron · FastAPI · self-built harness · conversation map · Build / Ask / Plan
+  Electron · FastAPI · self-built harness · conversation map · workflows · Build / Ask / Plan / Auto
 </p>
 
 ---
@@ -22,8 +22,8 @@
 
 外部集成只走 **MCP**（stdio / SSE / Streamable HTTP）或 **CLI**（`shell` / MCP 包装的命令行），不为各平台维护专用连接器产品面。
 
-当前差异点：**对话地图**（分支 / 回滚 / 恢复）、profiles、可调本地 harness。  
-**Skill 编排（工作流 DAG）** 为规划中的差异化能力（[设计稿](docs/workflow-dag-design.md)），尚未产品化。
+当前差异点：**对话地图**（分支 / 回滚 / 恢复）、**Skill 工作流画布**（MVP）、**思考链轨迹**、可调本地 harness。  
+进行中：**WriteGate / 受控深树 / Mission Strip**（[规格](docs/superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md)）。
 
 **产品需求：** [docs/PRD.md](docs/PRD.md)（含路线图与 FR 清单）  
 **文档索引：** [docs/README.md](docs/README.md)  
@@ -35,17 +35,30 @@
 
 | 能力 | 说明 |
 |------|------|
-| **Agent 模式** | **Build** 执行 · **Ask** 只读问答 · **Plan** 只读规划（设置或输入框旁切换） |
-| **Harness** | TurnRunner · SessionStore · SSE · confirm · compaction · Auto profile |
+| **Agent 模式** | **Build** 执行 · **Ask** 只读问答 · **Plan** 只读规划 · **Auto** 自动路由（设置或输入框旁切换） |
+| **Harness** | TurnRunner · SessionStore · SSE · confirm · compaction · Auto profile · **可调参**（FR-52） |
 | **工具集** | FS · `glob_files` · 记忆/Shibei · 联网 · MCP · shell/CLI · 浏览器 · `ask_user` |
 | **对话地图** | 节点化分支、fork / rollback / restore、紧凑节点视图 |
 | **Sub-agent** | explore / worker / verify / plan；暂停/恢复；进度树 |
-| **Skills（目录）** | 扫描与查看已安装 skill；**编排工作流尚未上线** |
+| **Skill 工作流** | Drawflow 画布 · 列表运行 · HumanReview / confirm_before · 演示模板（F26 MVP） |
+| **思考链轨迹** | 记录 / 导出 / 回放 turn 轨迹（FR-51 MVP） |
 | **知识库（可选）** | Shibei 直连 + workspace；启用时读文档优先检索 |
+| **知识工作路由** | Auto 识别调研 / 写作 / 办公意图，注入对应检索与格式约束 |
+| **联网调研** | `web_search` + `web_fetch`；回答带脚注引用，文末列 **域名/简短路径 + 网站 favicon** |
 | **外部集成** | 标准 MCP 或 CLI；遗留 Sync/平台连接器冻结、不再扩展 |
 | **Grounding** | 文件/记忆回答需工具佐证；Verified / Unverified |
 | **多线程** | `/api/chat/threads` 持久化 + 侧边栏；标题跟随最新提问 |
 | **Chat Markdown** | markdown-it + DOMPurify |
+
+### 联网引用格式
+
+调研类回答在正文用脚注编号（如 `[^1]`），文末逐条列出来源，每条带网站图标：
+
+```
+[^1]: ![github.com](https://www.google.com/s2/favicons?domain=github.com&sz=16) github.com/trending
+```
+
+不写完整 `https://` 长链接；Agent 会自行检索并总结，不会只贴链接让用户自己去看。
 
 ### 读记忆（可选路径）
 
@@ -133,9 +146,9 @@ npm i -g agent-browser && agent-browser install
 ```
 Lumina/
 ├── docs/PRD.md              # 需求与路线图
-├── src/secretary/agent/     # loop · chat_service · tools · harness
-├── desktop/ui/              # chat · settings · workspace
-└── tests/
+├── src/secretary/agent/     # loop · chat_service · tools · harness · workflow
+├── desktop/ui/              # chat · settings · workspace · workflows
+└── tests/                   # 700+ unit / e2e tests
 ```
 
 ---
@@ -155,9 +168,11 @@ uv run mypy src
 
 详见 [PRD §11](docs/PRD.md)。当前文档真相源以 PRD 为准：
 
-1. **文档与产品叙事对齐** — 通用 Agent 生产力工具（本轮）
-2. **Skill 编排（F26）** — 规划中差异化能力；设计见 `docs/workflow-dag-design.md`
+1. **WriteGate + proposals 草稿隔离**（FR-53，进行中）
+2. **受控深树 depth≤2**（FR-54）· **结构化对抗**（FR-55）· **Mission Strip UI**（FR-56）
 3. **Harness 巩固** — 集成测、模块边界、打包内嵌 Python（FR-27 Deferred）
+
+已交付（v0.3）：Skill 工作流画布 MVP（F26）· 思考链轨迹（FR-51）· Harness 可调参（FR-52）· 知识工作 Auto 路由 · 联网脚注引用。
 
 已移除：CLI Agent（`spawn_cli_agent` / FR-30）。
 
