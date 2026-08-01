@@ -92,7 +92,11 @@ def _human_size(size: int) -> str:
 
 class ListDirTool(Tool):
     name = "ls"
-    description = "List files and directories in a given path. Returns names, types, and sizes."
+    description = (
+        "List files and directories in a path (names/types/sizes only). "
+        "Call this BEFORE answering questions about what exists in a folder. "
+        "Does NOT return file contents — use `read` for summaries, authors, or code."
+    )
     needs_confirmation = False
     risk_level = "low"
     read_only = True
@@ -220,7 +224,9 @@ class ListDirTool(Tool):
 class ReadTool(Tool):
     name = "read"
     description = (
-        "Read the contents of a text file. No confirmation needed. "
+        "Read text file contents. Call this BEFORE summarizing, quoting, naming authors, "
+        "or explaining code in a file — directory listing alone is not enough. "
+        "Cite the path from the tool result in your answer. "
         "For Excel/PDF/Word use read_document instead."
     )
     needs_confirmation = False

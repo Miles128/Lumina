@@ -700,7 +700,7 @@ def requires_forced_content_read(user_message: str, used_tools: list[str]) -> bo
 
 
 def strip_forbidden_listing_patterns(reply: str) -> str:
-    """Remove simulated ls / directory-tree lines from user-facing text."""
+    """Remove simulated ls / directory-tree / emoji listing lines from user-facing text."""
     lines = reply.splitlines()
     kept: list[str] = []
     for line in lines:
@@ -714,11 +714,14 @@ def strip_forbidden_listing_patterns(reply: str) -> str:
             or _SIMULATED_DRWX.match(stripped)
             or _FAKE_DIR_HEADER.match(stripped)
             or _TREE_LINE.match(stripped)
+            or _LISTING_ENTRY_LINE.match(stripped)
         ):
             continue
         kept.append(line)
     cleaned = "\n".join(kept).strip()
-    if reply_simulates_file_listing(reply) and not cleaned:
+    if (
+        reply_simulates_file_listing(reply) or reply_contains_listing_entries(reply)
+    ) and not cleaned:
         return ""
     return cleaned
 
@@ -726,6 +729,20 @@ def strip_forbidden_listing_patterns(reply: str) -> str:
 def sanitize_filesystem_reply(reply: str) -> str:
     cleaned = strip_forbidden_listing_patterns(reply)
     return cleaned.strip()
+
+
+def _soft_sanitize_ungrounded_reply(reply: str) -> tuple[str, str]:
+    """Strip fabricated listing shapes; keep prose. Mainstream soft post-filter."""
+    cleaned = sanitize_filesystem_reply(reply)
+    if cleaned == reply.strip():
+        return reply, ""
+    if not cleaned:
+        return (
+            "我还没有用 list_dir / read 核实本地目录。"
+            "请让我先调用工具，或直接说明要看的路径。",
+            "已剥离未核实的目录列表",
+        )
+    return cleaned, "已剥离未核实的伪造目录/树形列表"
 
 
 def reply_fabricates_file_inspection(reply: str) -> bool:
@@ -872,10 +889,11 @@ def enforce_grounded_reply(
     grounding_note: str,
     command_evidence: CommandEvidence | None = None,
 ) -> tuple[str, bool, str]:
-    """Replace hallucinated directory listings when tools were not used.
+    """Soft post-filter aligned with mainstream harnesses.
 
-    Also enforces command-execution receipts: if the reply claims/simulates
-    running a shell command, it must cite a real `[receipt:<id>]` from this turn.
+    Hard block only for forged shell claims (receipt). File/memory grounding is
+    enforced **tool-first** in the agent loop; here we only sanitize fabricated
+    listing shapes and otherwise trust prompt + tool schema + prior retries.
     """
     # Command receipt enforcement runs first — shell claims are not filesystem
     # questions and would otherwise slip through the early return below.
@@ -891,69 +909,29 @@ def enforce_grounded_reply(
     if has_web_grounding(used_tools):
         return reply, True, grounding_note or "已通过 web_search / web_fetch 联网核实"
 
-    # 硬规则：内容类问题未打开文件正文 → 直接拦截（list_dir 不算）。
-    if is_file_content_question(user_message) and not has_content_grounding(used_tools):
-        note = grounding_note or "未调用 file_read 读取文件内容，已阻止未核实回复"
-        return UNGROUNDED_CONTENT_FALLBACK, False, note
+    from secretary.agent.web_routing import is_web_search_query
 
-    # Defense-in-depth: a reply that fabricates a 📁/📄 listing (the list_dir
-    # output shape) without any read grounding is a hallucination even when
-    # the user's question did not match the filesystem heuristic (e.g.
-    # "完整分析"). Genuine listings have list_dir in used_tools and are exempt.
-    if not has_read_grounding(used_tools) and reply_contains_listing_entries(reply):
-        note = grounding_note or "回复含目录/文件列表但未调用 list_dir/file_read，已阻止未核实内容"
-        return UNGROUNDED_LISTING_FALLBACK, False, note
+    if is_web_search_query(user_message):
+        note = grounding_note or "联网类问题，不应用本地目录拦截"
+        return reply, True, note
 
-    if not is_filesystem_question(user_message) and not is_personal_memory_question(
-        user_message
+    # Soft sanitize: strip fake listing / tree shapes when tools were not used.
+    if not has_read_grounding(used_tools) and (
+        reply_contains_listing_entries(reply) or reply_simulates_file_listing(reply)
     ):
-        from secretary.agent.web_routing import is_web_search_query
+        cleaned, sanitize_note = _soft_sanitize_ungrounded_reply(reply)
+        return cleaned, True, sanitize_note or grounding_note
 
-        if is_web_search_query(user_message):
-            note = grounding_note or "联网类问题，不应用本地目录拦截"
-            return reply, True, note
-        return reply, grounding_verified, grounding_note
-
-    reply = sanitize_filesystem_reply(reply)
-    # Tool-backed replies that passed verification may list many filenames (e.g. search_files
-    # hits); reply_simulates_file_listing would false-positive on those.
     if has_read_grounding(used_tools):
+        # Tool-backed replies: keep content; path mismatches are soft (already
+        # handled in verify_reply_against_evidence).
         if grounding_verified:
-            return reply, grounding_verified, grounding_note
-        if not (
-            reply_simulates_file_listing(reply)
-            or reply_fabricates_file_inspection(reply)
-            or reply_injects_lumina_identity_as_project_author(reply)
-        ):
-            note = grounding_note or "已通过 list_dir / file_read / MCP 读盘工具核实"
-            return reply, True, note
+            return reply, True, grounding_note or "已通过读盘工具核实"
+        return reply, True, grounding_note or "已通过 list_dir / read / MCP 读盘工具核实"
 
-    if is_filesystem_question(user_message) and not has_read_grounding(used_tools):
-        note = grounding_note or "未调用 list_dir / file_read / search_files，已阻止未核实内容"
-        return UNGROUNDED_LISTING_FALLBACK, False, note
-
-    if is_personal_memory_question(user_message) and not has_memory_grounding(used_tools):
-        note = grounding_note or "未调用 search_memory / session_search，已阻止未核实的个人记录"
-        return UNGROUNDED_MEMORY_FALLBACK, False, note
-
-    if reply_cites_chat_history_as_fact(reply) and not has_memory_grounding(used_tools):
-        note = grounding_note or "回复仅引用对话历史，未检索本地记忆"
-        return UNGROUNDED_MEMORY_FALLBACK, False, note
-
-    risky = reply_simulates_file_listing(reply) or (
-        mentions_local_files(reply)
-        or reply_defers_filesystem_work(reply)
-        or reply_fabricates_file_inspection(reply)
-        or reply_injects_lumina_identity_as_project_author(reply)
-    )
-    if not risky:
-        return reply, grounding_verified, grounding_note
-
-    if not is_filesystem_question(user_message):
-        return reply, grounding_verified, grounding_note
-
-    note = grounding_note or "未调用文件工具，已阻止展示可能虚构的目录/文件列表"
-    return UNGROUNDED_LISTING_FALLBACK, False, note
+    # No hard wholesale replacement for content / memory / fs — loop already
+    # forced tools and retried. Pass through for evidence-first prompting.
+    return reply, True, grounding_note
 
 
 def collect_read_evidence(steps: list[Any]) -> ReadEvidence:
@@ -1018,25 +996,9 @@ def verify_reply_against_evidence(
     if not claimed:
         return VerificationResult(ok=True)
 
-    known = _known_reference_set(evidence)
-    unverified: list[str] = []
-    for ref in sorted(claimed):
-        ref_norm = _norm_token(ref)
-        if ref_norm in evidence.not_found or _basename(ref_norm) in evidence.not_found:
-            unverified.append(ref)
-            continue
-        if not _ref_is_grounded(ref_norm, known, evidence):
-            unverified.append(ref)
-
-    if unverified:
-        preview = "、".join(unverified[:4])
-        if len(unverified) > 4:
-            preview += "…"
-        return VerificationResult(
-            ok=False,
-            unverified_paths=tuple(unverified),
-            note=f"以下路径/文件名未出现在工具返回中：{preview}",
-        )
+    # Soft evidence-first: once tools ran, path naming mismatches (relative vs
+    # absolute, basename vs full path) must NOT trigger another verify retry.
+    # Prompt + tool schema ask the model to cite only tool-returned paths.
     return VerificationResult(ok=True)
 
 

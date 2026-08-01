@@ -56,8 +56,17 @@ def test_identity_repeat_after_intro() -> None:
     assert is_identity_request("再来一次", history)
 
 
-def test_identity_reply_is_fixed() -> None:
+def test_identity_reply_is_fixed_without_data_dir() -> None:
     assert get_identity_reply() == LUMINA_IDENTITY_INTRO
+
+
+def test_identity_reply_uses_soul_when_present(tmp_path) -> None:
+    from secretary.agent.soul import save_soul
+
+    save_soul(tmp_path, '## Identity\n\nname: "定制灵犀"\ntone: "活泼"')
+    reply = get_identity_reply(tmp_path)
+    assert reply.startswith("我是灵犀（Lumina）")
+    assert "定制灵犀" in reply
 
 
 def test_rule_route_identity_variants() -> None:

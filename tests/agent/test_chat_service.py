@@ -169,8 +169,6 @@ def test_chat_sync_empty_weread_without_data(tmp_path: Path) -> None:
 def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
-    profile_store = UserProfileStore(settings.resolved_data_dir() / "user_profile.md")
-    profile_store.save("# 我是测试用户\n\n喜欢 Python。")
     service = ChatService(
         settings,
         store,
@@ -178,12 +176,14 @@ def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
             settings,
             store,
             LocalDocumentsProfiler(settings),
-            profile_store,
+            UserProfileStore(settings.resolved_data_dir() / "user_profile.md"),
         ),
         SkillManager(settings.resolved_data_dir()),
     )
+    service.memory.write_memory_md("# 我是测试用户\n\n喜欢 Python。")
     result = service.reply("我的个人画像是什么样的")
-    assert "测试你" in result.reply
+    # reply post-process may rewrite「用户」→「你」
+    assert "喜欢 Python" in result.reply
     assert result.used_llm is False
 
 
@@ -321,8 +321,9 @@ def test_chat_uses_turn_orchestrator_for_agent_loop(tmp_path: Path) -> None:
         ) as mocked:
             result = service.reply("列出 src 目录下的文件")
     assert mocked.called
-    assert "list_dir" in result.reply or "file_read" in result.reply
-    assert result.grounding_verified is False
+    # Soft grounding: defer to tool-first loop; do not rewrite the reply wholesale.
+    assert result.reply == "好的，我来处理。"
+    assert result.grounding_verified is True
 
 
 def test_prepare_user_reply_runs_rewriter_then_sanitizer(tmp_path: Path) -> None:

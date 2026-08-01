@@ -108,8 +108,9 @@ def identity_author() -> dict[str, str]:
 @router.get("/api/identity/intro")
 def identity_intro() -> dict[str, str]:
     from secretary.agent.identity import get_identity_reply
+    from secretary.config import settings
 
-    return {"reply": get_identity_reply()}
+    return {"reply": get_identity_reply(settings.resolved_data_dir())}
 
 
 @router.post("/api/chat")

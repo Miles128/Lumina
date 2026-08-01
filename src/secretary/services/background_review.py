@@ -23,9 +23,9 @@ _REVIEW_SYSTEM = """你是记忆整理器。根据本轮对话，判断是否应
 {"action":"none"|"add"|"replace","target":"memory","text":"","old_text":"","reason":""}
 
 规则：
-- target 只能是 "memory"；用户个人信息（姓名/职业/偏好/习惯/目标等）由系统自动写入用户画像，不要写入 MEMORY.md
+- target 只能是 "memory"；用户个人事实（姓名/职业/偏好/习惯/目标等）与环境/项目事实都写入 MEMORY.md
 - 只从 User 消息提取事实；禁止从 Assistant 回复中提取或固化（助手可能幻觉）
-- 任务/项目/环境类稳定事实 → action=add, target=memory
+- 稳定可复用事实 → action=add, target=memory
 - 只记录稳定、可复用的事实，不要记临时闲聊、单次问答
 - 阅读书目、项目作者、文件列表等须由用户亲口说出；助手推断的 action=none
 - 不确定时 action=none
@@ -85,25 +85,19 @@ class BackgroundReviewService:
             self._lock.release()
 
     def _apply_decision(self, decision: ReviewDecision) -> None:
-        """USER.md 退役：target=user 只走 profile；target=memory 走 mutate_memory。"""
-        if decision.target == "user":
-            if decision.action in {"add", "replace"}:
-                self._sync_profile_fact(decision.text)
+        """All durable facts go to MEMORY.md (profile / USER.md retired)."""
+        target = decision.target if decision.target == "memory" else "memory"
+        if decision.target == "user" and decision.action in {"add", "replace"}:
+            line = decision.text.strip()
+            if line:
+                self._memory.append_memory_md(line)
             return
         self._memory.mutate_memory(
             decision.action,
-            decision.target,
+            target,
             text=decision.text,
             old_text=decision.old_text,
         )
-
-    def _sync_profile_fact(self, text: str) -> None:
-        if self._profile_service is None:
-            return
-        try:
-            self._profile_service.append_chat_fact(text)
-        except OSError as exc:
-            logger.warning("profile chat fact sync failed: %s", exc)
 
     def _classify(
         self,

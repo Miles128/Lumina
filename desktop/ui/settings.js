@@ -7,10 +7,6 @@
   const contentEl = document.getElementById("settings-content");
 
   let platforms = [];
-  let profileMarkdown = "";
-  let profileAutoMarkdown = "";
-  let profileChatFacts = "";
-  let profileIsUserEdited = false;
   let activeKey = "agent_llm";
   let agentConfig = null;
   let agentSoul = "";
@@ -59,9 +55,8 @@
 
   async function loadSettings() {
     contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loading"))}</p>`;
-    const [platformList, profile, config, soul, durable, mcp, shibei, background] = await Promise.all([
+    const [platformList, config, soul, durable, mcp, shibei, background] = await Promise.all([
       window.SecretaryAPI.request("GET", "/api/settings/platforms"),
-      window.SecretaryAPI.request("GET", "/api/profile"),
       window.SecretaryAPI.request("GET", "/api/agent/config"),
       window.SecretaryAPI.request("GET", "/api/agent/soul"),
       window.SecretaryAPI.request("GET", "/api/memory/durable"),
@@ -78,17 +73,17 @@
     shibeiConfig = shibei;
     backgroundTasks = background;
     uiPreferences = loadUiPreferences();
-    profileMarkdown = profile.user_markdown || profile.auto_markdown || "";
-    profileAutoMarkdown = profile.auto_markdown || "";
-    profileChatFacts = profile.chat_facts_markdown || "";
-    profileIsUserEdited = Boolean(profile.is_user_edited);
+    if (activeKey === "profile") {
+      activeKey = "agent_memory";
+    }
     if (
       !platforms.some((item) => item.source === activeKey) &&
       ![
-        "profile",
         "agent_llm",
         "agent_soul",
         "agent_memory",
+        "agent_delegation",
+        "agent_harness",
         "agent_mcp",
         "agent_shibei",
         "tools_mcp",
@@ -106,7 +101,7 @@
   function renderNav() {
     navEl.innerHTML = "";
 
-    // 组 1:Agent(LLM / SOUL / 记忆 / 画像——画像与持久记忆同属 Agent 的"自我认知"层)
+    // 组 1:Agent(LLM / SOUL / 记忆)
     const agentGroup = document.createElement("div");
     agentGroup.className = "settings-nav-group";
     agentGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.agent"))}</div>`;
@@ -116,7 +111,6 @@
       { key: "agent_memory", label: t("settings.memory"), status: "ready" },
       { key: "agent_delegation", label: t("settings.delegation"), status: "ready" },
       { key: "agent_harness", label: t("settings.harness"), status: "ready" },
-      { key: "profile", label: t("settings.profile") },
     ]) {
       agentGroup.appendChild(buildNavItem(item));
     }
@@ -166,7 +160,7 @@
     }
     navEl.appendChild(knowledgeGroup);
 
-    // 组 4:个人(外观 + 关于;个人画像已并入 Agent 组,与持久记忆并列)
+    // 组 4:个人(外观 + 关于)
     const personalGroup = document.createElement("div");
     personalGroup.className = "settings-nav-group";
     personalGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.personal"))}</div>`;
@@ -232,32 +226,6 @@
     }
     if (key === "tools_skills") {
       renderToolsSkillsPane();
-      return;
-    }
-    if (key === "profile") {
-      const chatFactsBlock = profileChatFacts
-        ? `<section class="profile-chat-facts">
-            <h4>对话推断（只读，保存画像时不会覆盖）</h4>
-            <pre class="profile-chat-facts-body">${escapeHtml(profileChatFacts)}</pre>
-          </section>`
-        : "";
-      contentEl.innerHTML = `
-        <div class="settings-pane profile-edit-pane">
-          <header class="settings-pane-head">
-            <h3>个人画像</h3>
-            <p>编辑你的画像正文。下方「对话推断」来自聊天记录，单独保存，不会随此处覆盖。</p>
-          </header>
-          <textarea id="profile-editor" class="profile-editor" rows="18">${escapeHtml(profileMarkdown)}</textarea>
-          ${chatFactsBlock}
-          <div class="platform-actions">
-            <button class="btn-text save-btn" type="button" id="btn-save-profile">保存</button>
-            <button class="btn-text" type="button" id="btn-reset-profile">恢复自动摘要</button>
-          </div>
-          <div id="profile-feedback" class="platform-feedback" hidden></div>
-        </div>
-      `;
-      document.getElementById("btn-save-profile").addEventListener("click", saveProfile);
-      document.getElementById("btn-reset-profile").addEventListener("click", resetProfile);
       return;
     }
     if (key === "appearance") {
@@ -455,6 +423,17 @@
           `<option value="${escapeAttr(item.key)}"${item.key === cfg.provider ? " selected" : ""}>${escapeHtml(item.label)}</option>`,
       )
       .join("");
+    const modelPresets = cfg.models || [];
+    const matchedPreset = modelPresets.find(
+      (item) => item.model === cfg.model && item.base_url.replace(/\/$/, "") === String(cfg.base_url || "").replace(/\/$/, ""),
+    );
+    const modelOptions = [
+      `<option value=""${!matchedPreset ? " selected" : ""}>自定义 / 手动填写</option>`,
+      ...modelPresets.map(
+        (item) =>
+          `<option value="${escapeAttr(item.id)}"${matchedPreset && matchedPreset.id === item.id ? " selected" : ""}>${escapeHtml(item.label)} · ${escapeHtml(item.model)}</option>`,
+      ),
+    ].join("");
 
     contentEl.innerHTML = `
       <div class="settings-pane">
@@ -467,6 +446,10 @@
         </header>
         <p class="platform-meta">${escapeHtml(cfg.status_message || "")}</p>
         <div class="settings-fields">
+          <label class="settings-field">
+            <span>常用模型</span>
+            <select id="agent-model-preset">${modelOptions}</select>
+          </label>
           <label class="settings-field">
             <span>提供商</span>
             <select id="agent-provider">${providerOptions}</select>
@@ -481,10 +464,10 @@
           </label>
           <label class="settings-field">
             <span>模型</span>
-            <input id="agent-model" type="text" value="${escapeAttr(cfg.model || "")}" placeholder="deepseek-chat" />
+            <input id="agent-model" type="text" value="${escapeAttr(cfg.model || "")}" placeholder="deepseek-v4-flash" />
           </label>
           <label class="settings-field">
-            <span>温度</span>
+            <span>温度（thinking 开启时 DeepSeek 会忽略）</span>
             <input id="agent-temperature" type="range" min="0" max="1.5" step="0.1" value="${escapeAttr(String(cfg.temperature ?? 0.7))}" />
           </label>
           <label class="settings-field">
@@ -520,7 +503,7 @@
           <button class="btn-text test-btn" type="button" id="btn-test-agent">测试连接</button>
           <button class="btn-text" type="button" id="btn-import-all-hermes">一键从 Hermes 导入全部</button>
           <button class="btn-text" type="button" id="btn-clear-chat">清空对话历史</button>
-          <button class="btn-text" type="button" id="btn-clear-pollution">清除对话污染记忆</button>
+          <button class="btn-text" type="button" id="btn-clear-pollution">清除后台任务状态</button>
         </div>
         <div id="agent-feedback" class="platform-feedback" hidden></div>
       </div>
@@ -532,6 +515,7 @@
     document.getElementById("btn-clear-chat").addEventListener("click", clearChatHistory);
     document.getElementById("btn-clear-pollution").addEventListener("click", clearPollutedMemory);
     document.getElementById("agent-provider").addEventListener("change", onProviderChange);
+    document.getElementById("agent-model-preset")?.addEventListener("change", onModelPresetChange);
     document.getElementById("btn-pick-shell-cwd")?.addEventListener("click", async () => {
       const input = document.getElementById("agent-shell-cwd");
       if (!input) return;
@@ -543,6 +527,19 @@
       const raw = window.prompt("工作区目录路径", input.value || "");
       if (raw != null && raw.trim()) input.value = raw.trim();
     });
+  }
+
+  function onModelPresetChange(event) {
+    const presetId = event.target.value;
+    if (!presetId) return;
+    const preset = (agentConfig?.models || []).find((item) => item.id === presetId);
+    if (!preset) return;
+    const provider = document.getElementById("agent-provider");
+    const baseUrl = document.getElementById("agent-base-url");
+    const model = document.getElementById("agent-model");
+    if (provider && preset.provider) provider.value = preset.provider;
+    if (baseUrl && preset.base_url) baseUrl.value = preset.base_url;
+    if (model && preset.model) model.value = preset.model;
   }
 
   function onProviderChange(event) {
@@ -767,12 +764,10 @@
   async function clearPollutedMemory() {
     const feedback = document.getElementById("agent-feedback");
     try {
-      const result = await window.SecretaryAPI.request("POST", "/api/profile/clear-chat-derived");
+      const result = await window.SecretaryAPI.request("POST", "/api/memory/clear-derived");
       const removed = Array.isArray(result?.removed_files) ? result.removed_files.join(", ") : "";
       const suffix = removed ? `（已删除：${removed}）` : "";
-      showFeedback(feedback, "success", `已清除对话推断的画像条目与后台摘要${suffix}`);
-      profileMarkdown = String(result?.profile_markdown || profileMarkdown);
-      profileChatFacts = "";
+      showFeedback(feedback, "success", `已清除后台思考/摘要状态${suffix}`);
     } catch (error) {
       showFeedback(feedback, "error", `清除失败：${error.message}`);
     }
@@ -788,6 +783,9 @@
         trace_retention: document.getElementById("harness-trace-retention")?.value || "full",
         trace_retain_days: Number(document.getElementById("harness-trace-days")?.value || 30),
         max_tool_output_chars: Number(document.getElementById("harness-tool-output")?.value || 12000),
+        thinking_mode: document.getElementById("harness-thinking-mode")?.value || "auto",
+        reasoning_effort: document.getElementById("harness-reasoning-effort")?.value || "high",
+        strict_tools: Boolean(document.getElementById("harness-strict-tools")?.checked),
       },
     };
   }
@@ -853,6 +851,26 @@
           <label class="settings-field">
             <span>max_tool_output_chars</span>
             <input id="harness-tool-output" type="number" min="500" max="100000" value="${escapeHtml(String(h.max_tool_output_chars ?? 12000))}" />
+          </label>
+          <label class="settings-field">
+            <span>thinking_mode（DeepSeek）</span>
+            <select id="harness-thinking-mode">
+              <option value="auto" ${h.thinking_mode === "auto" || !h.thinking_mode ? "selected" : ""}>auto · DIRECT 关 / Agent 开</option>
+              <option value="enabled" ${h.thinking_mode === "enabled" ? "selected" : ""}>enabled · 始终开启</option>
+              <option value="disabled" ${h.thinking_mode === "disabled" ? "selected" : ""}>disabled · 始终关闭</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span>reasoning_effort（Agent）</span>
+            <select id="harness-reasoning-effort">
+              <option value="low" ${h.reasoning_effort === "low" ? "selected" : ""}>low</option>
+              <option value="high" ${h.reasoning_effort === "high" || !h.reasoning_effort ? "selected" : ""}>high（默认）</option>
+              <option value="max" ${h.reasoning_effort === "max" ? "selected" : ""}>max</option>
+            </select>
+          </label>
+          <label class="settings-field settings-field-checkbox">
+            <span>strict_tools（DeepSeek beta）</span>
+            <input id="harness-strict-tools" type="checkbox" ${h.strict_tools ? "checked" : ""} />
           </label>
         </section>
         <div class="platform-actions">
@@ -943,8 +961,8 @@
     contentEl.innerHTML = `
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
-          <h3>人格 SOUL</h3>
-          <p>灵犀使用 ~/.lumina/SOUL.md 定义人格语气，保存后立即生效。可点击下方「从 Hermes 导入」一次性拷贝 Hermes 的 SOUL.md。</p>
+          <h3>身份 SOUL</h3>
+          <p>灵犀使用 ~/.lumina/SOUL.md 定义身份与语气；「你是谁」会优先读这份文件。保存后立即生效。可从 Hermes 导入 SOUL.md。</p>
         </header>
         <p class="platform-meta">${escapeHtml(agentSoulPath)}</p>
         <div class="settings-fields">
@@ -995,34 +1013,80 @@
 
   function renderAgentMemoryPane() {
     const bg = backgroundTasks || {};
-    const thinkInfo = bg.think_enabled
-      ? `每 ${bg.think_interval_hours || 6} 小时 · 上次 ${bg.last_think_at ? escapeHtml(String(bg.last_think_at).slice(0, 16)) : "尚未运行"}`
-      : "已关闭";
-    const summaryInfo = bg.memory_summary_enabled
-      ? `每天 ${bg.memory_summary_hour ?? 23}:00 · 上次 ${bg.last_summary_date ? escapeHtml(String(bg.last_summary_date)) : "尚未运行"}`
-      : "已关闭";
+    const thinkOn = Boolean(bg.think_enabled);
+    const summaryOn = Boolean(bg.memory_summary_enabled);
+    const thinkInterval = bg.think_interval_hours || 6;
+    const summaryHour = bg.memory_summary_hour ?? 23;
+    const lastThink = bg.last_think_at
+      ? escapeHtml(String(bg.last_think_at).slice(0, 16))
+      : "尚未运行";
+    const lastSummary = bg.last_summary_date
+      ? escapeHtml(String(bg.last_summary_date))
+      : "尚未运行";
 
     contentEl.innerHTML = `
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
           <h3>持久记忆</h3>
-          <p>灵犀使用 MEMORY.md 记录任务/项目/环境事实与每日会话摘要，每次对话开始时注入系统提示。Agent 也可通过 memory 工具自动更新。用户个人事实（姓名/偏好/习惯等）请编辑"个人画像"。</p>
+          <p>MEMORY.md 记录用户事实、任务/项目/环境事实与每日会话摘要，每次对话注入系统提示。Agent 也可通过 memory 工具更新。灵犀身份请编辑「身份 SOUL」。</p>
         </header>
-        <div class="platform-meta">
-          <p>后台思考：${thinkInfo}</p>
-          <p>记忆摘要：${summaryInfo}</p>
+        <div class="settings-fields">
+          <label class="settings-field settings-field-row">
+            <span>后台思考</span>
+            <input type="checkbox" id="bg-think-enabled" ${thinkOn ? "checked" : ""} />
+          </label>
+          <label class="settings-field">
+            <span>思考间隔（小时）</span>
+            <input type="number" id="bg-think-interval" min="1" max="168" value="${escapeAttr(String(thinkInterval))}" />
+          </label>
+          <p class="platform-meta">上次：${lastThink}</p>
+          <label class="settings-field settings-field-row">
+            <span>记忆摘要</span>
+            <input type="checkbox" id="bg-summary-enabled" ${summaryOn ? "checked" : ""} />
+          </label>
+          <label class="settings-field">
+            <span>摘要时刻（0–23 点）</span>
+            <input type="number" id="bg-summary-hour" min="0" max="23" value="${escapeAttr(String(summaryHour))}" />
+          </label>
+          <p class="platform-meta">上次：${lastSummary}</p>
         </div>
+        <div class="platform-actions">
+          <button class="btn-text save-btn" type="button" id="btn-save-background">保存后台任务</button>
+        </div>
+        <div id="background-feedback" class="platform-feedback" hidden></div>
         <label class="settings-field" for="durable-memory-editor">
-          <span>MEMORY.md（环境与项目事实，最多 2200 字）</span>
+          <span>MEMORY.md（用户与环境/项目事实，最多 4000 字）</span>
           <textarea id="durable-memory-editor" class="profile-editor" rows="14">${escapeHtml(durableMemoryMd)}</textarea>
         </label>
         <div class="platform-actions">
-          <button class="btn-text save-btn" type="button" id="btn-save-durable-memory">保存</button>
+          <button class="btn-text save-btn" type="button" id="btn-save-durable-memory">保存 MEMORY.md</button>
         </div>
         <div id="durable-memory-feedback" class="platform-feedback" hidden></div>
       </div>
     `;
     document.getElementById("btn-save-durable-memory").addEventListener("click", saveDurableMemory);
+    document.getElementById("btn-save-background").addEventListener("click", saveBackgroundTasks);
+  }
+
+  async function saveBackgroundTasks() {
+    const feedback = document.getElementById("background-feedback");
+    const thinkEl = document.getElementById("bg-think-enabled");
+    const intervalEl = document.getElementById("bg-think-interval");
+    const summaryEl = document.getElementById("bg-summary-enabled");
+    const hourEl = document.getElementById("bg-summary-hour");
+    if (!feedback || !thinkEl || !intervalEl || !summaryEl || !hourEl) return;
+    try {
+      const updated = await window.SecretaryAPI.request("PUT", "/api/agent/background", {
+        think_enabled: thinkEl.checked,
+        think_interval_hours: Number(intervalEl.value) || 6,
+        memory_summary_enabled: summaryEl.checked,
+        memory_summary_hour: Number(hourEl.value),
+      });
+      backgroundTasks = updated;
+      showFeedback(feedback, "success", "后台任务已保存");
+    } catch (error) {
+      showFeedback(feedback, "error", `保存失败：${error.message}`);
+    }
   }
 
   function renderToolsMcpPane() {
@@ -1472,38 +1536,6 @@
       showFeedback(feedback, "success", "持久记忆已保存");
     } catch (error) {
       showFeedback(feedback, "error", `保存失败：${error.message}`);
-    }
-  }
-
-  async function saveProfile() {
-    const editor = document.getElementById("profile-editor");
-    const feedback = document.getElementById("profile-feedback");
-    if (!editor || !feedback) return;
-    try {
-      const updated = await window.SecretaryAPI.request("PUT", "/api/profile", {
-        markdown: editor.value,
-      });
-      profileMarkdown = updated.user_markdown || editor.value;
-      profileAutoMarkdown = updated.auto_markdown || profileAutoMarkdown;
-      profileChatFacts = updated.chat_facts_markdown || profileChatFacts;
-      profileIsUserEdited = Boolean(updated.is_user_edited);
-      showFeedback(feedback, "success", "已保存");
-    } catch (error) {
-      showFeedback(feedback, "error", `保存失败：${error.message}`);
-    }
-  }
-
-  async function resetProfile() {
-    try {
-      const updated = await window.SecretaryAPI.request("DELETE", "/api/profile/user");
-      profileMarkdown = updated.user_markdown || updated.auto_markdown || "";
-      profileAutoMarkdown = updated.auto_markdown || profileMarkdown;
-      profileChatFacts = updated.chat_facts_markdown || "";
-      profileIsUserEdited = Boolean(updated.is_user_edited);
-      renderContent("profile");
-      showFeedback(document.getElementById("profile-feedback"), "success", "已恢复自动摘要");
-    } catch (error) {
-      showFeedback(document.getElementById("profile-feedback"), "error", `恢复失败：${error.message}`);
     }
   }
 

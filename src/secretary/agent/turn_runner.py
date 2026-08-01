@@ -37,6 +37,9 @@ class AgentTurnPlan:
     explicit_working_dir: bool = False
     compaction_max_tokens: int | None = None
     compaction_keep_tail: int | None = None
+    thinking: str = "enabled"
+    reasoning_effort: str | None = "high"
+    strict_tools: bool = False
 
 
 @dataclass
@@ -141,6 +144,9 @@ class TurnRunner:
                 explicit_working_dir=plan.explicit_working_dir,
                 compaction_max_tokens=plan.compaction_max_tokens,
                 compaction_keep_tail=plan.compaction_keep_tail,
+                thinking=plan.thinking,
+                reasoning_effort=plan.reasoning_effort,
+                strict_tools=plan.strict_tools,
             )
             result = loop.run(plan.messages, temperature=temperature)
             if wrapped is not None and turn is not None:

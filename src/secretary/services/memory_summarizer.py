@@ -13,7 +13,7 @@ from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
 from secretary.memory.lumina_memory import LuminaMemory
-from secretary.services.agent_config import AgentConfigStore
+from secretary.services.agent_config import AgentConfigStore, resolve_background_config
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,10 @@ class MemorySummarizerService:
         self._state_path = settings.resolved_data_dir() / _STATE_FILE
 
     def should_run(self, hour: int) -> bool:
-        if not self._settings.memory_summary_enabled:
+        bg = resolve_background_config(self._settings, self._agent_config_store)
+        if not bg.memory_summary_enabled:
             return False
-        if hour != self._settings.memory_summary_hour:
+        if hour != bg.memory_summary_hour:
             return False
         today = datetime.now().date().isoformat()
         return self._load_state().get("last_summary_date") != today

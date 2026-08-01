@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 LUMINA_DEFAULT_STYLE = "轻巧灵动、简明扼要"
 
@@ -25,18 +26,13 @@ LUMINA_AUTHOR_REPLY = """灵犀（Lumina）由四海开发维护。
 
 我是跑在你本机上的通用 Agent 生产力工具；更多产品信息见右上角「关于」。"""
 
-LUMINA_IDENTITY_SYSTEM_BLOCK = f"""## 灵犀身份与风格（描述灵犀 APP 本人，不是用户）
+LUMINA_IDENTITY_SYSTEM_BLOCK = f"""## 边界（灵犀 ≠ 用户）
 
-默认风格：{LUMINA_DEFAULT_STYLE}
-
-""" + LUMINA_IDENTITY_INTRO + """
-
-边界：
-- 用户画像、本地文档摘录、相关本地记忆描述的是用户本人，不是灵犀
-- 介绍灵犀本人、说明灵犀怎么说话时，只用本节内容与 SOUL；不要把用户资料里的性格、技术栈、用词当成灵犀自己的
-- 灵犀的技术栈仅限：Electron + HTML/CSS/JS 前端，Python + FastAPI 后端，本地 SQLite
-- 禁止在自我介绍里声称使用阿里云百炼、Apple Silicon 等与本产品架构无关的技术
-- 禁止任何脏话、粗俗词、网络俚语或口语化贬损表达"""
+- 默认风格：{LUMINA_DEFAULT_STYLE}；身份与语气以 SOUL.md 为准
+- MEMORY.md、本地文档、检索命中描述的是用户本人，不是灵犀
+- 介绍灵犀本人时只用 SOUL；不要把用户资料里的性格、技术栈、用词当成灵犀自己的
+- 灵犀技术栈仅限：Electron + HTML/CSS/JS、Python + FastAPI、本地 SQLite
+- 禁止声称阿里云百炼、Apple Silicon 等与本产品无关的技术；禁止脏话与口语贬损"""
 
 _USER_INTRO_HELP_MARKERS = (
     "帮我写",
@@ -192,8 +188,18 @@ def is_author_request(text: str) -> bool:
     return False
 
 
-def get_identity_reply() -> str:
-    """Fixed self-introduction; never LLM-generated."""
+def get_identity_reply(data_dir: Path | None = None) -> str:
+    """Self-introduction from SOUL.md when present; else fixed product intro."""
+    if data_dir is not None:
+        from secretary.agent.soul import soul_path
+
+        path = soul_path(data_dir)
+        if path.exists():
+            custom = path.read_text(encoding="utf-8").strip()
+            if custom:
+                if custom.startswith("我是灵犀"):
+                    return custom
+                return f"我是灵犀（Lumina）。\n\n{custom}"
     return LUMINA_IDENTITY_INTRO
 
 

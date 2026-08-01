@@ -14,7 +14,8 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-MEMORY_MD_MAX_CHARS = 2200
+MEMORY_MD_MAX_CHARS = 4000
+_PROFILE_MIGRATED_MARKER = ".profile_migrated"
 
 
 class LuminaMemory:
@@ -30,6 +31,31 @@ class LuminaMemory:
     @property
     def memory_md_path(self) -> Path:
         return self._memories_dir / "MEMORY.md"
+
+    def migrate_user_profile_if_needed(self, user_profile_path: Path | None = None) -> bool:
+        """One-shot merge of user_profile.md into MEMORY.md. Returns True if merged."""
+        marker = self._memories_dir / _PROFILE_MIGRATED_MARKER
+        if marker.exists():
+            return False
+        profile_path = user_profile_path or (self._data_dir / "user_profile.md")
+        if not profile_path.exists():
+            marker.write_text("empty\n", encoding="utf-8")
+            return False
+        text = profile_path.read_text(encoding="utf-8").strip()
+        if not text:
+            marker.write_text("empty\n", encoding="utf-8")
+            return False
+        existing = self.read_memory_md()
+        block = f"## Migrated from user profile\n{text}"
+        merged = f"{existing}\n\n{block}".strip() if existing else block
+        self.write_memory_md(merged)
+        retired = profile_path.with_name(profile_path.name + ".retired")
+        try:
+            profile_path.replace(retired)
+        except OSError:
+            pass
+        marker.write_text("ok\n", encoding="utf-8")
+        return True
 
     def read_memory_md(self) -> str:
         path = self.memory_md_path
@@ -115,7 +141,7 @@ class LuminaMemory:
     def import_from_hermes(self) -> dict[str, str]:
         """One-shot import of MEMORY.md from ~/.hermes/ into Lumina.
 
-        USER.md 已退役，不再导入；用户事实请通过 /api/profile 编辑。
+        USER.md / 个人画像已退役，用户事实请编辑 MEMORY.md。
         只查找 MEMORY.md（顶层或 memories/ 嵌套）。返回 {"memory_md": src_path}。
         """
         hermes_root = Path.home() / ".hermes"
@@ -138,10 +164,7 @@ class LuminaMemory:
         return imported
 
     def prompt_snapshot(self) -> str:
-        """Return MEMORY.md content for system prompt injection.
-
-        USER.md 已退役，不再注入；用户事实由 ProfileService 单独注入。
-        """
+        """Return MEMORY.md content for system prompt injection (user + env facts)."""
         memory = self.read_memory_md()
         if not memory:
             return ""

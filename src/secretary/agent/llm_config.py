@@ -12,12 +12,16 @@ from secretary.config import Settings
 _HERMES_CONFIG = Path.home() / ".hermes" / "config.yaml"
 _HERMES_ENV = Path.home() / ".hermes" / ".env"
 
+# Legacy DeepSeek names → current official API ids (V4-Flash-0731 era).
 MODEL_ALIASES: dict[str, str] = {
-    "deepseek-v4-flash": "deepseek-chat",
-    "deepseek-v4": "deepseek-chat",
-    "deepseek-v3": "deepseek-chat",
-    "deepseek-v3.2": "deepseek-chat",
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-flash",
+    "deepseek-v4": "deepseek-v4-flash",
+    "deepseek-v3": "deepseek-v4-flash",
+    "deepseek-v3.2": "deepseek-v4-flash",
 }
+
+DEFAULT_MODEL = "deepseek-v4-flash"
 
 _PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY", "OPENAI_API_KEY"),
@@ -38,8 +42,13 @@ class LlmConfig:
 def normalize_model_name(model: str) -> str:
     cleaned = model.strip()
     if not cleaned:
-        return "deepseek-chat"
+        return DEFAULT_MODEL
     return MODEL_ALIASES.get(cleaned, cleaned)
+
+
+def model_supports_thinking(model: str) -> bool:
+    """DeepSeek V4 thinking / reasoning_effort controls (OpenAI ChatCompletions)."""
+    return "deepseek" in model.strip().lower()
 
 
 def is_placeholder_api_key(api_key: str) -> bool:
@@ -71,7 +80,7 @@ def resolve_llm_config(
 def load_hermes_llm_config() -> LlmConfig | None:
     provider = "deepseek"
     base_url = "https://api.deepseek.com"
-    model = "deepseek-chat"
+    model = DEFAULT_MODEL
     api_key = ""
 
     if _HERMES_CONFIG.exists():
@@ -142,10 +151,24 @@ def normalize_base_url(base_url: str) -> str:
         return "https://api.deepseek.com/v1"
     if cleaned.endswith("/v1"):
         return cleaned
+    if cleaned.endswith("/beta"):
+        return cleaned
     if "openrouter.ai" in cleaned and not cleaned.endswith("/v1"):
         return f"{cleaned}/v1"
     if cleaned in {"https://api.deepseek.com", "https://api.openai.com"}:
         return f"{cleaned}/v1"
+    return cleaned
+
+
+def deepseek_beta_base_url(base_url: str) -> str:
+    """Map a DeepSeek OpenAI base URL to the beta endpoint (strict tools)."""
+    cleaned = normalize_base_url(base_url).rstrip("/")
+    if cleaned.endswith("/beta"):
+        return cleaned
+    if cleaned.endswith("/v1"):
+        return f"{cleaned[:-3]}/beta"
+    if "api.deepseek.com" in cleaned:
+        return "https://api.deepseek.com/beta"
     return cleaned
 
 

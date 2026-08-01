@@ -72,8 +72,8 @@ def test_mentions_local_files_detects_paths() -> None:
     assert not mentions_local_files("你可以先列一下需求")
 
 
-def test_enforce_blocks_fabricated_listing_on_non_fs_question() -> None:
-    """A 📁/📄 listing with no read grounding is blocked even for non-fs questions."""
+def test_enforce_sanitizes_fabricated_listing_on_non_fs_question() -> None:
+    """Fabricated 📁/📄 listings are stripped; reply is not replaced wholesale."""
     from secretary.agent.grounding import UNGROUNDED_LISTING_FALLBACK, enforce_grounded_reply
 
     reply = (
@@ -84,16 +84,20 @@ def test_enforce_blocks_fabricated_listing_on_non_fs_question() -> None:
         "📄 main.py\n"
         "📄 backtest.py\n"
         "📄 strategy.py\n"
+        "接下来需要先读源码再分析。"
     )
-    kept, verified, _ = enforce_grounded_reply(
+    kept, verified, note = enforce_grounded_reply(
         reply,
         "完整分析",
         [],
         grounding_verified=False,
         grounding_note="",
     )
-    assert kept == UNGROUNDED_LISTING_FALLBACK
-    assert verified is False
+    assert kept != UNGROUNDED_LISTING_FALLBACK
+    assert "📁" not in kept
+    assert "接下来需要先读源码再分析" in kept
+    assert verified is True
+    assert note == "" or "sanitize" in note.lower() or "剥离" in note or "工具" in note
 
 
 def test_enforce_allows_real_listing_with_read_grounding() -> None:
@@ -250,6 +254,7 @@ def test_content_question_list_dir_alone_not_enough() -> None:
         ["list_dir"],
     )
 
+    # Post-hoc no longer replaces the whole reply (tool-first + retries handle this).
     reply, ok, note = enforce_grounded_reply(
         "package.json 里依赖了 react 和 lodash",
         "读一下 package.json",
@@ -257,9 +262,9 @@ def test_content_question_list_dir_alone_not_enough() -> None:
         grounding_verified=False,
         grounding_note="",
     )
-    assert not ok
-    assert reply == UNGROUNDED_CONTENT_FALLBACK
-    assert "file_read" in note or "内容" in note
+    assert reply != UNGROUNDED_CONTENT_FALLBACK
+    assert "react" in reply
+    assert ok is True
 
     reply2, ok2, _ = enforce_grounded_reply(
         "依赖里有 react",
@@ -300,7 +305,8 @@ def test_strip_forbidden_listing_patterns() -> None:
     assert "真实说明" in cleaned
 
 
-def test_verify_reply_flags_ungrounded_paths() -> None:
+def test_verify_reply_soft_when_evidence_exists() -> None:
+    """Path mismatches after tools ran are soft — no verification retry loop."""
     evidence = ReadEvidence(
         read_files={"/tmp/readme.md"},
         listed_names={"README.md"},
@@ -310,8 +316,8 @@ def test_verify_reply_flags_ungrounded_paths() -> None:
         evidence,
         "项目里有哪些文件",
     )
-    assert not ok.ok
-    assert should_retry_for_verification(ok)
+    assert ok.ok
+    assert not should_retry_for_verification(ok)
 
 
 def test_reply_simulates_file_listing_detects_fake_ls() -> None:
@@ -322,16 +328,17 @@ def test_reply_simulates_file_listing_detects_fake_ls() -> None:
     tree = "~/Documents/简历/\n├── a.md\n├── b.md\n├── c.md"
     assert reply_simulates_file_listing(tree)
 
-    replaced, verified, note = enforce_grounded_reply(
+    cleaned, verified, note = enforce_grounded_reply(
         tree,
         "列出简历文件夹",
         [],
         grounding_verified=True,
         grounding_note="",
     )
-    assert not verified
-    assert "无法确认" in replaced
-    assert note
+    assert verified is True
+    assert "├──" not in cleaned
+    assert cleaned != tree
+    assert "无法确认该目录" not in cleaned
 
 
 def test_is_personal_memory_question_and_enforce_memory() -> None:
@@ -354,15 +361,17 @@ def test_is_personal_memory_question_and_enforce_memory() -> None:
         "1. **《启示录》**\n"
         "2. **《俞军产品方法论》**"
     )
-    blocked, verified, _note = enforce_grounded_reply(
+    # Soft policy: do not wholesale-replace memory answers; rely on prompt + tool-first.
+    kept_soft, verified_soft, _note = enforce_grounded_reply(
         reply,
         "再找",
         [],
         grounding_verified=True,
         grounding_note="",
     )
-    assert not verified
-    assert blocked == UNGROUNDED_MEMORY_FALLBACK
+    assert kept_soft != UNGROUNDED_MEMORY_FALLBACK
+    assert "启示录" in kept_soft
+    assert verified_soft is True
 
     kept, verified, _ = enforce_grounded_reply(
         reply,

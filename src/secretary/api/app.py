@@ -33,6 +33,7 @@ from secretary.api.schemas import (
     AgentConfigUpdateRequest,
     AgentTestResponse,
     BackgroundTasksResponse,
+    BackgroundTasksUpdateRequest,
     BriefingResponse,
     HarnessConfigSchema,
     HealthResponse,
@@ -40,8 +41,6 @@ from secretary.api.schemas import (
     PlatformCardResponse,
     PlatformFieldResponse,
     PlatformUpdateRequest,
-    ProfileResponse,
-    ProfileUpdateRequest,
     ShibeiActionResponse,
     ShibeiConfigResponse,
     ShibeiConfigUpdateRequest,
@@ -63,7 +62,12 @@ from secretary.core.types import SourceKind
 from secretary.exceptions import AgentError
 from secretary.memory.db import MemoryStore
 from secretary.memory.kb import KnowledgeWorkspace
-from secretary.services.agent_config import PROVIDER_PRESETS, AgentConfigStore
+from secretary.services.agent_config import (
+    MODEL_PRESETS,
+    PROVIDER_PRESETS,
+    AgentConfigStore,
+    resolve_background_config,
+)
 from secretary.services.briefing import BriefingService
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
@@ -183,14 +187,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for key, value in _init_services().items():
             setattr(app.state, key, value)
     app.state.profile_service.persist_after_sync()
+    try:
+        app.state.chat_service.memory.migrate_user_profile_if_needed(
+            settings.resolved_data_dir() / "user_profile.md"
+        )
+    except OSError:
+        pass
 
     shutdown = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
+    bg = resolve_background_config(settings, app.state.agent_config_store)
     if (
         settings.auto_sync_enabled
         or settings.briefing_enabled
-        or settings.think_enabled
-        or settings.memory_summary_enabled
+        or bg.think_enabled
+        or bg.memory_summary_enabled
     ):
         briefing_service = BriefingService(
             settings,
@@ -261,18 +272,39 @@ app.include_router(workflows_router)
 @app.get("/api/agent/background")
 def agent_background_status(request: Request) -> BackgroundTasksResponse:
     data_dir = settings.resolved_data_dir()
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
+    bg = resolve_background_config(settings, agent_config_store)
     think = ScheduledThinkService.load_latest(data_dir) or {}
     summary = MemorySummarizerService.load_latest(data_dir) or {}
     return BackgroundTasksResponse(
-        think_enabled=settings.think_enabled,
-        think_interval_hours=settings.think_interval_hours,
+        think_enabled=bg.think_enabled,
+        think_interval_hours=bg.think_interval_hours,
         last_think_at=str(think.get("last_run_at", "")),
         last_think_markdown=str(think.get("markdown", "")),
-        memory_summary_enabled=settings.memory_summary_enabled,
-        memory_summary_hour=settings.memory_summary_hour,
+        memory_summary_enabled=bg.memory_summary_enabled,
+        memory_summary_hour=bg.memory_summary_hour,
         last_summary_date=str(summary.get("last_summary_date", "")),
         last_summary=str(summary.get("summary", "")),
     )
+
+
+@app.put("/api/agent/background")
+def update_agent_background(
+    request: Request, body: BackgroundTasksUpdateRequest
+) -> BackgroundTasksResponse:
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
+    payload: dict[str, object] = {}
+    if body.think_enabled is not None:
+        payload["think_enabled"] = body.think_enabled
+    if body.think_interval_hours is not None:
+        payload["think_interval_hours"] = body.think_interval_hours
+    if body.memory_summary_enabled is not None:
+        payload["memory_summary_enabled"] = body.memory_summary_enabled
+    if body.memory_summary_hour is not None:
+        payload["memory_summary_hour"] = body.memory_summary_hour
+    if payload:
+        agent_config_store.update({"background": payload})
+    return agent_background_status(request)
 
 
 @app.get("/api/health")
@@ -318,63 +350,37 @@ async def sync_one(source: SourceKind, request: Request) -> SyncResponse:
 
 
 @app.get("/api/profile")
-def get_profile(request: Request) -> ProfileResponse:
-    profile_service: ProfileService = svc(request).profile_service
-    view = profile_service.get_view()
-    return ProfileResponse(
-        generated_at=view.generated_at,
-        markdown=view.markdown,
-        auto_markdown=view.auto_markdown,
-        user_markdown=view.user_markdown,
-        chat_facts_markdown=view.chat_facts_markdown,
-        is_user_edited=view.is_user_edited,
-        sections=view.sections,
+def get_profile() -> None:
+    raise HTTPException(
+        status_code=410,
+        detail="个人画像已合并到 MEMORY.md，请使用设置 → 持久记忆 或 GET /api/memory/durable",
     )
 
 
 @app.put("/api/profile")
-def update_profile(request: Request, body: ProfileUpdateRequest) -> ProfileResponse:
-    profile_service: ProfileService = svc(request).profile_service
-    view = profile_service.save_user_markdown(body.markdown)
-    return ProfileResponse(
-        generated_at=view.generated_at,
-        markdown=view.markdown,
-        auto_markdown=view.auto_markdown,
-        user_markdown=view.user_markdown,
-        chat_facts_markdown=view.chat_facts_markdown,
-        is_user_edited=view.is_user_edited,
-        sections=view.sections,
+def update_profile() -> None:
+    raise HTTPException(
+        status_code=410,
+        detail="个人画像已合并到 MEMORY.md，请使用 PUT /api/memory/durable",
     )
 
 
 @app.delete("/api/profile/user")
-def reset_profile_user(request: Request) -> ProfileResponse:
-    profile_service: ProfileService = svc(request).profile_service
-    view = profile_service.reset_user_markdown()
-    return ProfileResponse(
-        generated_at=view.generated_at,
-        markdown=view.markdown,
-        auto_markdown=view.auto_markdown,
-        user_markdown=view.user_markdown,
-        chat_facts_markdown=view.chat_facts_markdown,
-        is_user_edited=view.is_user_edited,
-        sections=view.sections,
+def reset_profile_user() -> None:
+    raise HTTPException(
+        status_code=410,
+        detail="个人画像已合并到 MEMORY.md，请编辑 /api/memory/durable",
     )
 
 
 @app.post("/api/profile/clear-chat-derived")
-def clear_profile_chat_derived(request: Request) -> dict[str, object]:
-    """Remove chat-inferred profile bullets and polluted scheduler snapshots."""
+@app.post("/api/memory/clear-derived")
+def clear_memory_derived(request: Request) -> dict[str, object]:
+    """Clear polluted scheduler snapshots (think / memory summary state)."""
     from secretary.services.profile_service import clear_polluted_derived_state
 
-    profile_service: ProfileService = svc(request).profile_service
-    view = profile_service.clear_chat_derived_facts()
     removed = clear_polluted_derived_state(settings.resolved_data_dir())
-    return {
-        "status": "ok",
-        "removed_files": removed,
-        "profile_markdown": view.markdown,
-    }
+    return {"status": "ok", "removed_files": removed}
 
 
 @app.get("/api/memory/search")
@@ -399,6 +405,9 @@ def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResp
 def get_durable_memory(request: Request) -> dict[str, str]:
     chat_service: ChatService = svc(request).chat_service
     memory = chat_service.memory
+    memory.migrate_user_profile_if_needed(
+        settings.resolved_data_dir() / "user_profile.md"
+    )
     return {"memory_md": memory.read_memory_md()}
 
 
@@ -417,7 +426,7 @@ def update_durable_memory(
 def import_memory_from_hermes(request: Request) -> dict[str, object]:
     """One-shot import of Hermes MEMORY.md into ~/.lumina/memories/.
 
-    USER.md 已退役，不再导入；用户事实请通过 /api/profile 编辑。
+    用户事实请编辑 MEMORY.md（/api/memory/durable）。
     """
     chat_service: ChatService = svc(request).chat_service
     memory = chat_service.memory
@@ -514,6 +523,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         }
         for key, preset in PROVIDER_PRESETS.items()
     ]
+    models = [dict(item) for item in MODEL_PRESETS]
     return AgentConfigResponse(
         provider=view.provider,
         api_key_masked=view.api_key_masked or ("********" if view.api_key else ""),
@@ -528,6 +538,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         status_message=view.status_message,
         active_source=view.active_source,
         providers=providers,
+        models=models,
         harness=HarnessConfigSchema.model_validate(view.harness.model_dump()),
     )
 

@@ -17,6 +17,9 @@ def test_harness_defaults() -> None:
     assert cfg.compaction_keep_tail == 8
     assert cfg.trace_retention == "full"
     assert cfg.trace_retain_days == 30
+    assert cfg.thinking_mode == "auto"
+    assert cfg.reasoning_effort == "high"
+    assert cfg.strict_tools is False
 
 
 def test_harness_persisted_on_agent_config(tmp_path: Path) -> None:

@@ -134,7 +134,7 @@
     "workflows.noTemplates": { en: "No templates installed", zh: "没有可用模板" },
     "workflows.pickTemplate": { en: "Pick a template number:", zh: "输入模板序号：" },
     "workflows.templateName": { en: "Workflow name", zh: "工作流名称" },
-    "settings.soul": { en: "SOUL", zh: "人格 SOUL" },
+    "settings.soul": { en: "SOUL", zh: "身份 SOUL" },
     "chat.progress.metrics": {
       en: "Tools {tools} · Subagents {subs} · Compaction {comp}",
       zh: "工具 {tools} · 子Agent {subs} · 压缩 {comp}",

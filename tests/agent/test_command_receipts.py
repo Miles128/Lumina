@@ -344,7 +344,7 @@ def test_enforce_does_not_block_suggestion() -> None:
         command_evidence=cmd_evidence,
     )
     assert reply == "你可以跑 pytest 看看"
-    assert verified is False  # passes through grounding_verified
+    assert verified is True  # soft policy: suggestions are not hard failures
 
 
 def test_enforce_command_check_runs_before_filesystem_check() -> None:

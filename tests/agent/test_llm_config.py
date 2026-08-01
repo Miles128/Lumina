@@ -37,4 +37,4 @@ def test_load_hermes_prefers_env_over_masked_yaml(tmp_path: Path, monkeypatch) -
     assert config is not None
     assert config.api_key.startswith("sk-")
     assert "..." not in config.api_key
-    assert config.model == "deepseek-chat"
+    assert config.model == "deepseek-v4-flash"

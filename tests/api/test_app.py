@@ -14,13 +14,35 @@ def test_health_endpoint() -> None:
     assert len(payload) >= 7
 
 
-def test_profile_endpoint() -> None:
+def test_profile_endpoint_gone() -> None:
     client = TestClient(app)
     response = client.get("/api/profile")
+    assert response.status_code == 410
+
+
+def test_background_endpoint_defaults_and_put() -> None:
+    client = TestClient(app)
+    response = client.get("/api/agent/background")
     assert response.status_code == 200
     payload = response.json()
-    assert "markdown" in payload
-    assert "sections" in payload
+    assert "think_enabled" in payload
+    assert "memory_summary_enabled" in payload
+
+    updated = client.put(
+        "/api/agent/background",
+        json={
+            "think_enabled": True,
+            "think_interval_hours": 12,
+            "memory_summary_enabled": False,
+            "memory_summary_hour": 22,
+        },
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["think_enabled"] is True
+    assert body["think_interval_hours"] == 12
+    assert body["memory_summary_enabled"] is False
+    assert body["memory_summary_hour"] == 22
 
 
 def test_chat_endpoint() -> None:

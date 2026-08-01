@@ -432,9 +432,9 @@ class ChatService:
         # Personal sync-empty must beat web routing. Questions like
         # "我微信读书最近在读什么" are local-data prompts, not web search —
         # otherwise an empty connector store falls through to web_agent.
-        view = self._profile_service.get_view()
         hits = self._store.search(cleaned, limit=5)
-        profile_excerpt = view.markdown[:800]
+        memory_markdown = self._memory.read_memory_md()
+        profile_excerpt = memory_markdown[:800]
         from secretary.agent.sync_routing import resolve_sync_empty_reply
 
         sync_empty = resolve_sync_empty_reply(
@@ -470,7 +470,7 @@ class ChatService:
             return self._run_web_agent_turn(
                 cleaned,
                 web_plan,
-                view.markdown,
+                memory_markdown,
                 hits,
                 llm_config,
                 profile_excerpt,
@@ -498,7 +498,7 @@ class ChatService:
 
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
-            fallback = self._fallback_reply(cleaned, view.markdown, hits)
+            fallback = self._fallback_reply(cleaned, memory_markdown, hits)
             self._append_history(cleaned, fallback)
             self._save_to_session("user", cleaned)
             self._save_to_session("assistant", fallback)
@@ -521,7 +521,7 @@ class ChatService:
             else:
                 direct = self._run_direct(
                     cleaned,
-                    view.markdown,
+                    memory_markdown,
                     hits,
                     llm_config,
                     profile_excerpt,
@@ -542,7 +542,7 @@ class ChatService:
                     )
                     return self._run_agent(
                         cleaned,
-                        view.markdown,
+                        memory_markdown,
                         hits,
                         llm_config,
                         profile_excerpt,
@@ -558,7 +558,7 @@ class ChatService:
 
         return self._run_agent(
             cleaned,
-            view.markdown,
+            memory_markdown,
             hits,
             llm_config,
             profile_excerpt,
@@ -838,13 +838,16 @@ class ChatService:
         return self._finish_gate_reply(user_message, reply, used_llm=False)
 
     def _handle_profile_gate(self, user_message: str) -> ChatResult:
-        view = self._profile_service.get_view()
-        profile = view.markdown.strip() or "暂无个人画像。可以点击右上角「同步」导入你的数据。"
+        self._memory.migrate_user_profile_if_needed(
+            self._settings.resolved_data_dir() / "user_profile.md"
+        )
+        memory = self._memory.read_memory_md().strip()
+        reply = memory or "暂无持久记忆。可在设置 → 持久记忆 编辑 MEMORY.md，或告诉我需要记住的事实。"
         return self._finish_gate_reply(
             user_message,
-            profile,
+            reply,
             used_llm=False,
-            profile_excerpt=profile[:800],
+            profile_excerpt=reply[:800],
         )
 
     def _handle_author_gate(self, user_message: str) -> ChatResult:
@@ -862,7 +865,7 @@ class ChatService:
         )
 
     def _handle_identity_gate(self, user_message: str) -> ChatResult:
-        reply = get_identity_reply()
+        reply = get_identity_reply(self._settings.resolved_data_dir())
         self._append_history(user_message, reply)
         self._save_to_session("user", user_message)
         self._save_to_session("assistant", reply)
@@ -903,6 +906,9 @@ class ChatService:
         messages.extend(self._load_history())
         messages.append({"role": "user", "content": cleaned})
 
+        from secretary.agent.harness_config import resolve_direct_thinking
+
+        thinking, effort = resolve_direct_thinking(self._harness_config())
         try:
             stream_started = False
 
@@ -923,6 +929,8 @@ class ChatService:
                 temperature=self._temperature(),
                 timeout=120.0,
                 on_delta=on_delta if progress_callback else None,
+                thinking=thinking,  # type: ignore[arg-type]
+                reasoning_effort=effort,
             )
             if progress_callback and stream_started:
                 progress_callback(ProgressEvent(kind="reply_end", iteration=1))
@@ -1181,6 +1189,9 @@ class ChatService:
         max_steps = (
             harness.light_max_steps if light_mode else harness.max_tool_rounds
         )
+        from secretary.agent.harness_config import resolve_agent_thinking
+
+        thinking, effort = resolve_agent_thinking(harness, light_mode=light_mode)
 
         plan = AgentTurnPlan(
             messages=messages,
@@ -1189,6 +1200,9 @@ class ChatService:
             explicit_working_dir=self._turn_working_dir is not None,
             compaction_max_tokens=harness.compaction_max_tokens,
             compaction_keep_tail=harness.compaction_keep_tail,
+            thinking=thinking,
+            reasoning_effort=effort,
+            strict_tools=harness.strict_tools,
         )
 
         try:
@@ -1646,13 +1660,30 @@ class ChatService:
         soul = load_soul(self._settings.resolved_data_dir())
         skills = self._skills.prompt_block()
         exec_skills = self._exec_skills.prompt_block()
+        style = self._response_style()
+        browser_on = agent_browser_available()
 
-        # Cache the fixed prefix (soul + identity + skills + exec_skills)
-        # based on content hash to avoid rebuilding on every call.
-        cache_key = f"{soul}\x00{skills}\x00{exec_skills}"
+        # Cache the stable prefix (soul + identity + skills + fixed rules) so DeepSeek
+        # prompt-cache can hit on the leading tokens across turns.
+        cache_key = f"{soul}\x00{skills}\x00{exec_skills}\x00{style}\x00{browser_on}"
         if self._system_prompt_cache_key == cache_key and self._system_prompt_cache is not None:
             prefix = self._system_prompt_cache
         else:
+            style_rule = (
+                "- 语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
+                if style == "brief"
+                else f"- 语气档位：标准；在「{LUMINA_DEFAULT_STYLE}」基础上，先给结论，再补关键细节，避免啰嗦。\n"
+            )
+            format_rule = (
+                "- 输出格式：长回答用 ## 分段；步骤用有序列表；命令、路径、文件名、变量名用 `行内代码`；"
+                "代码块标注语言（```python / ```bash 等）；关键结论可用 > 引用块强调\n"
+            )
+            browser_rule = ""
+            if browser_on:
+                browser_rule = (
+                    "- 静态页优先 web_fetch；JS 渲染/登录/榜单等用 browser_open → browser_snapshot → "
+                    "browser_click/browser_fill；完成后 browser_close\n"
+                )
             prefix = (
                 f"{soul}\n\n"
                 f"{LUMINA_IDENTITY_SYSTEM_BLOCK}\n\n"
@@ -1660,12 +1691,58 @@ class ChatService:
                 f"{skills}\n\n"
                 "## 可执行技能\n"
                 f"{exec_skills}\n\n"
+                "## 对话规则\n"
+                "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
+                "- MEMORY.md、本地文档、本地记忆说的是用户；灵犀的风格与自我介绍以 SOUL 为准，二者不要混用\n"
+                f"- 灵犀默认说话风格：{LUMINA_DEFAULT_STYLE}；先给结论，句子短，不铺垫、不堆砌\n"
+                "- 回答里永远不要出现脏话、脏字、侮辱性表达或网络俚语（如「装逼」「扯淡」等）\n"
+                "- 向用户介绍灵犀这个产品时，技术栈仅限 Electron + HTML/CSS/JS 前端与 Python + FastAPI 后端；"
+                "不要把用户资料里的技术名词当成灵犀的技术栈；"
+                "不要声称使用阿里云百炼、Apple Silicon 等与本产品无关的技术\n"
+                "- 站在用户角度，先解决问题\n"
+                "- 没有本地记忆时也要正常回答，可以给出通用建议\n"
+                "- 涉及用户个人信息时，只使用 MEMORY.md 和检索记忆里的内容；没有就说明\n"
+                "- 不要编造用户的经历、偏好或读过的书\n"
+                "- 工具优先：涉及本地文件、目录、代码时，先调用 list_dir / file_read / search_files，再回答；"
+                "禁止猜测路径或正文\n"
+                "- Evidence-first：最终回答只引用本轮工具结果里出现的路径/文件名；"
+                "声称文件内容时引用 read 返回的原文片段；未读到的不要说「有」或「内容是…」；找不到就明确说未找到\n"
+                "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
+                "- 禁止在回复正文里贴 bash/pytest/npm/git/mdls 等命令及其输出，除非该命令确实通过 "
+                "shell 工具执行过；未通过 shell 工具执行的命令不得描述为「已执行/已运行/已通过/输出是…」；"
+                "shell 工具返回结果开头会带 `[receipt:<id>]`，凡在回复里声称执行过命令或引用命令输出，"
+                "必须在该句末标注 `[receipt:<id>]` 引用真实 receipt；禁止伪造 `$ cmd\\noutput`、"
+                "`===== N failed =====`、`exit code: N` 等会话输出\n"
+                "- MEMORY.md 与检索命中不等于真实文件内容，不能当作文本引用\n"
+                "- 需要执行操作时，使用 tool-call 调用工具\n"
+                "- 实时信息（天气、新闻、股价、汇率、榜单等）必须先 web_search；"
+                "摘要不够时用 web_fetch 打开一手页面，可换关键词多搜几次；"
+                "禁止只给链接让用户自己去看；不要说「无法联网」\n"
+                f"{browser_rule}"
+                "- 读取文件和浏览目录可以直接执行，不需要确认；禁止对用户说「读权限有限」「只能看目录结构」\n"
+                "- 回答「有哪些项目/文件夹」时，list_dir 返回的 📁/📄 名称即可，不必先读每个文件内容；"
+                "需要内容时用 file_read，按关键词用 search_files\n"
+                "- 新建文件可在「本次授权」后免重复确认；修改或删除文件每次都要确认\n"
+                "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
+                "- 不要分析用户情绪，直接回应具体问题\n"
+                f"{style_rule}"
+                f"{format_rule}"
+                "- 用户在本轮明确提供的个人信息，请用 memory 工具写入 MEMORY.md（target=memory）；"
+                "后台也会整理稳定事实进 MEMORY.md\n"
+                "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
+                "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
+                "可用 goals 数组并行最多 3 个 explore；"
+                "子任务只回摘要，关键结论需你自行整合后再回复用户"
             )
+            if browser_on:
+                prefix += f"\n\n{BROWSER_TOOL_GUIDANCE}"
             self._system_prompt_cache = prefix
             self._system_prompt_cache_key = cache_key
 
         memory_block = self._format_memory_block(hits)
-        profile_block = profile_markdown.strip() or "暂无个人画像。用户尚未同步数据源。"
+        durable_block = profile_markdown.strip() or self._memory.read_memory_md().strip()
+        if not durable_block:
+            durable_block = "暂无持久记忆（MEMORY.md 为空）。"
 
         notes_path = self._settings.resolved_data_dir() / "NOTES.md"
         notes_block = ""
@@ -1674,14 +1751,10 @@ class ChatService:
             if notes_text:
                 notes_block = f"\n\n## 持久笔记（跨会话保留，可用 notes 工具更新）\n{notes_text[:4000]}"
 
-        memory_snapshot = self._memory.prompt_snapshot()
-        memory_section = ""
-        if memory_snapshot:
-            memory_section = f"\n\n## Persistent Memory\n{memory_snapshot}"
         shibei_section = ""
         if self._shibei_service is not None and self._shibei_service.is_enabled():
-            view = self._shibei_service.status_view()
-            folders = "、".join(view.get("sources") or []) or "（未配置）"
+            shibei_view = self._shibei_service.status_view()
+            folders = "、".join(shibei_view.get("sources") or []) or "（未配置）"
             shibei_section = (
                 "\n\n## Shibei 知识库（读取记忆的主路径）\n"
                 "每轮用户消息会**自动**做答前召回（见「Shibei 答前召回」）；"
@@ -1692,78 +1765,23 @@ class ChatService:
                 "- search_memory 仅查 Lumina 连接器同步库，作为 Shibei 的备选\n"
                 "- 不要编造未出现在答前召回 / shibei_search / search_memory 结果中的文档内容\n"
             )
-        style_rule = (
-            "- 语气档位：简短。先给结论，优先 1-3 句；只有必要时再补一句。\n"
-            if self._response_style() == "brief"
-            else f"- 语气档位：标准；在「{LUMINA_DEFAULT_STYLE}」基础上，先给结论，再补关键细节，避免啰嗦。\n"
-        )
-        format_rule = (
-            "- 输出格式：长回答用 ## 分段；步骤用有序列表；命令、路径、文件名、变量名用 `行内代码`；"
-            "代码块标注语言（```python / ```bash 等）；关键结论可用 > 引用块强调\n"
-        )
-        browser_rule = ""
-        if agent_browser_available():
-            browser_rule = (
-                "- 静态页优先 web_fetch；JS 渲染/登录/榜单等用 browser_open → browser_snapshot → "
-                "browser_click/browser_fill；完成后 browser_close\n"
-            )
 
         reflections_block = self._build_reflections_block(user_message)
         shibei_context_block = self._build_shibei_context_block(user_message)
         workspace_block = self._build_workspace_block()
 
-        return prefix + (
+        # Per-turn / volatile blocks trail the stable prefix for prompt-cache hits.
+        return (
+            f"{prefix}\n\n"
             f"{workspace_block}"
-            "## 关于用户的资料（用户画像与本地文档，描述用户本人，不是灵犀）\n"
-            f"{profile_block[:6000]}\n\n"
-            "## 关于用户的本地记忆（用户经历与资料，不是灵犀的属性）\n"
-            f"{memory_block}\n"
-            f"{memory_section}"
+            "## Durable Memory（MEMORY.md：用户与环境/项目事实，不是灵犀身份）\n"
+            f"{durable_block[:6000]}\n\n"
+            "## 关于用户的本地记忆检索（用户经历与资料，不是灵犀的属性）\n"
+            f"{memory_block}"
             f"{shibei_section}"
-            f"{shibei_context_block}"
             f"{notes_block}\n\n"
+            f"{shibei_context_block}"
             f"{reflections_block}"
-            "## 对话规则\n"
-            "- 你是灵犀，用第二人称「你」跟用户说话；绝不用「用户」写第三方案情分析\n"
-            "- 用户画像、本地文档、本地记忆说的是用户；灵犀的风格、技术栈、自我介绍只说灵犀自己的，二者不要混用\n"
-            f"- 灵犀默认说话风格：{LUMINA_DEFAULT_STYLE}；先给结论，句子短，不铺垫、不堆砌\n"
-            "- 回答里永远不要出现脏话、脏字、侮辱性表达或网络俚语（如「装逼」「扯淡」等）\n"
-            "- 向用户介绍灵犀这个产品时，技术栈仅限 Electron + HTML/CSS/JS 前端与 Python + FastAPI 后端；"
-            "不要把用户资料里的技术名词当成灵犀的技术栈；"
-            "不要声称使用阿里云百炼、Apple Silicon 等与本产品无关的技术\n"
-            "- 站在用户角度，先解决问题\n"
-            "- 没有本地记忆时也要正常回答，可以给出通用建议\n"
-            "- 涉及用户个人信息时，只使用画像和记忆里的内容；没有就说明\n"
-            "- 不要编造用户的经历、偏好或读过的书\n"
-            "- 涉及本地文件、目录、代码内容时：必须先调用 list_dir / file_read / search_files 查证；"
-            "未读到的不要说「有」或「内容是…」；找不到就明确说未找到\n"
-            "- 禁止在回复里伪造 `$ ls`、目录树（├──）或假装已列目录；只复述工具返回的内容\n"
-            "- 禁止在回复正文里贴 bash/pytest/npm/git/mdls 等命令及其输出，除非该命令确实通过 "
-            "shell 工具执行过；未通过 shell 工具执行的命令不得描述为「已执行/已运行/已通过/输出是…」；"
-            "shell 工具返回结果开头会带 `[receipt:<id>]`，凡在回复里声称执行过命令或引用命令输出，"
-            "必须在该句末标注 `[receipt:<id>]` 引用真实 receipt；禁止伪造 `$ cmd\\noutput`、"
-            "`===== N failed =====`、`exit code: N` 等会话输出\n"
-            "- 记忆和画像里的片段不等于真实文件内容，不能当作文本引用\n"
-            "- 需要执行操作时，使用 tool-call 调用工具\n"
-            "- 实时信息（天气、新闻、股价、汇率、榜单等）必须先 web_search；"
-            "摘要不够时用 web_fetch 打开一手页面，可换关键词多搜几次；"
-            "禁止只给链接让用户自己去看；不要说「无法联网」\n"
-            f"{browser_rule}"
-            "- 读文件和浏览目录可以直接执行，不需要确认；禁止对用户说「读权限有限」「只能看目录结构」\n"
-            "- 回答「有哪些项目/文件夹」时，list_dir 返回的 📁/📄 名称即可，不必先读每个文件内容；"
-            "需要内容时用 file_read，按关键词用 search_files\n"
-            "- 新建文件可在「本次授权」后免重复确认；修改或删除文件每次都要确认\n"
-            "- 用户纠正你、追问上文时，先读对话历史再回答，不要说「未明确指定」\n"
-            "- 不要分析用户情绪，直接回应具体问题\n"
-            f"{style_rule}"
-            f"{format_rule}"
-            "- 用户在本轮明确提供的个人信息，会在后台自动写入用户画像（profile），无需手动调用 memory 工具\n"
-            "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
-            "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
-            "可用 goals 数组并行最多 3 个 explore；"
-            "子任务只回摘要，关键结论需你自行整合后再回复用户"
-        ) + (
-            f"\n\n{BROWSER_TOOL_GUIDANCE}" if agent_browser_available() else ""
         )
 
     def _response_style(self) -> str:
@@ -1792,7 +1810,12 @@ class ChatService:
         *,
         llm_configured: bool = False,
     ) -> str:
-        personal_query = "画像" in message or "我是谁" in message or "个人" in message
+        personal_query = (
+            "画像" in message
+            or "我是谁" in message
+            or "个人" in message
+            or "记忆" in message
+        )
         if personal_query and profile_markdown.strip():
             return profile_markdown
         if hits:
@@ -1819,7 +1842,7 @@ class ChatService:
             "还没配置大模型 API。请在设置里填写密钥，或在 `~/.lumina/agent.json` 中配置；"
             "也可在项目目录创建 `.env`：\n\n"
             "```\nLLM_API_KEY=你的KEY\nLLM_BASE_URL=https://api.deepseek.com\n"
-            "LLM_MODEL=deepseek-chat\n```\n\n"
+            "LLM_MODEL=deepseek-v4-flash\n```\n\n"
             f"你刚才说：{message}\n\n"
             "配置好模型后我就能正常聊天了。想让我了解你的真实情况，可以点右上角「同步」。"
         )

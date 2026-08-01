@@ -13,12 +13,14 @@ from typing import Any, Literal
 
 import httpx
 
-from secretary.agent.llm_config import LlmConfig
+from secretary.agent.llm_config import LlmConfig, deepseek_beta_base_url, model_supports_thinking
 from secretary.exceptions import AgentError
 
 logger = logging.getLogger(__name__)
 
 Role = Literal["system", "user", "assistant", "tool"]
+ThinkingState = Literal["enabled", "disabled"]
+ReasoningEffort = Literal["low", "high", "max"]
 
 _MAX_RETRIES = 3
 _BASE_BACKOFF_SECONDS = 1.0
@@ -58,6 +60,8 @@ class LlmUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0
+    prompt_cache_miss_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,8 @@ class _UsageScope:
             self._parent.prompt_tokens += self._usage.prompt_tokens
             self._parent.completion_tokens += self._usage.completion_tokens
             self._parent.total_tokens += self._usage.total_tokens
+            self._parent.prompt_cache_hit_tokens += self._usage.prompt_cache_hit_tokens
+            self._parent.prompt_cache_miss_tokens += self._usage.prompt_cache_miss_tokens
             self._parent = None
 
 
@@ -119,6 +125,45 @@ def llm_usage_scope() -> _UsageScope:
     return _UsageScope()
 
 
+def apply_thinking_to_payload(
+    payload: dict[str, Any],
+    *,
+    model: str,
+    thinking: ThinkingState | None,
+    reasoning_effort: ReasoningEffort | str | None = None,
+) -> None:
+    """Mutate payload with DeepSeek thinking controls when supported."""
+    if thinking is None or not model_supports_thinking(model):
+        return
+    if thinking == "disabled":
+        payload["thinking"] = {"type": "disabled"}
+        return
+    payload["thinking"] = {"type": "enabled"}
+    if reasoning_effort in {"low", "high", "max"}:
+        payload["reasoning_effort"] = reasoning_effort
+
+
+def _with_strict_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    marked: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            marked.append(tool)
+            continue
+        fn = tool.get("function")
+        if not isinstance(fn, dict):
+            marked.append(tool)
+            continue
+        new_fn = dict(fn)
+        new_fn["strict"] = True
+        params = new_fn.get("parameters")
+        if isinstance(params, dict):
+            params = dict(params)
+            params.setdefault("additionalProperties", False)
+            new_fn["parameters"] = params
+        marked.append({"type": "function", "function": new_fn})
+    return marked
+
+
 def chat_completion(
     config: LlmConfig,
     messages: list[dict[str, str]],
@@ -126,6 +171,8 @@ def chat_completion(
     timeout: float = 120.0,
     temperature: float = 0.7,
     on_delta: Callable[[str], None] | None = None,
+    thinking: ThinkingState | None = "disabled",
+    reasoning_effort: ReasoningEffort | str | None = None,
 ) -> str:
     if on_delta is None:
         return _chat_completion_once(
@@ -133,6 +180,8 @@ def chat_completion(
             messages,
             timeout=timeout,
             temperature=temperature,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
         )
     return chat_completion_stream(
         config,
@@ -140,6 +189,8 @@ def chat_completion(
         on_delta=on_delta,
         timeout=timeout,
         temperature=temperature,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -150,14 +201,22 @@ def chat_completion_stream(
     on_delta: Callable[[str], None],
     timeout: float = 120.0,
     temperature: float = 0.7,
+    thinking: ThinkingState | None = "disabled",
+    reasoning_effort: ReasoningEffort | str | None = None,
 ) -> str:
     url = f"{config.base_url.rstrip('/')}/chat/completions"
-    payload = {
+    payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "temperature": temperature,
         "stream": True,
     }
+    apply_thinking_to_payload(
+        payload,
+        model=config.model,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+    )
     last_error: str | None = None
     with _build_http_client(timeout) as client:
         for attempt in range(1, _MAX_RETRIES + 1):
@@ -250,16 +309,29 @@ def chat_completion_with_tools(
     tool_choice: str | dict[str, Any] = "auto",
     timeout: float = 120.0,
     temperature: float = 0.7,
+    thinking: ThinkingState | None = "enabled",
+    reasoning_effort: ReasoningEffort | str | None = "high",
+    strict_tools: bool = False,
 ) -> ChatCompletionResult:
     """Call /chat/completions with OpenAI-style function tools."""
-    url = f"{config.base_url.rstrip('/')}/chat/completions"
+    base = config.base_url.rstrip("/")
+    if strict_tools and model_supports_thinking(config.model):
+        base = deepseek_beta_base_url(config.base_url).rstrip("/")
+    url = f"{base}/chat/completions"
+    active_tools = _with_strict_tools(tools) if strict_tools else tools
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "temperature": temperature,
-        "tools": tools,
+        "tools": active_tools,
         "tool_choice": tool_choice,
     }
+    apply_thinking_to_payload(
+        payload,
+        model=config.model,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+    )
     last_error: str | None = None
     with _build_http_client(timeout) as client:
         for attempt in range(1, _MAX_RETRIES + 1):
@@ -404,13 +476,21 @@ def _chat_completion_once(
     *,
     timeout: float,
     temperature: float,
+    thinking: ThinkingState | None = "disabled",
+    reasoning_effort: ReasoningEffort | str | None = None,
 ) -> str:
     url = f"{config.base_url.rstrip('/')}/chat/completions"
-    payload = {
+    payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "temperature": temperature,
     }
+    apply_thinking_to_payload(
+        payload,
+        model=config.model,
+        thinking=thinking,
+        reasoning_effort=reasoning_effort,
+    )
     last_error: str | None = None
     with _build_http_client(timeout) as client:
         for attempt in range(1, _MAX_RETRIES + 1):
@@ -527,6 +607,8 @@ def _record_usage(usage_payload: object) -> None:
     tracker.prompt_tokens += prompt
     tracker.completion_tokens += completion
     tracker.total_tokens += total
+    tracker.prompt_cache_hit_tokens += _to_int(usage_payload.get("prompt_cache_hit_tokens"))
+    tracker.prompt_cache_miss_tokens += _to_int(usage_payload.get("prompt_cache_miss_tokens"))
 
 
 def _to_int(value: object) -> int:

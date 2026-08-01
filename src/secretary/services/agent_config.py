@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from secretary.agent.harness_config import HarnessConfig
 from secretary.agent.llm_config import (
+    DEFAULT_MODEL,
     LlmConfig,
     is_placeholder_api_key,
     load_hermes_llm_config,
@@ -24,7 +25,7 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     "deepseek": {
         "label": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
     },
     "openrouter": {
         "label": "OpenRouter",
@@ -43,12 +44,102 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 
+# Curated model + base_url pairs for the settings UI dropdown.
+MODEL_PRESETS: list[dict[str, str]] = [
+    {
+        "id": "deepseek-v4-flash",
+        "label": "DeepSeek V4 Flash",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-v4-flash",
+    },
+    {
+        "id": "deepseek-v4-pro",
+        "label": "DeepSeek V4 Pro",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-v4-pro",
+    },
+    {
+        "id": "openai-gpt-4o-mini",
+        "label": "OpenAI GPT-4o mini",
+        "provider": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+    {
+        "id": "openai-gpt-4o",
+        "label": "OpenAI GPT-4o",
+        "provider": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+    },
+    {
+        "id": "openai-gpt-4.1",
+        "label": "OpenAI GPT-4.1",
+        "provider": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4.1",
+    },
+    {
+        "id": "openai-gpt-4.1-mini",
+        "label": "OpenAI GPT-4.1 mini",
+        "provider": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4.1-mini",
+    },
+    {
+        "id": "openrouter-claude-sonnet",
+        "label": "Claude Sonnet 4 (OpenRouter)",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "anthropic/claude-sonnet-4",
+    },
+    {
+        "id": "openrouter-claude-opus",
+        "label": "Claude Opus 4 (OpenRouter)",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "anthropic/claude-opus-4",
+    },
+    {
+        "id": "openrouter-gemini-flash",
+        "label": "Gemini 2.5 Flash (OpenRouter)",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "google/gemini-2.5-flash",
+    },
+    {
+        "id": "openrouter-gemini-pro",
+        "label": "Gemini 2.5 Pro (OpenRouter)",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "google/gemini-2.5-pro",
+    },
+    {
+        "id": "openrouter-deepseek-flash",
+        "label": "DeepSeek V4 Flash (OpenRouter)",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "deepseek/deepseek-v4-flash",
+    },
+]
+
+
+class BackgroundConfig(BaseModel):
+    """Periodic background think + daily MEMORY.md summarization."""
+
+    think_enabled: bool = True
+    think_interval_hours: int = Field(default=6, ge=1, le=168)
+    memory_summary_enabled: bool = True
+    memory_summary_hour: int = Field(default=23, ge=0, le=23)
+
 
 class AgentConfigDocument(BaseModel):
     provider: str = "deepseek"
     api_key: str = ""
     base_url: str = "https://api.deepseek.com/v1"
-    model: str = "deepseek-chat"
+    model: str = DEFAULT_MODEL
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_history_turns: int = Field(default=16, ge=2, le=64)
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
@@ -56,6 +147,7 @@ class AgentConfigDocument(BaseModel):
     shell_working_dir: str = ""
     hooks: dict[str, Any] = Field(default_factory=dict)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    background: BackgroundConfig = Field(default_factory=BackgroundConfig)
 
 
 @dataclass(frozen=True)
@@ -106,6 +198,11 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
                 harness_merged.update(value)
                 merged["harness"] = harness_merged
                 continue
+            if key == "background" and isinstance(value, dict):
+                background_merged = dict(merged.get("background") or {})
+                background_merged.update(value)
+                merged["background"] = background_merged
+                continue
             merged[key] = value
         if payload.get("provider") and payload["provider"] != current.provider:
             preset = PROVIDER_PRESETS.get(str(payload["provider"]))
@@ -139,6 +236,7 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
             max_history_turns=current.max_history_turns,
             response_style=current.response_style,
             harness=current.harness,
+            background=current.background,
             hooks=current.hooks,
             agent_profile=current.agent_profile,
             shell_working_dir=current.shell_working_dir,
@@ -184,6 +282,26 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
         )
 
 
+def resolve_background_config(
+    settings: Settings,
+    store: AgentConfigStore,
+) -> BackgroundConfig:
+    """Effective background flags.
+
+    If agent.json already has a ``background`` key (user saved in UI), that wins.
+    Otherwise fall back to Settings / env (defaults now True).
+    """
+    raw = store._read_json_or_none()
+    if isinstance(raw, dict) and "background" in raw:
+        return store.load().background
+    return BackgroundConfig(
+        think_enabled=settings.think_enabled,
+        think_interval_hours=settings.think_interval_hours,
+        memory_summary_enabled=settings.memory_summary_enabled,
+        memory_summary_hour=settings.memory_summary_hour,
+    )
+
+
 def resolve_effective_llm_config(
     settings: Settings,
     store: AgentConfigStore,
@@ -193,14 +311,14 @@ def resolve_effective_llm_config(
         return LlmConfig(
             api_key=document.api_key.strip(),
             base_url=_normalize_base_url(document.base_url),
-            model=normalize_model_name(document.model.strip() or "deepseek-chat"),
+            model=normalize_model_name(document.model.strip() or DEFAULT_MODEL),
             source="local",
         )
     if settings.llm_api_key.strip() and not is_placeholder_api_key(settings.llm_api_key):
         return LlmConfig(
             api_key=settings.llm_api_key.strip(),
             base_url=_normalize_base_url(settings.llm_base_url),
-            model=normalize_model_name(settings.llm_model.strip() or "deepseek-chat"),
+            model=normalize_model_name(settings.llm_model.strip() or DEFAULT_MODEL),
             source="env",
         )
     return None

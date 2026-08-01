@@ -145,6 +145,13 @@ class BackgroundTasksResponse(BaseModel):
     last_summary: str
 
 
+class BackgroundTasksUpdateRequest(BaseModel):
+    think_enabled: bool | None = None
+    think_interval_hours: int | None = Field(default=None, ge=1, le=168)
+    memory_summary_enabled: bool | None = None
+    memory_summary_hour: int | None = Field(default=None, ge=0, le=23)
+
+
 class PlatformFieldResponse(BaseModel):
     key: str
     label: str
@@ -232,6 +239,9 @@ class HarnessConfigSchema(BaseModel):
     trace_retention: str = Field(default="full", pattern="^(full|summary|off)$")
     trace_retain_days: int = Field(default=30, ge=0, le=365)
     max_tool_output_chars: int = Field(default=12_000, ge=500, le=100_000)
+    thinking_mode: str = Field(default="auto", pattern="^(auto|enabled|disabled)$")
+    reasoning_effort: str = Field(default="high", pattern="^(low|high|max)$")
+    strict_tools: bool = False
 
 
 class AgentConfigResponse(BaseModel):
@@ -248,6 +258,7 @@ class AgentConfigResponse(BaseModel):
     status_message: str
     active_source: str
     providers: list[dict[str, str]]
+    models: list[dict[str, str]] = Field(default_factory=list)
     harness: HarnessConfigSchema = Field(default_factory=HarnessConfigSchema)
 
 

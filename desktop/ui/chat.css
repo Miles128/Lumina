@@ -697,21 +697,48 @@ html, body {
 }
 
 .turn-efficiency-metrics {
-  margin: 6px 12px 0;
+  flex-basis: 100%;
+  margin: 2px 0 0;
   font-size: 11px;
   color: var(--text-tertiary);
   letter-spacing: 0.01em;
 }
 
 .turn-trace-actions {
-  display: flex;
-  gap: 8px;
-  margin: 4px 12px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
 }
 
-.turn-trace-actions .ghost.small {
-  font-size: 11px;
-  padding: 2px 8px;
+.trace-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius);
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.trace-action-btn:hover {
+  background: var(--control-hover);
+  color: var(--text-secondary);
+}
+
+.trace-action-btn:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: 1px;
+}
+
+.trace-action-icon {
+  flex-shrink: 0;
+  color: inherit;
 }
 
 .settings-table {
@@ -742,6 +769,10 @@ html, body {
 }
 
 .agent-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 2px;
   margin-top: 6px;
   max-width: calc(100% - var(--chat-user-column-reserve));
   border: none;
@@ -790,6 +821,8 @@ html, body {
 }
 
 .agent-progress-body {
+  flex-basis: 100%;
+  width: 100%;
   margin-top: 4px;
   border-left: 1px solid var(--line);
   padding-left: 10px;

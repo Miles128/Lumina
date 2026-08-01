@@ -13,7 +13,7 @@ from secretary.agent.llm_config import resolve_llm_config
 from secretary.config import Settings
 from secretary.exceptions import AgentError
 from secretary.memory.lumina_memory import LuminaMemory
-from secretary.services.agent_config import AgentConfigStore
+from secretary.services.agent_config import AgentConfigStore, resolve_background_config
 from secretary.services.background_review import re_search_json_fence
 from secretary.services.profile_service import ProfileService
 
@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 
 _STATE_FILE = "think_state.json"
 
-_THINK_SYSTEM = """你是灵犀的后台思考模块。根据记忆、用户画像和最近对话，提炼值得长期保留的信息。
+_THINK_SYSTEM = """你是灵犀的后台思考模块。根据 MEMORY.md 与最近对话，提炼值得长期保留的信息。
 只输出 JSON：
 {"insights":["..."], "updates":[{"action":"none"|"add"|"replace","target":"memory","text":"","old_text":""}]}
 规则：
-- target 只能是 "memory"；用户个人信息由系统自动写入用户画像，不要写入 MEMORY.md
+- target 只能是 "memory"；用户个人事实与环境/项目事实都写入 MEMORY.md
 - 只记录稳定、可复用的事实，不要猜测
 - 没有值得更新的内容时 updates 为空数组
 - 不确定时 action=none
@@ -73,7 +73,8 @@ class ScheduledThinkService:
         self._state_path = settings.resolved_data_dir() / _STATE_FILE
 
     def should_run(self) -> bool:
-        if not self._settings.think_enabled:
+        bg = resolve_background_config(self._settings, self._agent_config_store)
+        if not bg.think_enabled:
             return False
         last = self._load_state().get("last_run_at", "")
         if not last:
@@ -83,14 +84,13 @@ class ScheduledThinkService:
         except ValueError:
             return True
         elapsed_hours = (datetime.now(UTC) - last_dt.replace(tzinfo=UTC)).total_seconds() / 3600
-        return elapsed_hours >= max(self._settings.think_interval_hours, 1)
+        return elapsed_hours >= max(bg.think_interval_hours, 1)
 
     def run(self) -> str:
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
             raise AgentError("未配置大模型，无法进行后台思考")
 
-        profile = self._profile_service.get_view().markdown[:1200]
         recent = self._memory.recent_session_messages(limit=30)
         recent_text = "\n".join(
             f"[{item['role']}] {item['content'][:200]}"
@@ -98,16 +98,17 @@ class ScheduledThinkService:
         ) or "(no recent messages)"
 
         memory = self._resolve_memory_snapshot(recent_text)
-        if not profile.strip() and not memory.strip():
+        durable = self._memory.read_memory_md()
+        if not durable.strip() and not memory.strip():
             from secretary.memory.db import MemoryStore
 
             store = MemoryStore(self._settings.resolved_data_dir() / "memory.db")
-            if sum(store.count_by_source().values()) == 0:
-                logger.info("think skipped: no synced profile or memory yet")
-                self._save_state("## 后台思考\n\n- 跳过：尚无同步数据，请先同步。")
+            if sum(store.count_by_source().values()) == 0 and not recent:
+                logger.info("think skipped: no durable memory or recent chat yet")
+                self._save_state("## 后台思考\n\n- 跳过：尚无记忆或对话。")
                 return "skipped: no synced data"
 
-        memory = memory or "(empty)"
+        memory = memory or durable or "(empty)"
 
         raw = chat_completion(
             llm_config,
@@ -116,7 +117,8 @@ class ScheduledThinkService:
                 {
                     "role": "user",
                     "content": (
-                        f"Profile:\n{profile}\n\nMemory:\n{memory}\n\nRecent:\n{recent_text}"
+                        f"MEMORY.md:\n{durable or '(empty)'}\n\n"
+                        f"Related:\n{memory}\n\nRecent:\n{recent_text}"
                     ),
                 },
             ],
@@ -178,8 +180,9 @@ class ScheduledThinkService:
                 if action == "none":
                     continue
                 target = str(item.get("target", "memory")).strip().lower()
-                # USER.md 已退役；target=user 跳过（用户事实由画像自动记录）
-                if target not in {"memory"}:
+                if target == "user":
+                    target = "memory"
+                if target != "memory":
                     continue
                 self._memory.mutate_memory(
                     action,

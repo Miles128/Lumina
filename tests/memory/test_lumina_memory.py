@@ -97,6 +97,23 @@ def test_import_from_hermes_no_files(tmp_path: Path, monkeypatch) -> None:
     assert memory.import_from_hermes() == {}
 
 
+def test_migrate_user_profile_into_memory_md_once(tmp_path: Path) -> None:
+    data_dir = tmp_path / "lumina"
+    data_dir.mkdir()
+    profile = data_dir / "user_profile.md"
+    profile.write_text("Name: Alex\nLikes Python\n", encoding="utf-8")
+    memory = LuminaMemory(data_dir)
+    memory.write_memory_md("- env: macOS")
+    assert memory.migrate_user_profile_if_needed(profile) is True
+    content = memory.read_memory_md()
+    assert "macOS" in content
+    assert "Migrated from user profile" in content
+    assert "Name: Alex" in content
+    assert not profile.exists()
+    assert (data_dir / "user_profile.md.retired").exists()
+    assert memory.migrate_user_profile_if_needed(profile) is False
+
+
 def test_prompt_snapshot_only_returns_memory_md(tmp_path: Path) -> None:
     """USER.md 退役后，prompt_snapshot 只返回 ## Durable Memory 段。"""
     memory = LuminaMemory(tmp_path)

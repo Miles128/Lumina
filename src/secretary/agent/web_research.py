@@ -16,9 +16,12 @@ WEB_RESEARCH_APPENDIX = """\
 ## 引用格式（重要）
 
 - 回复中引用来源时，**用脚注编号**（如 `[^1]`、`[^2]`），**不要**在正文里贴完整 URL。
-- 在回复末尾用脚注列出来源，每条一行，格式：`[^1]: 标题或域名`（不写 `https://` 前缀和长路径，只保留域名+简短路径，例如 `example.com/news/gpt5`）。
+- 在回复**末尾**用脚注逐条列出来源（不需要学术参考文献格式）。
+- 每条一行，格式：`[^1]: ![域名](https://www.google.com/s2/favicons?domain=域名&sz=16) 域名/简短路径`
+  （示例：`[^1]: ![github.com](https://www.google.com/s2/favicons?domain=github.com&sz=16) github.com/trending`）
+- 不写 `https://` 前缀；路径只保留简短一段，可附标题。
 - 正文提及来源时写 `根据[^1]` 或在句尾标 `[^1]`，不要写「详见 https://...」。
-- 禁止把完整 URL 作为正文的一部分；URL 只能出现在末尾脚注里且必须是简短形式。"""
+- 禁止把完整 URL 作为正文的一部分；链接信息只能出现在末尾脚注里且必须是简短形式。"""
 
 BROWSER_TOOL_GUIDANCE = """\
 ## 浏览器工具（agent-browser，与 web_fetch 分工）

@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     auto_sync_enabled: bool = Field(default=True, alias="SECRETARY_AUTO_SYNC_ENABLED")
     briefing_enabled: bool = Field(default=False, alias="SECRETARY_BRIEFING_ENABLED")
     briefing_hour: int = Field(default=8, alias="SECRETARY_BRIEFING_HOUR")
-    think_enabled: bool = Field(default=False, alias="SECRETARY_THINK_ENABLED")
+    think_enabled: bool = Field(default=True, alias="SECRETARY_THINK_ENABLED")
     think_interval_hours: int = Field(default=6, alias="SECRETARY_THINK_INTERVAL_HOURS")
-    memory_summary_enabled: bool = Field(default=False, alias="SECRETARY_MEMORY_SUMMARY_ENABLED")
+    memory_summary_enabled: bool = Field(default=True, alias="SECRETARY_MEMORY_SUMMARY_ENABLED")
     memory_summary_hour: int = Field(default=23, alias="SECRETARY_MEMORY_SUMMARY_HOUR")
 
     email_imap_host: str = Field(default="", alias="EMAIL_IMAP_HOST")

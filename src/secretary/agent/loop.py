@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from secretary.agent.confirmation_policy import tool_requires_confirmation
 from secretary.agent.context_compaction import compact_messages_if_needed
@@ -183,6 +183,9 @@ class AgentLoop:
         explicit_working_dir: bool = False,
         compaction_max_tokens: int | None = None,
         compaction_keep_tail: int | None = None,
+        thinking: str = "enabled",
+        reasoning_effort: str | None = "high",
+        strict_tools: bool = False,
     ) -> None:
         self._llm_config = llm_config
         raw_tools = list(tools or _default_tools())
@@ -210,6 +213,9 @@ class AgentLoop:
         self._explicit_working_dir = explicit_working_dir
         self._compaction_max_tokens = compaction_max_tokens
         self._compaction_keep_tail = compaction_keep_tail
+        self._thinking = thinking
+        self._reasoning_effort = reasoning_effort
+        self._strict_tools = strict_tools
         # Cache tool schemas once from the concrete tool list (not alias index),
         # so legacy lookup aliases do not duplicate schemas sent to the model.
         self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in raw_tools]
@@ -219,6 +225,11 @@ class AgentLoop:
         # 如未来需要并发复用同一实例，应改用 threading.Lock 保护缓存写入，
         # 或在外层通过每线程独立实例来隔离状态。
         self._instruction_cache: dict[bool, str] = {}
+
+    def _resolved_thinking(self) -> Literal["enabled", "disabled"]:
+        if self._thinking == "disabled":
+            return "disabled"
+        return "enabled"
 
     def cancel(self) -> None:
         """协作式取消：设置标志，loop 在下一轮迭代开头检测并退出。"""
@@ -1086,7 +1097,11 @@ class AgentLoop:
                 current_messages.append({"role": "user", "content": summary_prompt})
                 payload = self._build_payload(current_messages, tool_schemas=[], native=False)
                 raw = chat_completion(
-                    self._llm_config, payload, temperature=temperature, timeout=180.0
+                    self._llm_config,
+                    payload,
+                    temperature=temperature,
+                    timeout=180.0,
+                    thinking="disabled",
                 )
                 thought = raw.strip()
             except Exception as exc:
@@ -1191,7 +1206,14 @@ class AgentLoop:
 
         tool_schemas = self._tool_schemas
         payload = self._build_payload(current_messages, tool_schemas)
-        raw = chat_completion(self._llm_config, payload, temperature=temperature, timeout=180.0)
+        raw = chat_completion(
+            self._llm_config,
+            payload,
+            temperature=temperature,
+            timeout=180.0,
+            thinking=self._resolved_thinking(),
+            reasoning_effort=self._reasoning_effort,
+        )
         thought, next_call = self._parse_response(raw)
 
         snapshot = LoopSnapshot(
@@ -1488,6 +1510,11 @@ class AgentLoop:
                     "required" if (force_read or force_content) else "auto"
                 )
                 try:
+                    effort = self._reasoning_effort
+                    if force_read or force_content:
+                        # Hard grounding / content-force steps: bump to max when possible.
+                        if effort in {None, "low", "high"}:
+                            effort = "max"
                     result = chat_completion_with_tools(
                         self._llm_config,
                         messages,
@@ -1495,6 +1522,9 @@ class AgentLoop:
                         tool_choice=tool_choice,
                         temperature=temperature,
                         timeout=180.0,
+                        thinking=self._resolved_thinking(),
+                        reasoning_effort=effort,
+                        strict_tools=self._strict_tools,
                     )
                     tool_calls = self._tool_calls_from_result(result)
                     return result.content, tool_calls, result.assistant_message, True
@@ -1512,6 +1542,8 @@ class AgentLoop:
             temperature=temperature,
             timeout=180.0,
             on_delta=on_delta,
+            thinking=self._resolved_thinking(),
+            reasoning_effort=self._reasoning_effort,
         )
         thought, tool_call = self._parse_response(raw)
         calls = [tool_call] if tool_call is not None else []

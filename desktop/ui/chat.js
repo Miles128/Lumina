@@ -817,19 +817,17 @@
     );
   }
 
+  function isHardGroundingFailure(note) {
+    const text = String(note || "");
+    // Only surface hard blocks (forged shell / receipt). Soft sanitize notes stay quiet.
+    return /receipt|shell|未执行|已拦截|没有实际执行/i.test(text);
+  }
+
   function groundingUnverifiedReason(response) {
     if (!response) return "";
     if (isOfflineOrSetupReply(response)) return "";
-    if (response.grounding_note) return response.grounding_note;
-    const reply = String(response.reply || "");
-    if (replySimulatesFileListing(reply) && !usesFileTools(response)) {
-      return t("chat.grounding.unverifiedSimulated");
-    }
-    if (replyMentionsPaths(reply) && !usesFileTools(response)) {
-      return t("chat.grounding.unverifiedNoTools");
-    }
-    if (response.grounding_verified === false) {
-      return t("chat.grounding.unverifiedMismatch");
+    if (response.grounding_verified === false && isHardGroundingFailure(response.grounding_note)) {
+      return response.grounding_note || t("chat.grounding.unverifiedMismatch");
     }
     return "";
   }
@@ -837,10 +835,8 @@
   function shouldShowGroundingUnverified(response) {
     if (!response) return false;
     if (isOfflineOrSetupReply(response)) return false;
-    if (response.grounding_verified === false) return true;
-    const reply = String(response.reply || "");
-    if (replySimulatesFileListing(reply) && !usesFileTools(response)) return true;
-    return replyMentionsPaths(reply) && !usesFileTools(response);
+    // Mainstream: no yellow banner for soft path heuristics — only hard shell fraud.
+    return response.grounding_verified === false && isHardGroundingFailure(response.grounding_note);
   }
 
   function appendGroundingMeta(response) {
@@ -1354,31 +1350,68 @@
     return Math.max(progressSession.bufferedItems.length, progressSession.stepCount);
   }
 
+  function traceActionIcon(kind) {
+    const common =
+      'class="trace-action-icon" width="14" height="14" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true"';
+    if (kind === "export") {
+      return (
+        `<svg ${common}>` +
+        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+        '<polyline points="7 10 12 15 17 10"/>' +
+        '<line x1="12" y1="15" x2="12" y2="3"/>' +
+        "</svg>"
+      );
+    }
+    return (
+      `<svg ${common}>` +
+      '<polyline points="23 4 23 10 17 10"/>' +
+      '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' +
+      "</svg>"
+    );
+  }
+
+  function createTraceActionButton(id, iconKind, i18nKey, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = id;
+    btn.className = "trace-action-btn";
+    btn.innerHTML = traceActionIcon(iconKind);
+    btn.setAttribute("data-i18n-title", i18nKey);
+    btn.setAttribute("data-i18n-aria", i18nKey);
+    btn.addEventListener("click", onClick);
+    return btn;
+  }
+
   function ensureTraceActions() {
     let actionsEl = document.getElementById("turn-trace-actions");
     if (!actionsEl && progressEl) {
       actionsEl = document.createElement("div");
       actionsEl.id = "turn-trace-actions";
       actionsEl.className = "turn-trace-actions";
-      const exportBtn = document.createElement("button");
-      exportBtn.type = "button";
-      exportBtn.id = "turn-trace-export";
-      exportBtn.className = "ghost small";
-      exportBtn.textContent = t("chat.progress.exportTrace");
-      exportBtn.addEventListener("click", () => {
-        void exportActiveTrace();
-      });
-      const loadBtn = document.createElement("button");
-      loadBtn.type = "button";
-      loadBtn.id = "turn-trace-reload";
-      loadBtn.className = "ghost small";
-      loadBtn.textContent = t("chat.progress.loadTrace");
-      loadBtn.addEventListener("click", () => {
-        void reloadPersistedTrace();
-      });
-      actionsEl.appendChild(exportBtn);
-      actionsEl.appendChild(loadBtn);
-      progressEl.appendChild(actionsEl);
+      actionsEl.appendChild(
+        createTraceActionButton(
+          "turn-trace-export",
+          "export",
+          "chat.progress.exportTrace",
+          () => {
+            void exportActiveTrace();
+          },
+        ),
+      );
+      actionsEl.appendChild(
+        createTraceActionButton(
+          "turn-trace-reload",
+          "reload",
+          "chat.progress.loadTrace",
+          () => {
+            void reloadPersistedTrace();
+          },
+        ),
+      );
+      progressEl.insertBefore(actionsEl, progressBodyEl);
+      window.LuminaI18n?.applyDocument(actionsEl);
     }
     if (actionsEl) {
       actionsEl.hidden = !activeTraceId;
