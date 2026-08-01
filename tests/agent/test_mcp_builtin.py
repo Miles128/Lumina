@@ -1,4 +1,4 @@
-"""Tests for builtin MCP providers (connector → MCP abstraction)."""
+"""Tests for builtin MCP registry (connector providers retired)."""
 from __future__ import annotations
 
 from secretary.agent.mcp_builtin import (
@@ -57,24 +57,7 @@ def test_registry_unknown_tool_returns_error():
     assert "error" in result
 
 
-def test_builtin_registry_includes_all_connectors():
-    """All 6 connectors must be exposed as builtin providers."""
+def test_builtin_registry_is_empty_after_connector_retirement():
     reg = build_builtin_registry(settings=None, sync_service=None)
-    names = {p.name for p in reg.list_providers()}
-    assert names == {"feishu", "email", "weread", "xiaohongshu", "weixin_oa", "cloud_drive"}
-
-
-def test_builtin_provider_tool_namespace():
-    reg = build_builtin_registry(settings=None, sync_service=None)
-    tool_names = {t.full_name for t in reg.get_tools()}
-    # each connector exposes status + fetch
-    for source in ("feishu", "email", "weread", "xiaohongshu", "weixin_oa", "cloud_drive"):
-        assert f"mcp_{source}_status" in tool_names
-        assert f"mcp_{source}_fetch" in tool_names
-
-
-def test_builtin_feishu_status_returns_configured_flag():
-    reg = build_builtin_registry(settings=None, sync_service=None)
-    result = reg.call_tool("mcp_feishu_status", {})
-    assert "configured" in result
-    assert "message" in result
+    assert reg.list_providers() == []
+    assert reg.get_tools() == []

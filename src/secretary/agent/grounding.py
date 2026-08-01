@@ -356,7 +356,7 @@ UNGROUNDED_MEMORY_FALLBACK = (
     "我无法核实你的个人记录——本轮没有调用 shibei_search / search_memory / session_search，"
     "不能把对话里助手自己说过的话当成事实。\n"
     "请说「搜索 Shibei 知识库：…」或「读取记忆：…」让我先检索；"
-    "若 Shibei 无结果，可尝试 shibei_import，或点右上角「同步」导入连接器数据（备选）。"
+    "若 Shibei 无结果，可尝试 shibei_import 或在设置中导入知识库。"
 )
 
 UNGROUNDED_COMMAND_FALLBACK = (

@@ -1,4 +1,4 @@
-"""Tests for SyncService routing through MCP builtin fetch tools."""
+"""Tests for SyncService after platform connector retirement."""
 
 from __future__ import annotations
 
@@ -6,48 +6,33 @@ from pathlib import Path
 
 import pytest
 
-from secretary.agent.mcp_builtin import build_builtin_registry
-from secretary.agent.mcp_manager import McpManager
 from secretary.config import Settings
-from secretary.core.types import SourceKind
+from secretary.core.types import ConnectorStatus, SourceKind
 from secretary.memory.db import MemoryStore
-from secretary.services.mcp_config import McpConfigStore
 from secretary.services.sync import SyncService
 
 
 @pytest.fixture
-def sync_service_with_mcp(tmp_path: Path) -> SyncService:
+def sync_service(tmp_path: Path) -> SyncService:
     settings = Settings(data_dir=tmp_path / "data")
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
-    registry = build_builtin_registry(settings=None, sync_service=None)
-    mcp_store = McpConfigStore(tmp_path / "mcp.json")
-    mcp_manager = McpManager(mcp_store, builtin_registry=registry)
-    return SyncService(settings, store, mcp_manager=mcp_manager)
+    return SyncService(settings, store)
 
 
-def test_sync_source_calls_mcp_fetch(monkeypatch, sync_service_with_mcp) -> None:
-    """sync_source(feishu) must call mcp_feishu_fetch and upsert returned chunks."""
-    calls: list[str] = []
+def test_sync_source_platform_connectors_retired(sync_service: SyncService) -> None:
+    result = sync_service.sync_source(SourceKind.FEISHU)
+    assert result.inserted == 0
+    assert result.health.status is ConnectorStatus.NOT_CONFIGURED
+    assert "连接器已移除" in result.health.message
 
-    def fake_call_tool(name, args, timeout=None):  # noqa: ANN001
-        calls.append(name)
-        if name == "mcp_feishu_fetch":
-            return {
-                "source": "feishu",
-                "count": 1,
-                "chunks": [
-                    {
-                        "chunk_id": "feishu-test-1",
-                        "source": "feishu",
-                        "title": "测试日程",
-                        "content": "测试内容",
-                        "metadata": {},
-                    }
-                ],
-            }
-        return {"error": "unknown"}
 
-    monkeypatch.setattr(sync_service_with_mcp._mcp_manager, "call_tool", fake_call_tool)
-    result = sync_service_with_mcp.sync_source(SourceKind.FEISHU)
-    assert "mcp_feishu_fetch" in calls
-    assert result.inserted >= 1
+def test_sync_all_only_local_documents(sync_service: SyncService) -> None:
+    results = sync_service.sync_all(include_browser_sources=True)
+    assert len(results) == 1
+    assert results[0].source is SourceKind.LOCAL_DOCUMENTS
+
+
+def test_get_stored_health_only_local_documents(sync_service: SyncService) -> None:
+    health = sync_service.get_stored_health()
+    assert len(health) == 1
+    assert health[0].source is SourceKind.LOCAL_DOCUMENTS

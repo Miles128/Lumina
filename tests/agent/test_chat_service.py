@@ -94,76 +94,16 @@ def test_chat_uses_llm_without_memory(tmp_path: Path) -> None:
     assert "正常聊天" in result.reply
 
 
-def test_chat_sync_gate_routes_without_llm(tmp_path: Path) -> None:
-    from secretary.memory.db import MemoryStore
-    from secretary.services.sync import SyncService
+def test_chat_service_retired_connector_gates() -> None:
+    """Chat must not route via sync_empty / SYNC connector gates."""
+    import inspect
 
-    settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
-    store = MemoryStore(settings.resolved_data_dir() / "memory.db")
-    service = ChatService(
-        settings,
-        store,
-        ProfileService(
-            settings,
-            store,
-            LocalDocumentsProfiler(settings),
-            UserProfileStore(settings.resolved_data_dir() / "user_profile.md"),
-        ),
-        SkillManager(settings.resolved_data_dir()),
-        sync_service=SyncService(settings, store),
-    )
-    with patch.object(service._sync_service, "sync_all", return_value=[]):
-        result = service.reply("帮我同步全部数据")
-    assert "同步完成" in result.reply
-    assert result.used_llm is False
+    from secretary.agent import chat_service as chat_mod
 
-
-def test_chat_sync_empty_weread_without_data(tmp_path: Path) -> None:
-    from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
-    from secretary.services.sync import SyncService
-
-    settings = Settings(
-        data_dir=tmp_path / "data",
-        prompt_gate_enabled=False,
-        llm_api_key="test-key",
-    )
-    store = MemoryStore(settings.resolved_data_dir() / "memory.db")
-    sync = SyncService(settings, store)
-    service = ChatService(
-        settings,
-        store,
-        ProfileService(
-            settings,
-            store,
-            LocalDocumentsProfiler(settings),
-            UserProfileStore(settings.resolved_data_dir() / "user_profile.md"),
-        ),
-        SkillManager(settings.resolved_data_dir()),
-        sync_service=sync,
-    )
-    with patch.object(
-        sync,
-        "get_stored_health",
-        return_value=[
-            ConnectorHealth(
-                source=SourceKind.WEREAD,
-                status=ConnectorStatus.READY,
-                message="ok",
-                item_count=0,
-            )
-        ],
-    ):
-        with patch("secretary.agent.chat_service.resolve_llm_config") as resolve:
-            resolve.return_value = LlmConfig(
-                api_key="k",
-                base_url="https://example.com/v1",
-                model="m",
-                source="env",
-            )
-            result = service.reply("我微信读书最近在读什么")
-    assert result.used_llm is False
-    assert result.route == "sync_empty"
-    assert "同步" in result.reply
+    reply_src = inspect.getsource(chat_mod.ChatService.reply)
+    assert "resolve_sync_empty_reply" not in reply_src
+    assert "GateAction.SYNC" not in reply_src
+    assert "_handle_sync_gate" not in reply_src
 
 
 def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:

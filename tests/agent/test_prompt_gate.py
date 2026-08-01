@@ -29,10 +29,9 @@ def test_rule_route_rejects_long_message() -> None:
     assert decision.action == GateAction.REJECT
 
 
-def test_rule_route_sync_keywords() -> None:
-    decision = rule_route("帮我同步全部数据")
-    assert decision is not None
-    assert decision.action == GateAction.SYNC
+def test_rule_route_sync_keywords_no_longer_special() -> None:
+    # Platform sync gate removed; sync phrases fall through to normal routing.
+    assert rule_route("帮我同步全部数据") is None
 
 
 def test_rule_route_profile_keywords() -> None:

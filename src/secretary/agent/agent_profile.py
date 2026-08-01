@@ -26,8 +26,6 @@ ASK_TOOL_NAMES = frozenset(
         "web_fetch",
         "shibei_search",
         "shibei_list_sources",
-        "list_connectors",
-        "connector_status",
         "clarify",
         "ask_user",
         "emit_card",
@@ -253,7 +251,7 @@ def profile_system_appendix(profile: AgentProfile) -> str:
         )
     return (
         "\n\n## Agent mode: Build\n"
-        "执行模式：读写、shell、code_exec、同步连接器、子 Agent 均可用；危险操作需用户确认。\n"
+        "执行模式：读写、shell、code_exec、子 Agent 均可用；危险操作需用户确认。\n"
         "计算/解析/转换/统计优先 code_exec（可读工作区，禁写工作区）；"
         "勿用 shell 的 python -c 替代；落盘用 write/edit；"
         "code_exec 非零退出则改码再跑。"

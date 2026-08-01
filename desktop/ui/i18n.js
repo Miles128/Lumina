@@ -108,7 +108,7 @@
     "settings.loading": { en: "Loading…", zh: "加载中…" },
     "settings.loadFailed": { en: "Failed to load", zh: "加载失败" },
     "settings.agent": { en: "Agent", zh: "Agent" },
-    "settings.knowledge": { en: "Knowledge & Sync", zh: "知识库与同步" },
+    "settings.knowledge": { en: "Knowledge", zh: "知识库" },
     "settings.personal": { en: "Personal", zh: "个人" },
     "settings.group.agent": { en: "Agent", zh: "Agent" },
     "settings.group.tools": { en: "Tools & Extensions", zh: "工具与扩展" },

@@ -15,7 +15,6 @@ PLAN_DENY_TOOL_NAMES = frozenset(
         "file_delete",
         "shell",
         "code_exec",
-        "sync_source",
         "shibei_import",
         "memory",
         "spawn_subagent",

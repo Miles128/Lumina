@@ -186,34 +186,6 @@ class ChatToolRegistry:
         from secretary.agent.structured_cards import EmitCardTool
 
         tools.append(self._get_or_create_tool("emit_card", EmitCardTool))
-        if self._sync_service is not None:
-            from secretary.agent.tools.connector_tools import (
-                ConnectorStatusTool,
-                ListConnectorsTool,
-                SyncSourceTool,
-            )
-
-            builtin_registry = (
-                self._mcp_manager._builtin
-                if self._mcp_manager is not None
-                else None
-            )
-            tools.extend(
-                [
-                    ListConnectorsTool(
-                        registry=builtin_registry,
-                        sync_service=self._sync_service,
-                    ),
-                    ConnectorStatusTool(
-                        registry=builtin_registry,
-                        sync_service=self._sync_service,
-                    ),
-                    SyncSourceTool(
-                        self._sync_service,
-                        mcp_manager=self._mcp_manager,
-                    ),
-                ]
-            )
         if self._mcp_manager is not None:
             tools.extend(self._mcp_manager.get_tools())
         if self._shibei_service is not None and self._shibei_service.is_enabled():

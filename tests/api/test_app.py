@@ -11,7 +11,8 @@ def test_health_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload, list)
-    assert len(payload) >= 7
+    assert len(payload) >= 1
+    assert payload[0]["source"] == "local_documents"
 
 
 def test_profile_endpoint_gone() -> None:
@@ -97,7 +98,8 @@ def test_platform_settings_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload, list)
-    assert len(payload) >= 7
+    assert len(payload) == 1
+    assert payload[0]["source"] == "local_documents"
     assert payload[0]["name"]
 
 

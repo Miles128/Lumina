@@ -106,19 +106,14 @@ def mcp_manager_with_builtin(mcp_store):
     return McpManager(mcp_store, builtin_registry=registry)
 
 
-def test_mcp_manager_exposes_builtin_tools(mcp_manager_with_builtin):
-    """McpManager.get_tools() must include builtin provider tools."""
+def test_mcp_manager_builtin_registry_empty(mcp_manager_with_builtin):
+    """Connector builtin providers retired — registry stays empty."""
     tools = mcp_manager_with_builtin.get_tools()
     names = {t.name for t in tools}
-    assert "mcp_feishu_status" in names
-    assert "mcp_feishu_fetch" in names
+    assert "mcp_feishu_status" not in names
+    assert "mcp_weread_fetch" not in names
 
 
-def test_mcp_manager_call_builtin_tool(mcp_manager_with_builtin):
-    result = mcp_manager_with_builtin.call_tool("mcp_feishu_status", {})
-    assert "configured" in result
-
-
-def test_mcp_manager_status_includes_builtin(mcp_manager_with_builtin):
+def test_mcp_manager_status_includes_empty_builtin(mcp_manager_with_builtin):
     status = mcp_manager_with_builtin.status()
-    assert status["builtin_provider_count"] >= 6
+    assert status["builtin_provider_count"] == 0

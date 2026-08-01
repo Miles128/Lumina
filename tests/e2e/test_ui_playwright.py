@@ -36,15 +36,6 @@ def test_ui_identity_reply_in_thread(page: Page) -> None:
     expect(bot).to_contain_text(re.compile(r"灵犀|Lumina"))
 
 
-def test_ui_weread_empty_shows_sync_hint(page: Page) -> None:
-    page.goto("/")
-    page.locator("#chat-input").fill("我微信读书最近在读什么")
-    page.locator("#btn-send").click()
-    bot = page.locator(".message.bot").last
-    expect(bot).to_be_visible(timeout=15_000)
-    expect(bot).to_contain_text("同步")
-
-
 def test_ui_greeting_with_mocked_llm(page: Page) -> None:
     def fulfill_chat(route, request) -> None:
         if request.method != "POST":
@@ -82,7 +73,7 @@ def test_ui_settings_shibei_pane(page: Page) -> None:
     expect(page.locator("#shibei-enabled")).to_be_visible()
 
 
-def test_ui_sync_button_triggers_api(page: Page) -> None:
+def test_ui_local_documents_sync_button_triggers_api(page: Page) -> None:
     sync_hits: list[str] = []
 
     def track_sync(route, request) -> None:
@@ -91,16 +82,15 @@ def test_ui_sync_button_triggers_api(page: Page) -> None:
         route.fulfill(
             status=200,
             content_type="application/json",
-            body='{"inserted": 0, "message": "ok"}',
+            body='{"inserted": 0, "message": "ok", "source": "local_documents", "status": "ready"}',
         )
 
     page.route("**/api/sync/**", track_sync)
     page.goto("/")
     _open_settings(page)
-    # Connectors live under Tools → MCP as builtin providers.
-    page.locator('#settings-nav [data-key="tools_mcp"]').click()
-    sync_btn = page.locator("[data-builtin-sync]").first
+    page.locator('#settings-nav [data-key="local_documents"]').click()
+    sync_btn = page.locator('[data-action="sync"]')
     expect(sync_btn).to_be_visible(timeout=10_000)
     sync_btn.click()
     page.wait_for_timeout(800)
-    assert sync_hits, "expected POST /api/sync/{source} from MCP builtin sync button"
+    assert sync_hits, "expected POST /api/sync/local_documents from knowledge pane"

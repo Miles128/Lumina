@@ -12,7 +12,6 @@ from secretary.agent.chat_service import ChatResult
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import LoopResult
 from secretary.api.app import app
-from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
 
 pytestmark = pytest.mark.e2e
 
@@ -37,7 +36,8 @@ def test_smoke_health(client: TestClient) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload, list)
-    assert len(payload) >= 7
+    assert len(payload) >= 1
+    assert payload[0]["source"] == "local_documents"
 
 
 def test_smoke_shibei_config(client: TestClient) -> None:
@@ -83,32 +83,30 @@ def test_smoke_greeting_with_mock_llm(client: TestClient, mock_llm_config: LlmCo
     assert payload.get("usage_total_tokens", 0) >= 0
 
 
-def test_smoke_weread_empty_prompts_sync(client: TestClient, mock_llm_config: LlmConfig) -> None:
-    sync = client.app.state.sync_service
-    health = [
-        ConnectorHealth(
-            source=SourceKind.WEREAD,
-            status=ConnectorStatus.READY,
-            message="ok",
-            item_count=0,
-        )
-    ]
-    shibei = client.app.state.shibei_service
-    with patch.object(sync, "get_stored_health", return_value=health):
-        with patch.object(shibei, "is_enabled", return_value=False):
-            with patch.object(shibei, "is_available", return_value=False):
-                with patch(
-                    "secretary.agent.chat_service.resolve_llm_config",
-                    return_value=mock_llm_config,
-                ):
-                    response = client.post(
-                        "/api/chat",
-                        json={"message": "我微信读书最近在读什么"},
-                    )
+def test_smoke_weread_question_not_sync_empty(
+    client: TestClient, mock_llm_config: LlmConfig
+) -> None:
+    with patch(
+        "secretary.agent.chat_service.resolve_web_search_with_llm_fallback",
+        return_value=None,
+    ):
+        with patch(
+            "secretary.agent.chat_service.resolve_llm_config",
+            return_value=mock_llm_config,
+        ):
+            with patch(
+                "secretary.agent.chat_service.chat_completion",
+                return_value="本地知识库暂无相关阅读记录。",
+            ):
+                response = client.post(
+                    "/api/chat",
+                    json={"message": "我微信读书最近在读什么"},
+                )
     assert response.status_code == 200
     payload = response.json()
-    assert payload.get("route") == "sync_empty"
-    assert "同步" in payload.get("reply", "")
+    assert payload.get("route") != "sync_empty"
+    assert "19925" not in payload.get("reply", "")
+    assert "连接器" not in payload.get("reply", "")
 
 
 def test_smoke_filesystem_agent_uses_list_dir(

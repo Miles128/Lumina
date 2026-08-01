@@ -23,7 +23,8 @@ def test_compress_skips_when_under_threshold(tmp_path: Path) -> None:
 
 def test_compress_rewrites_when_over_threshold(tmp_path: Path) -> None:
     memory = LuminaMemory(tmp_path)
-    long_text = "稳定事实。" * 400
+    # Must exceed MEMORY_MD_MAX_CHARS * compress threshold (~3400 at cap 4000).
+    long_text = "稳定事实。" * 800
     memory.write_memory_md(long_text)
     service = MemoryCompressionService(memory)
     config = LlmConfig(

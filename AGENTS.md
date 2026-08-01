@@ -2,7 +2,7 @@
 
 Local-first Agent productivity tool: harness (Turn/profiles/confirm), conversation map, memory, MCP, file access. Confirms before risky actions. Skill workflow DAG is planned (see docs/workflow-dag-design.md), not shipped.
 
-Integrations: **standard MCP or CLI only** — do not add platform-specific connectors under `src/secretary/connectors/`. Legacy SyncService/connectors are frozen.
+Integrations: **standard MCP or CLI only** — platform connectors (飞书/微信读书/邮箱等) are removed. Do not add new modules under `src/secretary/connectors/`. Personal knowledge via Shibei / MEMORY.md / user MCP.
 
 ## Quick start
 

@@ -64,75 +64,9 @@ class PlatformDefinition:
 
 PLATFORM_DEFINITIONS: tuple[PlatformDefinition, ...] = (
     PlatformDefinition(
-        source=SourceKind.FEISHU,
-        name="飞书",
-        description="同步日程、任务与飞书办公数据",
-        kind="cli",
-        setup_hint="终端执行 `lark-cli auth login` 完成用户授权",
-        fields=(),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
-        source=SourceKind.EMAIL,
-        name="邮箱",
-        description="通过 IMAP 同步邮件内容",
-        kind="form",
-        setup_hint="QQ/163/Gmail 等邮箱需开启 IMAP 并使用授权码",
-        fields=(
-            PlatformField("imap_host", "IMAP 服务器", placeholder="imap.qq.com"),
-            PlatformField("imap_port", "端口", field_type="number", placeholder="993"),
-            PlatformField("imap_user", "邮箱账号", placeholder="you@example.com"),
-            PlatformField("imap_password", "密码 / 授权码", field_type="password"),
-        ),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
-        source=SourceKind.WEREAD,
-        name="微信读书",
-        description="同步书架、划线与笔记",
-        kind="cli",
-        setup_hint="Chrome 登录微信读书，终端执行 `autocli doctor` 确认可用",
-        fields=(),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
-        source=SourceKind.XIAOHONGSHU,
-        name="小红书",
-        description="同步创作者数据与推荐 Feed",
-        kind="cli",
-        setup_hint="Chrome 登录小红书，终端执行 `autocli doctor` 确认可用",
-        fields=(),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
-        source=SourceKind.WEIXIN_OA,
-        name="微信公众号",
-        description="下载并归档公众号文章",
-        kind="form",
-        setup_hint="每行填写一篇公众号文章链接",
-        fields=(PlatformField("urls", "文章链接", field_type="textarea", placeholder="https://mp.weixin.qq.com/s/..."),),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
-        source=SourceKind.CLOUD_DRIVE,
-        name="本地网盘目录",
-        description="扫描百度网盘/阿里云盘等本地同步文件夹",
-        kind="form",
-        setup_hint="每行填写一个本地文件夹路径",
-        fields=(
-            PlatformField(
-                "paths",
-                "文件夹路径",
-                field_type="textarea",
-                placeholder="/Users/you/BaiduNetdisk",
-            ),
-        ),
-        mcp_provider=True,
-    ),
-    PlatformDefinition(
         source=SourceKind.LOCAL_DOCUMENTS,
         name="本地文档",
-        description="读取 README、简历与个人文章，仅更新人物侧写，不写入记忆索引",
+        description="读取 README、简历与个人文章，补充 MEMORY.md；个人知识以 Shibei 为主",
         kind="form",
         setup_hint=(
             f"默认扫描 {default_documents_dir()}。"

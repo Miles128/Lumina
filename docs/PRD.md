@@ -148,7 +148,7 @@
 | MCP | `mcp_{server}_{tool}` | 视工具 | **现行外部集成主路径**：stdio / SSE / Streamable HTTP |
 | CLI | `shell`（及 MCP stdio 包装的 CLI） | shell：是* | **现行外部集成主路径**；非 `spawn_cli_agent` |
 | 浏览器 | `browser_*` | 否 | 按需注入；含 **`browser_screenshot`**（`agent-browser` CLI） |
-| 遗留 Sync | `list_connectors`, `connector_status`, `sync_source` | sync：是 | **Legacy frozen**；勿再扩展平台专用 connector |
+| ~~遗留 Sync~~ | ~~`list_connectors` / `sync_source`~~ | — | **Removed**（2026-08）；个人知识走 Shibei / MEMORY.md / MCP |
 
 ### 4.2 Sub-agent 工具集（默认 `depth=1`；deep_tree 见 FR-54）
 

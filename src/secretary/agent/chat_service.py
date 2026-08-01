@@ -429,28 +429,9 @@ class ChatService:
                     grounding_verified=True,
                 )
 
-        # Personal sync-empty must beat web routing. Questions like
-        # "我微信读书最近在读什么" are local-data prompts, not web search —
-        # otherwise an empty connector store falls through to web_agent.
         hits = self._store.search(cleaned, limit=5)
         memory_markdown = self._memory.read_memory_md()
         profile_excerpt = memory_markdown[:800]
-        from secretary.agent.sync_routing import resolve_sync_empty_reply
-
-        sync_empty = resolve_sync_empty_reply(
-            cleaned,
-            self._store,
-            self._sync_service,
-            memory_hits=len(hits),
-            shibei_service=self._shibei_service,
-        )
-        if sync_empty:
-            return self._finish_gate_reply(
-                cleaned,
-                sync_empty,
-                used_llm=False,
-                route="sync_empty",
-            )
 
         web_plan = resolve_web_search_with_llm_fallback(
             cleaned,
@@ -487,8 +468,6 @@ class ChatService:
                 "这个请求我没法帮你处理。",
                 used_llm=False,
             )
-        if decision.action == GateAction.SYNC:
-            return self._handle_sync_gate(cleaned)
         if decision.action == GateAction.PROFILE:
             return self._handle_profile_gate(cleaned)
         if decision.action == GateAction.IDENTITY:
@@ -800,17 +779,13 @@ class ChatService:
         route: str = "",
     ) -> ChatResult:
         tools = list(used_tools or [])
-        if route == "sync_empty":
-            safe_reply = prepare_user_facing_reply(reply, user_message, None)
-            verified, note = True, ""
-        else:
-            safe_reply, verified, note = self._prepare_user_reply(
-                reply,
-                user_message,
-                None,
-                used_tools=tools,
-                grounding_verified=grounding_verified,
-            )
+        safe_reply, verified, note = self._prepare_user_reply(
+            reply,
+            user_message,
+            None,
+            used_tools=tools,
+            grounding_verified=grounding_verified,
+        )
         self._append_history(user_message, safe_reply)
         self._save_to_session("user", user_message)
         self._save_to_session("assistant", safe_reply)
@@ -824,18 +799,6 @@ class ChatService:
             grounding_note=note,
             route=route,
         )
-
-    def _handle_sync_gate(self, user_message: str) -> ChatResult:
-        if self._sync_service is None:
-            return self._finish_gate_reply(
-                user_message,
-                "同步服务不可用，请稍后重试。",
-                used_llm=False,
-            )
-        results = self._sync_service.sync_all(include_browser_sources=True)
-        inserted = sum(item.inserted for item in results)
-        reply = f"同步完成，写入 {inserted} 条记忆。"
-        return self._finish_gate_reply(user_message, reply, used_llm=False)
 
     def _handle_profile_gate(self, user_message: str) -> ChatResult:
         self._memory.migrate_user_profile_if_needed(
@@ -1758,12 +1721,13 @@ class ChatService:
             shibei_section = (
                 "\n\n## Shibei 知识库（读取记忆的主路径）\n"
                 "每轮用户消息会**自动**做答前召回（见「Shibei 答前召回」）；"
-                "个人笔记、文档、面试资料等优先依据该召回，不足时再调 shibei_search"
-                "（config.yaml + ~/.shibei/db），**不需要** 先点 Lumina「同步」。\n"
+                "个人笔记、文档、面试资料、阅读记录等优先依据该召回，不足时再调 shibei_search"
+                "（config.yaml + ~/.shibei/db）。\n"
                 f"- 监控文件夹：{folders}\n"
                 "- 检索为空时：shibei_import 增量导入，或在 Shibei 应用中 import\n"
-                "- search_memory 仅查 Lumina 连接器同步库，作为 Shibei 的备选\n"
+                "- search_memory 查本地记忆索引，作为 Shibei 的备选\n"
                 "- 不要编造未出现在答前召回 / shibei_search / search_memory 结果中的文档内容\n"
+                "- 没有平台专用连接器；不要要求用户安装 Chrome 扩展或点「同步」才能分析个人数据\n"
             )
 
         reflections_block = self._build_reflections_block(user_message)

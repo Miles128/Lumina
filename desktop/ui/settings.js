@@ -44,7 +44,10 @@
     try {
       await loadSettings();
     } catch (error) {
-      contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loadFailed"))}：${escapeHtml(error.message)}</p>`;
+      const detail = error && typeof error === "object" && "message" in error
+        ? String(error.message || "")
+        : String(error || "");
+      contentEl.innerHTML = `<p class="muted">${escapeHtml(t("settings.loadFailed"))}：${escapeHtml(detail || "未知错误")}</p>`;
     }
   }
 
@@ -116,7 +119,7 @@
     }
     navEl.appendChild(agentGroup);
 
-    // 组 2:工具与扩展(MCP + Skill 入口,6 个 connector 已收敛为 MCP 内置 provider)
+    // 组 2:工具与扩展(标准 MCP + Skill)
     const toolsGroup = document.createElement("div");
     toolsGroup.className = "settings-nav-group";
     toolsGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.tools"))}</div>`;
@@ -136,7 +139,7 @@
     );
     navEl.appendChild(toolsGroup);
 
-    // 组 3:知识库(Shibei + 本地文档;connector 已归到 MCP 内置 provider)
+    // 组 3:知识库(Shibei + 本地文档)
     const knowledgeGroup = document.createElement("div");
     knowledgeGroup.className = "settings-nav-group";
     knowledgeGroup.innerHTML = `<div class="settings-nav-label">${escapeHtml(t("settings.group.knowledge"))}</div>`;
@@ -424,9 +427,11 @@
       )
       .join("");
     const modelPresets = cfg.models || [];
-    const matchedPreset = modelPresets.find(
-      (item) => item.model === cfg.model && item.base_url.replace(/\/$/, "") === String(cfg.base_url || "").replace(/\/$/, ""),
-    );
+    const matchedPreset = modelPresets.find((item) => {
+      const presetBase = String(item.base_url || "").replace(/\/$/, "");
+      const currentBase = String(cfg.base_url || "").replace(/\/$/, "");
+      return item.model === cfg.model && presetBase === currentBase;
+    });
     const modelOptions = [
       `<option value=""${!matchedPreset ? " selected" : ""}>自定义 / 手动填写</option>`,
       ...modelPresets.map(
@@ -1091,47 +1096,11 @@
 
   function renderToolsMcpPane() {
     const status = mcpStatus || {};
-    const builtinProviders = Array.isArray(status.builtin_providers) ? status.builtin_providers : [];
     const servers = (Array.isArray(status.servers) ? status.servers : []).filter(
       (server) => server.enabled !== false,
     );
     const tools = Array.isArray(status.tools) ? status.tools : [];
     const configPath = status.config_path || "~/.lumina/mcp.json";
-
-    const builtinRows = builtinProviders.length
-      ? builtinProviders
-          .map((provider) => {
-            const name = provider.name || "";
-            const display = provider.display_name || name;
-            const configured = Boolean(provider.configured);
-            const rawStatus = provider.status;
-            const dotStatus =
-              rawStatus === "ready" || (configured && rawStatus !== "error")
-                ? "ready"
-                : rawStatus === "error"
-                  ? "error"
-                  : "not_configured";
-            const countLabel = provider.item_count ? `${provider.item_count} 条` : "";
-            const message = provider.message || "";
-            const meta = [countLabel, message].filter(Boolean).join(" · ") || "—";
-            const lastSync = provider.last_sync_at
-              ? ` · 上次 ${escapeHtml(String(provider.last_sync_at).slice(0, 16))}`
-              : "";
-            return (
-              `<li class="mcp-builtin-row">` +
-              `<span class="mcp-builtin-name"><strong>${escapeHtml(display)}</strong>` +
-              `<span class="mcp-builtin-badge">builtin</span></span>` +
-              `<span class="mcp-builtin-meta">${escapeHtml(meta)}${lastSync}</span>` +
-              `<span class="status-dot ${dotStatus}" aria-hidden="true"></span>` +
-              `<span class="mcp-builtin-actions">` +
-              `<button class="btn-text" type="button" data-builtin-configure="${escapeAttr(name)}">配置</button>` +
-              `<button class="btn-text" type="button" data-builtin-sync="${escapeAttr(name)}">同步</button>` +
-              `</span>` +
-              `</li>`
-            );
-          })
-          .join("")
-      : `<li class="mcp-empty-state"><span>暂无内置连接器(后端未返回 builtin_providers)</span></li>`;
 
     const toolRows = tools.length
       ? tools
@@ -1167,14 +1136,11 @@
       <div class="settings-pane is-wide">
         <header class="settings-pane-head">
           <h3>${escapeHtml(t("settings.mcp"))}</h3>
-          <p>统一管理 MCP 服务器与扩展工具。内置连接器(飞书/邮箱/微信读书/小红书/微信公众号/本地网盘)与用户自建服务器共享同一命名空间。</p>
+          <p>统一管理标准 MCP 服务器与扩展工具（stdio / SSE / Streamable HTTP）。个人知识请用 Shibei 知识库。</p>
         </header>
-        <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · 内置 ${builtinProviders.length} · 远程 ${servers.length}</p>
-        <p class="platform-meta muted">支持 stdio(本地命令)与远程 URL(SSE / Streamable HTTP)· 写入类 MCP 工具需用户确认 · 配置文件 <code>${escapeHtml(configPath)}</code></p>
+        <p class="platform-meta">已加载 ${Number(status.tool_count || 0)} 个工具 · 远程 ${servers.length}</p>
+        <p class="platform-meta muted">写入类 MCP 工具需用户确认 · 配置文件 <code>${escapeHtml(configPath)}</code></p>
         ${status.last_error ? `<p class="platform-feedback error">${escapeHtml(status.last_error)}</p>` : ""}
-
-        <h4 class="settings-subtitle">内置连接器</h4>
-        <ul class="mcp-builtin-list">${builtinRows}</ul>
 
         <h4 class="settings-subtitle">快速添加 · Quick start</h4>
         <div class="platform-actions">
@@ -1244,18 +1210,6 @@
       if (!btn) return;
       void deleteMcpServer(btn.getAttribute("data-mcp-delete"));
     });
-    contentEl.querySelector(".mcp-builtin-list")?.addEventListener("click", (event) => {
-      const configureBtn = event.target.closest("[data-builtin-configure]");
-      if (configureBtn) {
-        // 复用现有 platform.source fallback 分支(renderField + savePlatform + testPlatform + syncPlatform)
-        selectTab(configureBtn.getAttribute("data-builtin-configure"));
-        return;
-      }
-      const syncBtn = event.target.closest("[data-builtin-sync]");
-      if (syncBtn) {
-        void syncBuiltinProvider(syncBtn.getAttribute("data-builtin-sync"));
-      }
-    });
   }
 
   // 旧渲染入口,保留为别名,兼容 addMcpServer / reloadMcp / deleteMcpServer / quickstartFilesystemMcp 内部调用
@@ -1280,30 +1234,6 @@
       closeSettings();
       window.SkillsModule?.open();
     });
-  }
-
-  async function syncBuiltinProvider(name) {
-    const trimmed = String(name || "").trim();
-    if (!trimmed) return;
-    const feedback = document.getElementById("mcp-feedback");
-    if (!feedback) return;
-    showFeedback(feedback, "info", `正在同步 ${trimmed}…`);
-    try {
-      const result = await window.SecretaryAPI.request("POST", `/api/sync/${trimmed}`, null, {
-        timeoutMs: 90_000,
-      });
-      const inserted = Number(result?.inserted || 0);
-      showFeedback(
-        feedback,
-        "success",
-        `${result?.message || "同步完成"}(写入 ${inserted} 条)`,
-      );
-      // 刷新 mcpStatus 以更新内置 provider 状态(失败时保留旧值)
-      mcpStatus = await window.SecretaryAPI.request("GET", "/api/mcp/status").catch(() => mcpStatus);
-      renderToolsMcpPane();
-    } catch (error) {
-      showFeedback(feedback, "error", `同步失败:${error.message}`);
-    }
   }
 
   function syncMcpTransportFields() {
@@ -1546,7 +1476,10 @@
   }
 
   function escapeHtml(value) {
-    return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
   }
 
   function escapeAttr(value) {

@@ -32,7 +32,7 @@ def test_briefing_rule_based(tmp_path: Path) -> None:
     service = BriefingService(settings, store)
     markdown = service.generate(_profile_service(tmp_path))
     assert "# 今日简报" in markdown
-    assert "同步" in markdown
+    assert "知识库" in markdown or "阅读" in markdown
 
 
 def _run_async(coro: object) -> None:
