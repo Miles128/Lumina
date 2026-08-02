@@ -134,7 +134,7 @@
   max-width: 140px;
 }
 
-/* 模型状态灯 —— ready 信号色慢呼吸，error 红色静态，idle 灰色静态 */
+/* 模型状态灯 —— ready/error 静态色点（勿用无限 opacity 动画，Electron 下会整窗感知闪烁） */
 .model-status-dot {
   width: 6px;
   height: 6px;
@@ -147,24 +147,11 @@
 .model-status-dot[data-state="ready"] {
   background: var(--sig);
   opacity: 1;
-  animation: model-dot-breathe 2s ease-in-out infinite;
 }
 
 .model-status-dot[data-state="error"] {
   background: #ef4444;
   opacity: 1;
-}
-
-@keyframes model-dot-breathe {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .model-status-dot[data-state="ready"] {
-    animation: none;
-    opacity: 1;
-  }
 }
 
 .token-usage {

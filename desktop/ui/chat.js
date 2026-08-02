@@ -71,6 +71,9 @@
   let currentThreadId = "";
   let streamingBubbleEl = null;
   let streamingText = "";
+  let streamRenderRaf = 0;
+  let progressFlushRaf = 0;
+  let turnTreeStructureKey = "";
   let progressSession = {
     bufferedItems: [],
     turnNodes: new Map(),
@@ -902,6 +905,62 @@
     scrollChatToBottom();
   }
 
+  function msgActionIcon(kind) {
+    const common =
+      'class="msg-action-icon" width="14" height="14" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true"';
+    if (kind === "feedback") {
+      // message-square-plus — code review / improvement feedback
+      return (
+        `<svg ${common}>` +
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+        '<line x1="12" y1="7" x2="12" y2="13"/>' +
+        '<line x1="9" y1="10" x2="15" y2="10"/>' +
+        "</svg>"
+      );
+    }
+    if (kind === "fork") {
+      // git-branch
+      return (
+        `<svg ${common}>` +
+        '<line x1="6" y1="3" x2="6" y2="15"/>' +
+        '<circle cx="18" cy="6" r="3"/>' +
+        '<circle cx="6" cy="18" r="3"/>' +
+        '<path d="M18 9a9 9 0 0 1-9 9"/>' +
+        "</svg>"
+      );
+    }
+    if (kind === "rollback") {
+      // undo
+      return (
+        `<svg ${common}>` +
+        '<path d="M3 7v6h6"/>' +
+        '<path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 2.9L3 13"/>' +
+        "</svg>"
+      );
+    }
+    // restore
+    return (
+      `<svg ${common}>` +
+      '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>' +
+      '<path d="M3 3v5h5"/>' +
+      "</svg>"
+    );
+  }
+
+  function createMsgActionBtn({ action, msgId, icon, title }) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "msg-action-btn";
+    btn.innerHTML = msgActionIcon(icon);
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
+    btn.dataset.action = action;
+    btn.dataset.msgId = msgId;
+    return btn;
+  }
+
   function buildMsgActionsEl(msgId, role, archived, thread) {
     const wrap = document.createElement("div");
     wrap.className = "msg-actions";
@@ -910,41 +969,41 @@
     // question would just regenerate the answer, which is rarely useful.
     const canFork = role === "bot";
     if (archived) {
-      const restoreBtn = document.createElement("button");
-      restoreBtn.type = "button";
-      restoreBtn.className = "msg-action-btn";
-      restoreBtn.textContent = "恢复";
-      restoreBtn.dataset.action = "restore";
-      restoreBtn.dataset.msgId = msgId;
-      wrap.appendChild(restoreBtn);
+      wrap.appendChild(
+        createMsgActionBtn({
+          action: "restore",
+          msgId,
+          icon: "restore",
+          title: "恢复",
+        }),
+      );
     } else {
       if (canFork) {
-        const feedbackBtn = document.createElement("button");
-        feedbackBtn.type = "button";
-        feedbackBtn.className = "msg-action-btn";
-        feedbackBtn.textContent = "反馈";
-        feedbackBtn.title = "生成代码修改建议";
-        feedbackBtn.dataset.action = "feedback";
-        feedbackBtn.dataset.msgId = msgId;
-        wrap.appendChild(feedbackBtn);
-
-        const forkBtn = document.createElement("button");
-        forkBtn.type = "button";
-        forkBtn.className = "msg-action-btn";
-        forkBtn.textContent = "分叉";
-        forkBtn.title = "从此新开分支";
-        forkBtn.dataset.action = "fork";
-        forkBtn.dataset.msgId = msgId;
-        wrap.appendChild(forkBtn);
+        wrap.appendChild(
+          createMsgActionBtn({
+            action: "feedback",
+            msgId,
+            icon: "feedback",
+            title: "生成代码修改建议",
+          }),
+        );
+        wrap.appendChild(
+          createMsgActionBtn({
+            action: "fork",
+            msgId,
+            icon: "fork",
+            title: "从此新开分支",
+          }),
+        );
       }
-      const rollbackBtn = document.createElement("button");
-      rollbackBtn.type = "button";
-      rollbackBtn.className = "msg-action-btn";
-      rollbackBtn.textContent = "回退";
-      rollbackBtn.title = "回退到此";
-      rollbackBtn.dataset.action = "rollback";
-      rollbackBtn.dataset.msgId = msgId;
-      wrap.appendChild(rollbackBtn);
+      wrap.appendChild(
+        createMsgActionBtn({
+          action: "rollback",
+          msgId,
+          icon: "rollback",
+          title: "回退到此",
+        }),
+      );
     }
     const switcher = buildSiblingSwitcherEl(thread, msgId);
     if (switcher) wrap.appendChild(switcher);
@@ -1198,7 +1257,33 @@
     pendingActionId = null;
   }
 
+  function cancelProgressFlushRaf() {
+    if (progressFlushRaf) {
+      window.cancelAnimationFrame(progressFlushRaf);
+      progressFlushRaf = 0;
+    }
+  }
+
+  function scheduleFlushProgressPanel({ immediate = false } = {}) {
+    if (immediate) {
+      cancelProgressFlushRaf();
+      flushProgressPanel();
+      return;
+    }
+    if (progressFlushRaf) return;
+    progressFlushRaf = window.requestAnimationFrame(() => {
+      progressFlushRaf = 0;
+      flushProgressPanel();
+    });
+  }
+
   function resetProgressLog() {
+    cancelProgressFlushRaf();
+    turnTreeStructureKey = "";
+    if (streamRenderRaf) {
+      window.cancelAnimationFrame(streamRenderRaf);
+      streamRenderRaf = 0;
+    }
     progressSession = {
       bufferedItems: [],
       turnNodes: new Map(),
@@ -1581,7 +1666,8 @@
     if (kind === "thought") {
       if (event?.item_id) return String(event.item_id);
       const parent = subRunId ? `sub:${subRunId}` : turnId;
-      return `${parent}:thought:${iteration}:${progressSession.turnNodes.size}`;
+      // Stable id so streaming thought updates merge into one chip (no flicker churn).
+      return `${parent}:thought:${iteration}`;
     }
     if (kind.startsWith("iteration_")) return `${turnId}:iteration:${iteration}`;
     return String(event?.item_id || `${turnId}:${kind}:${Date.now()}`);
@@ -1716,7 +1802,7 @@
       }
       progressSession.turnNodes.set(parentId, parent);
     }
-    renderTurnTree();
+    // Do not paint here — callers schedule a coalesced flush (avoids double full re-render).
   }
 
   function toolIcon(toolName) {
@@ -1864,7 +1950,7 @@
       ? `<div class="tp-lane-detail"${open ? "" : " hidden"}>${renderDetailLines(detailText)}</div>`
       : "";
     return (
-      `<li class="tp-node is-${escapeAttr(node.type)} is-${escapeAttr(node.status)}${isRoot ? " is-root" : ""}${open ? " is-open" : ""}">` +
+      `<li class="tp-node is-${escapeAttr(node.type)} is-${escapeAttr(node.status)}${isRoot ? " is-root" : ""}${open ? " is-open" : ""}" data-tp-id="${escapeAttr(node.id)}">` +
       `<div class="tp-lane${isRoot ? " is-root" : ""}">` +
         head +
         detail +
@@ -1902,18 +1988,116 @@
     });
   }
 
+  function turnNodeHasDetail(node) {
+    const detailText = String(node.detail || "").trim();
+    const labelLine = String(node.label || "").trim();
+    return Boolean(detailText) && (node.type !== "thought" || detailText !== labelLine);
+  }
+
+  function turnTreeStructureKeyOf() {
+    return [...progressSession.turnNodes.values()]
+      .sort((a, b) => a.order - b.order)
+      .map(
+        (node) =>
+          `${node.id}\t${node.parentId || ""}\t${node.type}\t${node.order}\t${
+            turnNodeHasDetail(node) ? "1" : "0"
+          }`,
+      )
+      .join("\n");
+  }
+
+  function displayTurnLabel(node) {
+    const isRoot = node.id === progressSession.turnRootId && node.type === "turn";
+    if (isRoot) {
+      return node.label && node.label !== "开始处理" ? node.label : t("chat.turn.root");
+    }
+    return String(node.label || "");
+  }
+
+  function patchTurnTreeNode(node) {
+    if (!subagentTreeEl) return false;
+    const el = subagentTreeEl.querySelector(`[data-tp-id="${CSS.escape(node.id)}"]`);
+    if (!el) return false;
+    const label = displayTurnLabel(node);
+    const labelEl = el.querySelector(".tp-chip-label, .tp-lane-label");
+    if (labelEl && labelEl.textContent !== label) {
+      labelEl.textContent = label;
+    }
+    const titled = el.matches(".tp-step")
+      ? el.querySelector(".tp-chip")
+      : el.querySelector(".tp-lane-head");
+    if (titled && titled.getAttribute("title") !== label) {
+      titled.setAttribute("title", label);
+    }
+    if (el.classList.contains("tp-step")) {
+      const chip = el.querySelector(".tp-chip");
+      if (chip) {
+        chip.classList.remove(
+          "is-running",
+          "is-done",
+          "is-failed",
+          "is-paused",
+          "is-queued",
+        );
+        chip.classList.add(`is-${node.status}`);
+        const dot = chip.querySelector(".tp-dot");
+        if (dot) {
+          dot.className = `tp-dot is-${escapeAttr(node.status)}`;
+        }
+      }
+    } else if (el.classList.contains("tp-node")) {
+      el.classList.remove("is-running", "is-done", "is-failed", "is-paused", "is-queued");
+      el.classList.add(`is-${node.status}`);
+      const mark = el.querySelector(".tp-lane-head .tp-mark");
+      if (mark) {
+        mark.outerHTML = statusMark(node.status);
+      }
+    }
+    const detailText = String(node.detail || "").trim();
+    const detailEl = el.querySelector(".tp-step-detail, .tp-lane-detail");
+    if (detailEl && detailEl.dataset.tpDetail !== detailText) {
+      detailEl.dataset.tpDetail = detailText;
+      detailEl.innerHTML = renderDetailLines(detailText);
+    }
+    return true;
+  }
+
+  function patchTurnTree() {
+    for (const node of progressSession.turnNodes.values()) {
+      if (!patchTurnTreeNode(node)) return false;
+    }
+    return true;
+  }
+
   function renderTurnTree() {
     if (!subagentTreeEl) return;
     if (!progressSession.hasTurnTree || progressSession.turnNodes.size === 0) {
       subagentTreeEl.hidden = true;
       subagentTreeEl.innerHTML = "";
+      turnTreeStructureKey = "";
       return;
     }
     bindTurnTreeExpand();
     subagentTreeEl.hidden = false;
     subagentTreeEl.classList.add("turn-tree");
+    const structureKey = turnTreeStructureKeyOf();
+    const canPatch =
+      Boolean(structureKey) &&
+      structureKey === turnTreeStructureKey &&
+      Boolean(subagentTreeEl.querySelector(".tp-tree"));
+    if (canPatch && patchTurnTree()) {
+      return;
+    }
     const rootId = progressSession.turnRootId || [...progressSession.turnNodes.keys()][0];
     subagentTreeEl.innerHTML = `<ul class="tp-tree">${renderTurnTreeNode(rootId, 0)}</ul>`;
+    turnTreeStructureKey = structureKey;
+    for (const node of progressSession.turnNodes.values()) {
+      const el = subagentTreeEl.querySelector(`[data-tp-id="${CSS.escape(node.id)}"]`);
+      const detailEl = el?.querySelector(".tp-step-detail, .tp-lane-detail");
+      if (detailEl) {
+        detailEl.dataset.tpDetail = String(node.detail || "").trim();
+      }
+    }
   }
 
   function isSubagentProgressEvent(event) {
@@ -2000,12 +2184,17 @@
     if (progressSession.hasTurnTree) {
       renderTurnTree();
       // Lane+chip tree is the sole progress visual; hide the legacy flat list.
-      progressListEl.innerHTML = "";
+      if (progressListEl.childNodes.length) {
+        progressListEl.innerHTML = "";
+      }
       progressListEl.hidden = true;
     } else {
       if (subagentTreeEl) {
         subagentTreeEl.hidden = true;
-        subagentTreeEl.innerHTML = "";
+        if (subagentTreeEl.innerHTML) {
+          subagentTreeEl.innerHTML = "";
+        }
+        turnTreeStructureKey = "";
       }
       progressListEl.innerHTML = "";
       if (progressSession.bufferedItems.length > 0) {
@@ -2021,6 +2210,9 @@
       }
     }
     renderRawOutput();
+    if (progressSession.panelVisible) {
+      scrollChatToBottom();
+    }
   }
 
     function appendProgressItem(event, label) {
@@ -2075,20 +2267,20 @@
         },
         thoughtOneLine(event?.detail || label),
       );
-      if (shouldShowProgressPanel()) flushProgressPanel();
+      if (shouldShowProgressPanel()) scheduleFlushProgressPanel();
       return;
     }
     if (Number(event?.schema_version || 0) >= 2 || event?.turn_id || event?.sub_run_id) {
       upsertTurnTreeNode(event, label);
       if (shouldShowProgressPanel()) {
-        flushProgressPanel();
+        scheduleFlushProgressPanel();
       }
       return;
     }
     const item = createProgressListItem(event, label);
     progressSession.bufferedItems.push(item);
     if (shouldShowProgressPanel()) {
-      flushProgressPanel();
+      scheduleFlushProgressPanel();
     }
   }
 
@@ -2097,7 +2289,7 @@
       resetProgressLog();
       return;
     }
-    flushProgressPanel();
+    scheduleFlushProgressPanel({ immediate: true });
     updateProgressToggleLabel();
   }
 
@@ -2146,7 +2338,7 @@
       }
       renderIdpPanel();
       if (shouldShowProgressPanel()) {
-        flushProgressPanel();
+        scheduleFlushProgressPanel();
       }
       return;
     }
@@ -2190,7 +2382,6 @@
     if (!label && !kind.startsWith("reply_")) return;
     if (progressEl && progressListEl && label && !kind.startsWith("reply_")) {
       appendProgressItem(event, label);
-      scrollChatToBottom();
     }
     if (
       kind === "subagent_started" ||
@@ -2234,11 +2425,20 @@
       beginStreamingBubble();
     }
     streamingText += delta;
-    streamingBubbleEl.innerHTML = renderMarkdown(streamingText);
-    scrollChatToBottom();
+    if (streamRenderRaf) return;
+    streamRenderRaf = window.requestAnimationFrame(() => {
+      streamRenderRaf = 0;
+      if (!streamingBubbleEl) return;
+      streamingBubbleEl.innerHTML = renderMarkdown(streamingText);
+      scrollChatToBottom();
+    });
   }
 
   function finalizeStreamingMessage(finalText) {
+    if (streamRenderRaf) {
+      window.cancelAnimationFrame(streamRenderRaf);
+      streamRenderRaf = 0;
+    }
     if (!streamingBubbleEl) {
       appendMessage("bot", finalText);
       return;
