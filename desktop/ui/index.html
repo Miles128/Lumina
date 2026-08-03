@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=76" />
+    <link rel="stylesheet" href="/assets/chat.css?v=79" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=12" />
     <link rel="stylesheet" href="/assets/vendor/drawflow.min.css?v=1" />
     <script src="/assets/theme.js?v=2"></script>
@@ -217,6 +217,28 @@
             </form>
           </footer>
         </section>
+
+        <aside id="artifact-panel" class="artifact-panel" hidden aria-label="文档侧栏">
+          <header class="artifact-panel-head">
+            <div class="artifact-panel-titles">
+              <strong id="artifact-title">文档</strong>
+              <span id="artifact-meta" class="artifact-meta"></span>
+            </div>
+            <div class="artifact-panel-actions">
+              <select id="artifact-root-select" class="artifact-root-select" aria-label="文件树根目录"></select>
+              <button type="button" id="btn-artifact-refresh" class="artifact-icon-btn" title="刷新" aria-label="刷新">↻</button>
+              <button type="button" id="btn-artifact-open-external" class="artifact-icon-btn" title="打开文件路径" aria-label="打开" hidden>↗</button>
+              <button type="button" id="btn-artifact-close" class="artifact-icon-btn" title="关闭侧栏" aria-label="关闭" aria-expanded="false">×</button>
+            </div>
+          </header>
+          <div class="artifact-panel-body">
+            <div id="artifact-tree" class="artifact-tree" aria-label="文件树"></div>
+            <div class="artifact-preview-wrap">
+              <p id="artifact-empty" class="artifact-empty">生成 Markdown / Excel 等文档，或指定工作区后，在此预览</p>
+              <div id="artifact-preview" class="artifact-preview"></div>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <div id="skills-backdrop" class="overlay" hidden></div>
@@ -300,7 +322,8 @@
     <script src="/assets/vendor/drawflow.min.js?v=1"></script>
     <script src="/assets/workflow_graph.js?v=2"></script>
     <script src="/assets/workflows.js?v=4"></script>
-    <script src="/assets/chat.js?v=71"></script>
+    <script src="/assets/artifacts.js?v=2"></script>
+    <script src="/assets/chat.js?v=72"></script>
     <script src="/assets/conversation_map.js?v=11"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->
     <script src="/assets/bootstrap.js?v=1"></script>

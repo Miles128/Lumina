@@ -185,6 +185,7 @@
       if (labelEl) labelEl.textContent = "";
       if (workspaceChipClear) workspaceChipClear.hidden = true;
     }
+    window.LuminaArtifacts?.setWorkspace?.(currentWorkspaceDir || "");
   }
 
   function renderAttachments() {
@@ -2329,6 +2330,9 @@
 
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
+    if (kind === "tool_started" || kind === "tool_finished") {
+      window.LuminaArtifacts?.noteToolEvent?.(event);
+    }
     emitMapLiveOverlay(event);
     if (kind === "idp_update" && event?.idp) {
       applyIdpProtocolMeta(event.idp);
@@ -2773,6 +2777,7 @@
       ? remoteCurrent
       : (threads[0]?.id || "");
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     if (render) {
       renderThreadList();
       renderCurrentThreadMessages();
@@ -2850,6 +2855,7 @@
     threads.unshift(thread);
     currentThreadId = thread.id;
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
@@ -2901,6 +2907,7 @@
     if (!threadId || threadId === currentThreadId) return;
     currentThreadId = threadId;
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();

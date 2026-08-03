@@ -25,6 +25,7 @@ from secretary.agent.soul import load_soul, save_soul
 from secretary.agent.trace_store import TraceStore
 from secretary.agent.turn_runner import TurnRunner
 from secretary.api.deps import svc
+from secretary.api.routes_artifacts import router as artifacts_router
 from secretary.api.routes_chat import router as chat_router
 from secretary.api.routes_mcp import router as mcp_router
 from secretary.api.routes_workflows import router as workflows_router
@@ -267,6 +268,7 @@ app.add_middleware(
 app.include_router(mcp_router)
 app.include_router(chat_router)
 app.include_router(workflows_router)
+app.include_router(artifacts_router)
 
 
 @app.get("/api/agent/background")

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lumina · 右侧品牌边 A / B / C</title>
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --bg-subtle: #141414;
+        --text: #f5f5f5;
+        --text-secondary: #a3a3a3;
+        --line: #222;
+        --sig: #22d3ee;
+        --sig-soft: rgba(34, 211, 238, 0.35);
+        --sig-faint: rgba(34, 211, 238, 0.12);
+        --gold: #c9a227;
+        --gold-soft: rgba(201, 162, 39, 0.18);
+        --font: system-ui, -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #050505;
+        color: var(--text);
+        font-family: var(--font);
+        padding: 32px 28px 48px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .lead {
+        margin: 0 0 28px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+      @media (max-width: 1100px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+      .card {
+        background: #0c0c0c;
+        border: 1px solid #1c1c1c;
+        border-radius: 14px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .card-head {
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid #1a1a1a;
+      }
+      .card-head strong {
+        display: block;
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+      .card-head span {
+        font-size: 12px;
+        color: var(--text-secondary);
+        line-height: 1.45;
+      }
+      .stage {
+        height: 420px;
+        display: flex;
+        background: var(--bg);
+      }
+      .chat {
+        flex: 1;
+        min-width: 0;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border-right: 1px solid var(--line);
+      }
+      .hero {
+        margin: auto 0;
+        text-align: center;
+        opacity: 0.9;
+      }
+      .orb {
+        width: 42px;
+        height: 42px;
+        margin: 0 auto 12px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #fff, #67e8f9 35%, #0e7490 75%, #083344);
+        box-shadow: 0 0 24px rgba(34, 211, 238, 0.25);
+      }
+      .hero p {
+        margin: 0;
+        font-family: "Noto Serif SC", "Songti SC", serif;
+        font-size: 18px;
+      }
+      .composer {
+        height: 44px;
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        background: #111;
+        color: #737373;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        font-size: 12px;
+      }
+      .panel {
+        width: 148px;
+        flex-shrink: 0;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+      }
+      .panel-top {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .panel-body {
+        flex: 1;
+        padding: 10px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        line-height: 1.45;
+      }
+      .panel-body .file {
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--sig-faint);
+        color: var(--text);
+        margin-bottom: 8px;
+      }
+      /* A */
+      .edge-a .panel {
+        border-left: 2px solid var(--sig);
+        box-shadow: -8px 0 24px var(--sig-faint);
+      }
+      /* B */
+      .edge-b .panel {
+        border-left: 1px solid var(--sig-soft);
+      }
+      /* C */
+      .edge-c .panel {
+        border-left: 2px solid var(--gold);
+        box-shadow: -6px 0 18px var(--gold-soft);
+      }
+      .pick {
+        margin-top: auto;
+        padding: 12px 16px 16px;
+        border-top: 1px solid #1a1a1a;
+      }
+      .pick code {
+        display: block;
+        font-size: 11px;
+        color: #a3a3a3;
+        background: #111;
+        border-radius: 8px;
+        padding: 10px;
+        white-space: pre-wrap;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>右侧文档侧栏 · 品牌边方案</h1>
+    <p class="lead">三套都画在同一构图上。回我 A / B / C，我再写进正式 CSS。正式界面默认仍无品牌边。</p>
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <strong>A · Cyan 边 + 光晕</strong>
+          <span>2px --sig + soft glow。最有「灵犀在线」感，也最显眼。</span>
+        </div>
+        <div class="stage edge-a">
+          <div class="chat">
+            <div class="hero">
+              <div class="orb"></div>
+              <p>深夜, 还在编排?</p>
+            </div>
+            <div class="composer">Message · 输入消息</div>
+          </div>
+          <aside class="panel">
+            <div class="panel-top">文档</div>
+            <div class="panel-body">
+              <div class="file">report.md</div>
+              Markdown / Excel 预览区
+            </div>
+          </aside>
+        </div>
+        <div class="pick"><code>border-left: 2px solid var(--sig);
+box-shadow: -8px 0 24px var(--sig-faint);</code></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <strong>B · 克制 soft 边</strong>
+          <span>1px --sig-soft，无 glow。几乎不抢对话，只标出面板边界。</span>
+        </div>
+        <div class="stage edge-b">
+          <div class="chat">
+            <div class="hero">
+              <div class="orb"></div>
+              <p>深夜, 还在编排?</p>
+            </div>
+            <div class="composer">Message · 输入消息</div>
+          </div>
+          <aside class="panel">
+            <div class="panel-top">文档</div>
+            <div class="panel-body">
+              <div class="file">report.md</div>
+              Markdown / Excel 预览区
+            </div>
+          </aside>
+        </div>
+        <div class="pick"><code>border-left: 1px solid var(--sig-soft);</code></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <strong>C · 黑金边</strong>
+          <span>2px #c9a227 + 金色 soft glow。偏好线②，和 cyan 科技感分流。</span>
+        </div>
+        <div class="stage edge-c">
+          <div class="chat">
+            <div class="hero">
+              <div class="orb"></div>
+              <p>深夜, 还在编排?</p>
+            </div>
+            <div class="composer">Message · 输入消息</div>
+          </div>
+          <aside class="panel">
+            <div class="panel-top">文档</div>
+            <div class="panel-body">
+              <div class="file">report.md</div>
+              Markdown / Excel 预览区
+            </div>
+          </aside>
+        </div>
+        <div class="pick"><code>border-left: 2px solid #c9a227;
+box-shadow: -6px 0 18px rgba(201,162,39,.18);</code></div>
+      </section>
+    </div>
+  </body>
+</html>
