@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from secretary.agent import thread_sandbox
+from secretary.agent.thread_sandbox import ensure as ensure_thread_sandbox
 from secretary.services.agent_config import AgentConfigStore
 
 MAX_PREVIEW_BYTES = 2 * 1024 * 1024
@@ -65,7 +65,7 @@ def _resolve_existing(raw: str | Path) -> Path:
 
 def allowed_roots(*, data_dir: Path, thread_id: str, agent_config: AgentConfigStore) -> list[dict[str, str]]:
     roots: list[dict[str, str]] = []
-    sandbox = thread_sandbox.ensure(thread_id, data_dir)
+    sandbox = ensure_thread_sandbox(thread_id, data_dir)
     roots.append({"id": "sandbox", "label": "会话沙箱", "path": str(sandbox)})
     cwd = agent_config.load().shell_working_dir.strip()
     if cwd:
