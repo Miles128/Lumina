@@ -9,6 +9,58 @@ from pydantic import BaseModel, Field
 TraceRetention = Literal["full", "summary", "off"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 ReasoningEffort = Literal["low", "high", "max"]
+RuntimeBackend = Literal["legacy", "aisuite"]
+PermissionMode = Literal["normal", "auto", "yolo", "custom"]
+
+CONFIRM_KIND_KEYS = (
+    "write_new",
+    "write_modify",
+    "write_delete",
+    "shell",
+    "action",
+)
+
+
+class ConfirmRequireConfig(BaseModel):
+    """Which confirmation kinds still pause the agent (True = require confirm)."""
+
+    write_new: bool = True
+    write_modify: bool = True
+    write_delete: bool = True
+    shell: bool = True
+    action: bool = True
+
+
+def apply_permission_mode(mode: PermissionMode) -> ConfirmRequireConfig:
+    """Return the require_confirm template for a named permission mode."""
+    if mode == "yolo":
+        return ConfirmRequireConfig(
+            write_new=False,
+            write_modify=False,
+            write_delete=False,
+            shell=False,
+            action=False,
+        )
+    if mode == "auto":
+        return ConfirmRequireConfig(
+            write_new=False,
+            write_modify=True,
+            write_delete=True,
+            shell=True,
+            action=False,
+        )
+    # normal / custom fallback → safe defaults
+    return ConfirmRequireConfig()
+
+
+def infer_permission_mode(require_confirm: ConfirmRequireConfig) -> PermissionMode:
+    """Map a require_confirm table back to a named mode, or custom."""
+    presets: tuple[PermissionMode, ...] = ("normal", "auto", "yolo")
+    dump = require_confirm.model_dump()
+    for mode in presets:
+        if dump == apply_permission_mode(mode).model_dump():
+            return mode
+    return "custom"
 
 
 class HarnessConfig(BaseModel):
@@ -28,6 +80,13 @@ class HarnessConfig(BaseModel):
     thinking_mode: ThinkingMode = "auto"
     reasoning_effort: ReasoningEffort = "high"
     strict_tools: bool = False
+    # Phase 1: Completions always use vendored aisuite via llm_client.
+    # ``aisuite`` also drives Agent turns via Runner when spawn_subagent /
+    # force_web_first are absent; otherwise AgentLoop (still aisuite LLM).
+    runtime_backend: RuntimeBackend = "aisuite"
+    # Confirmation policy (FR-46 editable): presets + fine-grained kinds.
+    permission_mode: PermissionMode = "normal"
+    require_confirm: ConfirmRequireConfig = Field(default_factory=ConfirmRequireConfig)
 
 
 def resolve_max_steps(harness: HarnessConfig, *, light_mode: bool) -> int:

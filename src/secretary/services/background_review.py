@@ -27,6 +27,7 @@ _REVIEW_SYSTEM = """你是记忆整理器。根据本轮对话，判断是否应
 - 只从 User 消息提取事实；禁止从 Assistant 回复中提取或固化（助手可能幻觉）
 - 稳定可复用事实 → action=add, target=memory
 - 只记录稳定、可复用的事实，不要记临时闲聊、单次问答
+- 禁止把 API/工具报错、测试污染文案（Completions.create、thinking 参数、Example Domain、Test env fact）写入 MEMORY.md
 - 阅读书目、项目作者、文件列表等须由用户亲口说出；助手推断的 action=none
 - 不确定时 action=none
 - replace/remove 需要 old_text 精确匹配现有内容片段
@@ -86,9 +87,13 @@ class BackgroundReviewService:
 
     def _apply_decision(self, decision: ReviewDecision) -> None:
         """All durable facts go to MEMORY.md (profile / USER.md retired)."""
+        from secretary.agent.grounding import is_polluted_memory_fact
+
         target = decision.target if decision.target == "memory" else "memory"
+        line = decision.text.strip()
+        if decision.action == "add" and is_polluted_memory_fact(line):
+            return
         if decision.target == "user" and decision.action in {"add", "replace"}:
-            line = decision.text.strip()
             if line:
                 self._memory.append_memory_md(line)
             return

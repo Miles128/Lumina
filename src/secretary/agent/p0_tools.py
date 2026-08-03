@@ -240,13 +240,15 @@ class EditTool(Tool):
         return f"📝 编辑文件 `{path}`（精确替换）"
 
     def execute(self, arguments: dict[str, Any], working_dir: Path) -> str | ToolResult:
+        from secretary.agent.fs_jail import FsJailError, assert_writable
         from secretary.agent.tools.edit_text import apply_unique_edit
         from secretary.agent.write_gate import WriteGateError, assert_write_allowed
 
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
         try:
             assert_write_allowed(path)
-        except WriteGateError as exc:
+            assert_writable(path, working_dir)
+        except (WriteGateError, FsJailError) as exc:
             return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         old_text = str(
             arguments.get("oldText")

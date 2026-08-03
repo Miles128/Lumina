@@ -29,7 +29,8 @@ _THINK_SYSTEM = """你是灵犀的后台思考模块。根据 MEMORY.md 与最�
 {"insights":["..."], "updates":[{"action":"none"|"add"|"replace","target":"memory","text":"","old_text":""}]}
 规则：
 - target 只能是 "memory"；用户个人事实与环境/项目事实都写入 MEMORY.md
-- 只记录稳定、可复用的事实，不要猜测
+- 只记录稳定、可复用的用户事实，不要猜测
+- 禁止把 API/工具报错、测试文案、临时故障（如 Completions.create、thinking 参数、Example Domain）写入 MEMORY.md
 - 没有值得更新的内容时 updates 为空数组
 - 不确定时 action=none
 """
@@ -184,10 +185,15 @@ class ScheduledThinkService:
                     target = "memory"
                 if target != "memory":
                     continue
+                text = str(item.get("text", "")).strip()
+                from secretary.agent.grounding import is_polluted_memory_fact
+
+                if action == "add" and is_polluted_memory_fact(text):
+                    continue
                 self._memory.mutate_memory(
                     action,
                     target,
-                    text=str(item.get("text", "")),
+                    text=text,
                     old_text=str(item.get("old_text", "")),
                 )
                 applied += 1

@@ -498,7 +498,7 @@
           <label class="settings-field">
             <span>Shell 工作目录 · Shell working dir</span>
             <div class="settings-path-row">
-              <input id="agent-shell-cwd" type="text" value="${escapeAttr(cfg.shell_working_dir || "")}" placeholder="留空则使用用户主目录" />
+              <input id="agent-shell-cwd" type="text" value="${escapeAttr(cfg.shell_working_dir || "")}" placeholder="留空则使用当前会话沙箱" />
               <button class="btn-text" type="button" id="btn-pick-shell-cwd">浏览…</button>
             </div>
           </label>
@@ -826,55 +826,55 @@
         </header>
         <section class="settings-fields">
           <label class="settings-field">
-            <span>max_tool_rounds</span>
+            <span>${escapeHtml(t("settings.harness.max_tool_rounds"))}</span>
             <input id="harness-max-rounds" type="number" min="1" max="64" value="${escapeHtml(String(h.max_tool_rounds ?? 20))}" />
           </label>
           <label class="settings-field">
-            <span>light_max_steps</span>
+            <span>${escapeHtml(t("settings.harness.light_max_steps"))}</span>
             <input id="harness-light-steps" type="number" min="1" max="16" value="${escapeHtml(String(h.light_max_steps ?? 3))}" />
           </label>
           <label class="settings-field">
-            <span>compaction_max_tokens</span>
+            <span>${escapeHtml(t("settings.harness.compaction_max_tokens"))}</span>
             <input id="harness-compact-tokens" type="number" min="4000" max="128000" value="${escapeHtml(String(h.compaction_max_tokens ?? 24000))}" />
           </label>
           <label class="settings-field">
-            <span>compaction_keep_tail</span>
+            <span>${escapeHtml(t("settings.harness.compaction_keep_tail"))}</span>
             <input id="harness-keep-tail" type="number" min="2" max="64" value="${escapeHtml(String(h.compaction_keep_tail ?? 8))}" />
           </label>
           <label class="settings-field">
-            <span>trace_retention</span>
+            <span>${escapeHtml(t("settings.harness.trace_retention"))}</span>
             <select id="harness-trace-retention">
-              <option value="full" ${h.trace_retention === "full" ? "selected" : ""}>full</option>
-              <option value="summary" ${h.trace_retention === "summary" ? "selected" : ""}>summary</option>
-              <option value="off" ${h.trace_retention === "off" ? "selected" : ""}>off</option>
+              <option value="full" ${h.trace_retention === "full" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.full"))}</option>
+              <option value="summary" ${h.trace_retention === "summary" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.summary"))}</option>
+              <option value="off" ${h.trace_retention === "off" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.off"))}</option>
             </select>
           </label>
           <label class="settings-field">
-            <span>trace_retain_days</span>
+            <span>${escapeHtml(t("settings.harness.trace_retain_days"))}</span>
             <input id="harness-trace-days" type="number" min="0" max="365" value="${escapeHtml(String(h.trace_retain_days ?? 30))}" />
           </label>
           <label class="settings-field">
-            <span>max_tool_output_chars</span>
+            <span>${escapeHtml(t("settings.harness.max_tool_output_chars"))}</span>
             <input id="harness-tool-output" type="number" min="500" max="100000" value="${escapeHtml(String(h.max_tool_output_chars ?? 12000))}" />
           </label>
           <label class="settings-field">
-            <span>thinking_mode（DeepSeek）</span>
+            <span>${escapeHtml(t("settings.harness.thinking_mode"))}</span>
             <select id="harness-thinking-mode">
-              <option value="auto" ${h.thinking_mode === "auto" || !h.thinking_mode ? "selected" : ""}>auto · DIRECT 关 / Agent 开</option>
-              <option value="enabled" ${h.thinking_mode === "enabled" ? "selected" : ""}>enabled · 始终开启</option>
-              <option value="disabled" ${h.thinking_mode === "disabled" ? "selected" : ""}>disabled · 始终关闭</option>
+              <option value="auto" ${h.thinking_mode === "auto" || !h.thinking_mode ? "selected" : ""}>${escapeHtml(t("settings.harness.thinking_mode.auto"))}</option>
+              <option value="enabled" ${h.thinking_mode === "enabled" ? "selected" : ""}>${escapeHtml(t("settings.harness.thinking_mode.enabled"))}</option>
+              <option value="disabled" ${h.thinking_mode === "disabled" ? "selected" : ""}>${escapeHtml(t("settings.harness.thinking_mode.disabled"))}</option>
             </select>
           </label>
           <label class="settings-field">
-            <span>reasoning_effort（Agent）</span>
+            <span>${escapeHtml(t("settings.harness.reasoning_effort"))}</span>
             <select id="harness-reasoning-effort">
-              <option value="low" ${h.reasoning_effort === "low" ? "selected" : ""}>low</option>
-              <option value="high" ${h.reasoning_effort === "high" || !h.reasoning_effort ? "selected" : ""}>high（默认）</option>
-              <option value="max" ${h.reasoning_effort === "max" ? "selected" : ""}>max</option>
+              <option value="low" ${h.reasoning_effort === "low" ? "selected" : ""}>${escapeHtml(t("settings.harness.reasoning_effort.low"))}</option>
+              <option value="high" ${h.reasoning_effort === "high" || !h.reasoning_effort ? "selected" : ""}>${escapeHtml(t("settings.harness.reasoning_effort.high"))}</option>
+              <option value="max" ${h.reasoning_effort === "max" ? "selected" : ""}>${escapeHtml(t("settings.harness.reasoning_effort.max"))}</option>
             </select>
           </label>
           <label class="settings-field settings-field-checkbox">
-            <span>strict_tools（DeepSeek beta）</span>
+            <span>${escapeHtml(t("settings.harness.strict_tools"))}</span>
             <input id="harness-strict-tools" type="checkbox" ${h.strict_tools ? "checked" : ""} />
           </label>
         </section>
@@ -882,11 +882,126 @@
           <button type="button" class="primary" id="harness-save">${escapeHtml(t("action.save"))}</button>
           <span id="harness-feedback" class="settings-feedback" aria-live="polite"></span>
         </div>
-        <p class="muted">子 Agent 深度硬限 depth=1 不可配置绕过。委派说明见「${escapeHtml(t("settings.delegation"))}」。</p>
+        <p class="muted">${escapeHtml(t("settings.harness.footer"))}</p>
       </div>`;
     document.getElementById("harness-save")?.addEventListener("click", () => {
       void saveHarnessSettings();
     });
+  }
+
+  const PERMISSION_PRESETS = {
+    normal: {
+      write_new: true,
+      write_modify: true,
+      write_delete: true,
+      shell: true,
+      action: true,
+    },
+    auto: {
+      write_new: false,
+      write_modify: true,
+      write_delete: true,
+      shell: true,
+      action: false,
+    },
+    yolo: {
+      write_new: false,
+      write_modify: false,
+      write_delete: false,
+      shell: false,
+      action: false,
+    },
+  };
+
+  const CONFIRM_KIND_IDS = [
+    "write_new",
+    "write_modify",
+    "write_delete",
+    "shell",
+    "action",
+  ];
+
+  function inferPermissionMode(requireConfirm) {
+    const dump = CONFIRM_KIND_IDS.map((k) => Boolean(requireConfirm[k])).join(",");
+    for (const [mode, preset] of Object.entries(PERMISSION_PRESETS)) {
+      const key = CONFIRM_KIND_IDS.map((k) => Boolean(preset[k])).join(",");
+      if (key === dump) return mode;
+    }
+    return "custom";
+  }
+
+  function collectPolicyPayload() {
+    const modeSelect = document.getElementById("policy-permission-mode")?.value || "normal";
+    const require_confirm = {};
+    for (const id of CONFIRM_KIND_IDS) {
+      require_confirm[id] = Boolean(
+        document.getElementById(`policy-confirm-${id}`)?.checked,
+      );
+    }
+    const inferred = inferPermissionMode(require_confirm);
+    return {
+      permission_mode: modeSelect === "custom" ? inferred : modeSelect,
+      require_confirm,
+      session_grants: {
+        permanent_read: Boolean(document.getElementById("policy-grant-permanent-read")?.checked),
+        session_write_new: Boolean(document.getElementById("policy-grant-write-new")?.checked),
+        session_code_exec: Boolean(document.getElementById("policy-grant-code-exec")?.checked),
+      },
+    };
+  }
+
+  function applyPermissionPresetToForm(mode) {
+    const preset = PERMISSION_PRESETS[mode];
+    if (!preset) return;
+    for (const id of CONFIRM_KIND_IDS) {
+      const el = document.getElementById(`policy-confirm-${id}`);
+      if (el) el.checked = Boolean(preset[id]);
+    }
+    const warn = document.getElementById("policy-yolo-warn");
+    if (warn) warn.hidden = mode !== "yolo";
+    if (mode === "normal") {
+      const w = document.getElementById("policy-grant-write-new");
+      const c = document.getElementById("policy-grant-code-exec");
+      if (w) w.checked = false;
+      if (c) c.checked = false;
+    } else if (mode === "auto") {
+      const w = document.getElementById("policy-grant-write-new");
+      const c = document.getElementById("policy-grant-code-exec");
+      if (w) w.checked = true;
+      if (c) c.checked = true;
+    } else if (mode === "yolo") {
+      const r = document.getElementById("policy-grant-permanent-read");
+      const w = document.getElementById("policy-grant-write-new");
+      const c = document.getElementById("policy-grant-code-exec");
+      if (r) r.checked = true;
+      if (w) w.checked = true;
+      if (c) c.checked = true;
+    }
+  }
+
+  function syncPermissionModeFromKinds() {
+    const require_confirm = {};
+    for (const id of CONFIRM_KIND_IDS) {
+      require_confirm[id] = Boolean(
+        document.getElementById(`policy-confirm-${id}`)?.checked,
+      );
+    }
+    const inferred = inferPermissionMode(require_confirm);
+    const select = document.getElementById("policy-permission-mode");
+    if (select) select.value = inferred;
+    const warn = document.getElementById("policy-yolo-warn");
+    if (warn) warn.hidden = inferred !== "yolo";
+  }
+
+  async function savePolicySettings() {
+    const feedback = document.getElementById("policy-feedback");
+    try {
+      await window.SecretaryAPI.request("PUT", "/api/agent/policy", collectPolicyPayload());
+      showFeedback(feedback, "ok", t("settings.delegation.saved"));
+      void renderAgentDelegationPane();
+    } catch (error) {
+      showFeedback(feedback, "error", `保存失败：${error.message}`);
+    }
   }
 
   async function renderAgentDelegationPane() {
@@ -900,9 +1015,10 @@
     }
     const archetypes = Array.isArray(policy?.archetypes) ? policy.archetypes : [];
     const profiles = Array.isArray(policy?.profiles) ? policy.profiles : [];
-    const kinds = Array.isArray(policy?.confirm_kinds) ? policy.confirm_kinds : [];
     const grants = policy?.session_grants || {};
     const notes = Array.isArray(policy?.notes) ? policy.notes : [];
+    const requireConfirm = policy?.require_confirm || PERMISSION_PRESETS.normal;
+    const mode = policy?.permission_mode || inferPermissionMode(requireConfirm);
     const archRows = archetypes
       .map(
         (a) =>
@@ -919,38 +1035,89 @@
           `<td>${p.can_spawn ? "可委派" : "不可委派"}</td></tr>`,
       )
       .join("");
+    const kindChecks = CONFIRM_KIND_IDS.map(
+      (id) => `
+          <label class="settings-field settings-field-checkbox">
+            <span>${escapeHtml(t(`settings.delegation.kind.${id}`))}</span>
+            <input id="policy-confirm-${id}" type="checkbox" data-policy-kind="${id}" ${
+              requireConfirm[id] ? "checked" : ""
+            } />
+          </label>`,
+    ).join("");
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
           <h3>${escapeHtml(t("settings.delegation"))}</h3>
-          <p>只读说明当前 harness 的委派深度、子 Agent 权限与确认策略。不改变运行时行为。</p>
+          <p>${escapeHtml(t("settings.delegation.desc"))}</p>
         </header>
         <section class="settings-fields">
-          <p class="platform-meta">子 Agent 深度上限：<strong>${escapeHtml(
-            String(policy?.max_spawn_depth ?? 1),
-          )}</strong>
-          · 每轮最多 spawn：${escapeHtml(String(policy?.max_spawns_per_turn ?? 3))}
-          · 并行 explore：${escapeHtml(String(policy?.max_parallel_explore ?? 3))}</p>
+          <p class="platform-meta">${escapeHtml(
+            t("settings.delegation.limits", {
+              depth: String(policy?.max_spawn_depth ?? 1),
+              spawns: String(policy?.max_spawns_per_turn ?? 3),
+              explore: String(policy?.max_parallel_explore ?? 3),
+            }),
+          )}</p>
+          <label class="settings-field">
+            <span>${escapeHtml(t("settings.delegation.mode"))}</span>
+            <select id="policy-permission-mode">
+              <option value="normal" ${mode === "normal" ? "selected" : ""}>${escapeHtml(t("settings.delegation.mode.normal"))}</option>
+              <option value="auto" ${mode === "auto" ? "selected" : ""}>${escapeHtml(t("settings.delegation.mode.auto"))}</option>
+              <option value="yolo" ${mode === "yolo" ? "selected" : ""}>${escapeHtml(t("settings.delegation.mode.yolo"))}</option>
+              <option value="custom" ${mode === "custom" ? "selected" : ""}>${escapeHtml(t("settings.delegation.mode.custom"))}</option>
+            </select>
+          </label>
+          <p id="policy-yolo-warn" class="settings-warning" ${mode === "yolo" ? "" : "hidden"}>${escapeHtml(
+            t("settings.delegation.yoloWarn"),
+          )}</p>
         </section>
-        <h4>主会话 Profile</h4>
+        <h4>${escapeHtml(t("settings.delegation.requireConfirm"))}</h4>
+        <section class="settings-fields">${kindChecks}</section>
+        <h4>${escapeHtml(t("settings.delegation.grants"))}</h4>
+        <section class="settings-fields">
+          <label class="settings-field settings-field-checkbox">
+            <span>${escapeHtml(t("settings.delegation.grant.permanent_read"))}</span>
+            <input id="policy-grant-permanent-read" type="checkbox" ${grants.permanent_read ? "checked" : ""} />
+          </label>
+          <label class="settings-field settings-field-checkbox">
+            <span>${escapeHtml(t("settings.delegation.grant.session_write_new"))}</span>
+            <input id="policy-grant-write-new" type="checkbox" ${grants.session_write_new ? "checked" : ""} />
+          </label>
+          <label class="settings-field settings-field-checkbox">
+            <span>${escapeHtml(t("settings.delegation.grant.session_code_exec"))}</span>
+            <input id="policy-grant-code-exec" type="checkbox" ${grants.session_code_exec ? "checked" : ""} />
+          </label>
+        </section>
+        <div class="platform-actions">
+          <button type="button" class="primary" id="policy-save">${escapeHtml(t("action.save"))}</button>
+          <span id="policy-feedback" class="settings-feedback" aria-live="polite"></span>
+        </div>
+        <h4>${escapeHtml(t("settings.delegation.profiles"))}</h4>
         <table class="settings-table"><thead><tr><th>模式</th><th>写盘</th><th>委派</th></tr></thead>
         <tbody>${profileRows}</tbody></table>
-        <h4>子 Agent Archetype</h4>
+        <h4>${escapeHtml(t("settings.delegation.archetypes"))}</h4>
         <table class="settings-table"><thead><tr><th>类型</th><th>权限</th><th>再 spawn</th><th>工具（摘要）</th></tr></thead>
         <tbody>${archRows}</tbody></table>
-        <h4>需确认的操作</h4>
-        <ul class="settings-list">${kinds
-          .map((k) => `<li><code>${escapeHtml(k.id)}</code> — ${escapeHtml(k.label)}</li>`)
-          .join("")}</ul>
-        <h4>当前会话授权</h4>
-        <ul class="settings-list">
-          <li>永久读授权：${grants.permanent_read ? "已开" : "未开"}</li>
-          <li>本会话新建文件免确认：${grants.session_write_new ? "已开" : "未开"}</li>
-          <li>本会话 code_exec 免确认：${grants.session_code_exec ? "已开" : "未开"}</li>
-        </ul>
-        <h4>说明</h4>
+        <h4>${escapeHtml(t("settings.delegation.notes"))}</h4>
         <ul class="settings-list">${notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
       </div>`;
+    document.getElementById("policy-permission-mode")?.addEventListener("change", (event) => {
+      const value = event.target?.value;
+      if (value && value !== "custom") {
+        applyPermissionPresetToForm(value);
+      } else {
+        const warn = document.getElementById("policy-yolo-warn");
+        if (warn) warn.hidden = true;
+      }
+    });
+    for (const id of CONFIRM_KIND_IDS) {
+      document.getElementById(`policy-confirm-${id}`)?.addEventListener("change", () => {
+        syncPermissionModeFromKinds();
+      });
+    }
+    document.getElementById("policy-save")?.addEventListener("click", () => {
+      void savePolicySettings();
+    });
   }
 
   const SOUL_PRESETS = {
@@ -1019,23 +1186,26 @@
   function renderAgentMemoryPane() {
     const bg = backgroundTasks || {};
     const thinkOn = Boolean(bg.think_enabled);
-    const summaryOn = Boolean(bg.memory_summary_enabled);
     const thinkInterval = bg.think_interval_hours || 6;
-    const summaryHour = bg.memory_summary_hour ?? 23;
+    const keywords = Array.isArray(bg.auto_memory_keywords) && bg.auto_memory_keywords.length
+      ? bg.auto_memory_keywords.join("\n")
+      : "记住";
     const lastThink = bg.last_think_at
       ? escapeHtml(String(bg.last_think_at).slice(0, 16))
-      : "尚未运行";
-    const lastSummary = bg.last_summary_date
-      ? escapeHtml(String(bg.last_summary_date))
       : "尚未运行";
 
     contentEl.innerHTML = `
       <div class="settings-pane profile-edit-pane">
         <header class="settings-pane-head">
           <h3>持久记忆</h3>
-          <p>MEMORY.md 记录用户事实、任务/项目/环境事实与每日会话摘要，每次对话注入系统提示。Agent 也可通过 memory 工具更新。灵犀身份请编辑「身份 SOUL」。</p>
+          <p>MEMORY.md 记录用户事实与环境/项目事实，每次对话注入系统提示。对话里出现下方关键词时，会把关键词后面的内容自动写入 MEMORY.md。</p>
         </header>
         <div class="settings-fields">
+          <label class="settings-field" for="bg-auto-memory-keywords">
+            <span>自动写入关键词（每行一个，默认「记住」）</span>
+            <textarea id="bg-auto-memory-keywords" class="profile-editor" rows="3" placeholder="记住">${escapeHtml(keywords)}</textarea>
+          </label>
+          <p class="platform-meta">示例：说「记住：偏好简洁回复」会立刻追加到 MEMORY.md。也支持「写入记忆：…」等固定说法。</p>
           <label class="settings-field settings-field-row">
             <span>后台思考</span>
             <input type="checkbox" id="bg-think-enabled" ${thinkOn ? "checked" : ""} />
@@ -1045,18 +1215,9 @@
             <input type="number" id="bg-think-interval" min="1" max="168" value="${escapeAttr(String(thinkInterval))}" />
           </label>
           <p class="platform-meta">上次：${lastThink}</p>
-          <label class="settings-field settings-field-row">
-            <span>记忆摘要</span>
-            <input type="checkbox" id="bg-summary-enabled" ${summaryOn ? "checked" : ""} />
-          </label>
-          <label class="settings-field">
-            <span>摘要时刻（0–23 点）</span>
-            <input type="number" id="bg-summary-hour" min="0" max="23" value="${escapeAttr(String(summaryHour))}" />
-          </label>
-          <p class="platform-meta">上次：${lastSummary}</p>
         </div>
         <div class="platform-actions">
-          <button class="btn-text save-btn" type="button" id="btn-save-background">保存后台任务</button>
+          <button class="btn-text save-btn" type="button" id="btn-save-background">保存记忆设置</button>
         </div>
         <div id="background-feedback" class="platform-feedback" hidden></div>
         <label class="settings-field" for="durable-memory-editor">
@@ -1077,18 +1238,20 @@
     const feedback = document.getElementById("background-feedback");
     const thinkEl = document.getElementById("bg-think-enabled");
     const intervalEl = document.getElementById("bg-think-interval");
-    const summaryEl = document.getElementById("bg-summary-enabled");
-    const hourEl = document.getElementById("bg-summary-hour");
-    if (!feedback || !thinkEl || !intervalEl || !summaryEl || !hourEl) return;
+    const keywordsEl = document.getElementById("bg-auto-memory-keywords");
+    if (!feedback || !thinkEl || !intervalEl) return;
+    const keywords = String(keywordsEl?.value || "")
+      .split(/[\n,，;；]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
     try {
       const updated = await window.SecretaryAPI.request("PUT", "/api/agent/background", {
         think_enabled: thinkEl.checked,
         think_interval_hours: Number(intervalEl.value) || 6,
-        memory_summary_enabled: summaryEl.checked,
-        memory_summary_hour: Number(hourEl.value),
+        auto_memory_keywords: keywords.length ? keywords : ["记住"],
       });
       backgroundTasks = updated;
-      showFeedback(feedback, "success", "后台任务已保存");
+      showFeedback(feedback, "success", "记忆设置已保存");
     } catch (error) {
       showFeedback(feedback, "error", `保存失败：${error.message}`);
     }

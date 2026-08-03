@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from secretary.agent.fs_jail import full_fs_access_scope
 from secretary.agent.llm_client import ChatCompletionResult, LlmToolCall
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import AgentLoop
@@ -68,6 +69,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
     )
 
     with (
+        full_fs_access_scope(True),
         patch("secretary.agent.loop.requires_forced_read_tool", return_value=False),
         patch("secretary.agent.loop.should_retry_for_grounding", return_value=False),
         patch("secretary.agent.loop.should_retry_for_verification", return_value=False),
@@ -90,6 +92,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
     assert paused.pending.tool_name == "write"
 
     with (
+        full_fs_access_scope(True),
         patch("secretary.agent.loop.requires_forced_read_tool", return_value=False),
         patch("secretary.agent.loop.should_retry_for_grounding", return_value=False),
         patch("secretary.agent.loop.should_retry_for_verification", return_value=False),
@@ -171,6 +174,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
     )
 
     with (
+        full_fs_access_scope(True),
         patch("secretary.agent.loop.requires_forced_read_tool", return_value=False),
         patch("secretary.agent.loop.should_retry_for_grounding", return_value=False),
         patch("secretary.agent.loop.should_retry_for_verification", return_value=False),

@@ -88,6 +88,7 @@ def test_write_and_edit_need_confirmation(tmp_path: Path) -> None:
         {"path": str(path), "content": "x"},
         working_dir=tmp_path,
         file_auth=auth,
+        full_fs_access=True,
     )
     assert needs
     assert kind.startswith("write")
@@ -97,5 +98,6 @@ def test_write_and_edit_need_confirmation(tmp_path: Path) -> None:
         {"path": str(path), "oldText": "a", "newText": "b"},
         working_dir=tmp_path,
         file_auth=auth,
+        full_fs_access=True,
     )
     assert needs2

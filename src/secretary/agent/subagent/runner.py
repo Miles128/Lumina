@@ -294,14 +294,22 @@ class SubAgentRunner:
             cancel_check=cancel_check,
         )
 
+        from secretary.agent.fs_jail import get_full_fs_access
+
+        fs_access = get_full_fs_access()
+
         def _execute() -> LoopResult:
+            from secretary.agent.fs_jail import full_fs_access_scope
             from secretary.agent.write_gate import subagent_write_gate_scope
 
-            with subagent_write_gate_scope(
-                archetype=state.archetype,
-                run_id=state.run_id,
-                workspace=working_dir,
-                unlocked=False,
+            with (
+                full_fs_access_scope(fs_access),
+                subagent_write_gate_scope(
+                    archetype=state.archetype,
+                    run_id=state.run_id,
+                    workspace=working_dir,
+                    unlocked=False,
+                ),
             ):
                 return loop.resume_after_confirmation(
                     state.pending,
@@ -498,14 +506,23 @@ class SubAgentRunner:
             cancel_check=cancel_check,
         )
 
+        from secretary.agent.fs_jail import get_full_fs_access
+
+        fs_access = get_full_fs_access()
+
         def _execute() -> LoopResult | SubAgentResumeState:
+            from secretary.agent.fs_jail import full_fs_access_scope
             from secretary.agent.write_gate import subagent_write_gate_scope
 
-            with subagent_write_gate_scope(
-                archetype=archetype,
-                run_id=run_id,
-                workspace=working_dir,
-                unlocked=False,
+            # ThreadPoolExecutor does not inherit ContextVars — capture parent flag.
+            with (
+                full_fs_access_scope(fs_access),
+                subagent_write_gate_scope(
+                    archetype=archetype,
+                    run_id=run_id,
+                    workspace=working_dir,
+                    unlocked=False,
+                ),
             ):
                 result = loop.run(messages, temperature=self._deps.temperature)
             if result.pending_confirmation and result.messages_snapshot is not None:

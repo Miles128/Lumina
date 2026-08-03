@@ -174,7 +174,7 @@ class ProfileService:
 def clear_polluted_derived_state(data_dir: Path) -> list[str]:
     """Drop scheduler files that may embed hallucinated chat summaries."""
     removed: list[str] = []
-    for name in ("think_state.json", "memory_summary_state.json"):
+    for name in ("think_state.json",):
         path = data_dir / name
         if path.exists():
             path.unlink()

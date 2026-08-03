@@ -70,10 +70,15 @@ class LuminaMemory:
         self.memory_md_path.write_text(content + "\n", encoding="utf-8")
 
     def append_memory_md(self, line: str) -> None:
-        existing = self.read_memory_md()
-        if line.strip() in existing:
+        from secretary.agent.grounding import is_polluted_memory_fact
+
+        cleaned = line.strip()
+        if not cleaned or is_polluted_memory_fact(cleaned):
             return
-        updated = f"{existing}\n{line.strip()}".strip()
+        existing = self.read_memory_md()
+        if cleaned in existing:
+            return
+        updated = f"{existing}\n{cleaned}".strip()
         if len(updated) > MEMORY_MD_MAX_CHARS:
             updated = updated[:MEMORY_MD_MAX_CHARS]
         self.write_memory_md(updated)
@@ -108,6 +113,10 @@ class LuminaMemory:
             line = text.strip()
             if not line:
                 return f"Error: empty text for add to {label}"
+            from secretary.agent.grounding import is_polluted_memory_fact
+
+            if is_polluted_memory_fact(line):
+                return f"Skipped polluted fact for {label}"
             if line in content:
                 return f"Already present in {label}"
             if content:

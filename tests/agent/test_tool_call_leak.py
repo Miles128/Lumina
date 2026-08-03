@@ -44,3 +44,21 @@ def test_sanitize_strips_tool_call_leak() -> None:
     out = sanitize_user_facing_reply(raw, "再分析一遍")
     assert "<function_calls>" not in out
     assert "<invoke" not in out
+
+
+def test_detect_and_strip_dsml_tool_leak() -> None:
+    raw = (
+        "我先定位 MEMORY.md。\n"
+        "<｜｜DSML｜｜tool_calls>\n"
+        '<｜｜DSML｜｜invoke name="glob">\n'
+        '<｜｜DSML｜｜parameter name="pattern" string="true">**/MEMORY.md</｜｜DSML｜｜parameter>\n'
+        "</｜｜DSML｜｜invoke>\n"
+        "</｜｜DSML｜｜tool_calls>"
+    )
+    assert reply_contains_tool_call_markup(raw)
+    cleaned = strip_tool_call_markup(raw)
+    assert "DSML" not in cleaned
+    assert "glob" not in cleaned
+    assert "tool_calls" not in cleaned
+    assert "我先定位" in cleaned
+    assert "MEMORY.md" in cleaned

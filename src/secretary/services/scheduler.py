@@ -10,7 +10,6 @@ from pathlib import Path
 
 from secretary.config import Settings
 from secretary.services.briefing import BriefingService
-from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.profile_service import ProfileService
 from secretary.services.scheduled_think import ScheduledThinkService
 from secretary.services.sync import SyncService
@@ -28,14 +27,12 @@ class BackgroundScheduler:
         profile_service: ProfileService,
         briefing_service: BriefingService,
         think_service: ScheduledThinkService | None = None,
-        memory_summarizer: MemorySummarizerService | None = None,
     ) -> None:
         self._settings = settings
         self._sync_service = sync_service
         self._profile_service = profile_service
         self._briefing_service = briefing_service
         self._think_service = think_service
-        self._memory_summarizer = memory_summarizer
         self._state_path = settings.resolved_data_dir() / _BRIEFING_STATE
 
     async def run_until_stopped(self, shutdown: asyncio.Event) -> None:
@@ -56,7 +53,6 @@ class BackgroundScheduler:
                 await self._run_sync("interval")
             await self._maybe_run_briefing()
             await self._maybe_run_think()
-            await self._maybe_run_memory_summary()
 
     async def _run_sync(self, reason: str) -> None:
         try:
@@ -92,17 +88,6 @@ class BackgroundScheduler:
             await asyncio.to_thread(self._think_service.run)
         except Exception:
             logger.exception("scheduled think failed")
-
-    async def _maybe_run_memory_summary(self) -> None:
-        if self._memory_summarizer is None:
-            return
-        hour = datetime.now().hour
-        if not self._memory_summarizer.should_run(hour):
-            return
-        try:
-            await asyncio.to_thread(self._memory_summarizer.run)
-        except Exception:
-            logger.exception("memory summary failed")
 
     def _load_last_briefing_date(self) -> str:
         if not self._state_path.exists():

@@ -231,7 +231,12 @@ class WorkflowAgentRunner:
             },
             {"role": "user", "content": user_content},
         ]
-        plan = AgentTurnPlan(messages=messages, max_steps=max_steps, tools=tools)
+        plan = AgentTurnPlan(
+            messages=messages,
+            max_steps=max_steps,
+            tools=tools,
+            runtime_backend="aisuite",
+        )
         result = self._turn_runner.run_agent_turn(
             self._llm_config,
             plan,

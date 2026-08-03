@@ -139,17 +139,13 @@ class BackgroundTasksResponse(BaseModel):
     think_interval_hours: int
     last_think_at: str
     last_think_markdown: str
-    memory_summary_enabled: bool
-    memory_summary_hour: int
-    last_summary_date: str
-    last_summary: str
+    auto_memory_keywords: list[str] = Field(default_factory=lambda: ["记住"])
 
 
 class BackgroundTasksUpdateRequest(BaseModel):
     think_enabled: bool | None = None
     think_interval_hours: int | None = Field(default=None, ge=1, le=168)
-    memory_summary_enabled: bool | None = None
-    memory_summary_hour: int | None = Field(default=None, ge=0, le=23)
+    auto_memory_keywords: list[str] | None = None
 
 
 class PlatformFieldResponse(BaseModel):
@@ -231,6 +227,14 @@ class SoulUpdateRequest(BaseModel):
     markdown: str = Field(max_length=50_000)
 
 
+class ConfirmRequireSchema(BaseModel):
+    write_new: bool = True
+    write_modify: bool = True
+    write_delete: bool = True
+    shell: bool = True
+    action: bool = True
+
+
 class HarnessConfigSchema(BaseModel):
     max_tool_rounds: int = Field(default=20, ge=1, le=64)
     light_max_steps: int = Field(default=3, ge=1, le=16)
@@ -242,6 +246,23 @@ class HarnessConfigSchema(BaseModel):
     thinking_mode: str = Field(default="auto", pattern="^(auto|enabled|disabled)$")
     reasoning_effort: str = Field(default="high", pattern="^(low|high|max)$")
     strict_tools: bool = False
+    runtime_backend: str = Field(default="aisuite", pattern="^(legacy|aisuite)$")
+    permission_mode: str = Field(
+        default="normal",
+        pattern="^(normal|auto|yolo|custom)$",
+    )
+    require_confirm: ConfirmRequireSchema = Field(default_factory=ConfirmRequireSchema)
+
+
+class AgentPolicyUpdateRequest(BaseModel):
+    """Editable FR-46 fields: permission mode, confirm kinds, session grants."""
+
+    permission_mode: str | None = Field(
+        default=None,
+        pattern="^(normal|auto|yolo|custom)$",
+    )
+    require_confirm: ConfirmRequireSchema | None = None
+    session_grants: dict[str, bool] | None = None
 
 
 class AgentConfigResponse(BaseModel):
@@ -254,6 +275,7 @@ class AgentConfigResponse(BaseModel):
     response_style: str
     agent_profile: str = "auto"
     shell_working_dir: str = ""
+    full_fs_access: bool = False
     status: str
     status_message: str
     active_source: str
@@ -272,6 +294,7 @@ class AgentConfigUpdateRequest(BaseModel):
     response_style: str = ""
     agent_profile: str = ""
     shell_working_dir: str | None = None
+    full_fs_access: bool | None = None
     harness: HarnessConfigSchema | None = None
 
 

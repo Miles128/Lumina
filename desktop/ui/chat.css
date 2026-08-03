@@ -1239,6 +1239,33 @@ html, body {
 .tp-lane-detail[hidden] {
   display: none;
 }
+.tp-detail-block {
+  margin: 0 0 6px;
+}
+.tp-detail-block:last-child {
+  margin-bottom: 0;
+}
+.tp-detail-kicker {
+  margin: 0 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+.tp-detail-pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg)) 78%, #0b1220 22%);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
 .tp-detail-line {
   display: block;
   margin: 0 0 2px;
@@ -1289,6 +1316,27 @@ button.tp-chip.is-expandable:hover {
 .tp-chip.type-thought .tp-chip-label {
   color: var(--text-secondary);
   font-weight: 400;
+}
+.tp-chip.family-shell {
+  border-color: color-mix(in srgb, var(--line) 70%, #64748b 30%);
+  background: color-mix(in srgb, var(--bg) 55%, #0f172a 18%);
+}
+.tp-chip.family-shell .tp-chip-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 10.5px;
+}
+.tp-chip.family-file {
+  border-color: color-mix(in srgb, var(--line) 75%, #3b82f6 25%);
+  background: color-mix(in srgb, var(--bg) 70%, #1d4ed8 8%);
+}
+.tp-chip.family-network {
+  border-color: color-mix(in srgb, var(--line) 75%, #14b8a6 25%);
+}
+.tp-chip.family-memory {
+  border-color: color-mix(in srgb, var(--line) 75%, #a855f7 25%);
+}
+.tp-chip.family-mcp {
+  border-color: color-mix(in srgb, var(--line) 75%, #f59e0b 25%);
 }
 .tp-chip-icon {
   font-size: 11px;
@@ -1428,10 +1476,6 @@ button.tp-chip.is-expandable:hover {
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-tertiary);
-}
-
-.message-grounding-meta.is-verified {
-  color: #027a48;
 }
 
 .message-grounding-meta.is-unverified {
@@ -1692,6 +1736,34 @@ button.tp-chip.is-expandable:hover {
 
 .workspace-chip-clear[hidden] {
   display: none;
+}
+
+.fs-access-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.fs-access-chip:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.fs-access-chip[aria-pressed="true"] {
+  color: #b45309;
+  border-color: color-mix(in srgb, #b45309 35%, transparent);
+  background: color-mix(in srgb, #b45309 12%, transparent);
+  font-weight: 600;
 }
 
 .attach-btn {
@@ -2102,14 +2174,32 @@ button.tp-chip.is-expandable:hover {
   overflow: auto;
 }
 
-.settings-field-check {
+.settings-field-check,
+.settings-field-checkbox {
   flex-direction: row;
   align-items: center;
   gap: 10px;
 }
 
-.settings-field-check span { font-size: 14px; color: var(--text); }
-.settings-field-check input { width: auto; accent-color: var(--text); }
+.settings-field-check span,
+.settings-field-checkbox span { font-size: 14px; color: var(--text); }
+.settings-field-check input,
+.settings-field-checkbox input { width: auto; accent-color: var(--text); }
+
+.settings-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.settings-warning[hidden] {
+  display: none;
+}
 
 .settings-hint {
   padding: 12px 14px;
@@ -3078,22 +3168,34 @@ body.ui-width-wide {
 }
 
 .msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   border-radius: var(--radius);
-  padding: 2px 8px;
+  padding: 0;
   font: inherit;
-  font-size: 11px;
-  line-height: 1.4;
   cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .msg-action-btn:hover {
   color: var(--text);
   background: var(--control-hover);
+}
+
+.msg-action-btn:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: 1px;
+}
+
+.msg-action-icon {
+  flex-shrink: 0;
+  color: inherit;
 }
 
 /* Sibling branch switcher */

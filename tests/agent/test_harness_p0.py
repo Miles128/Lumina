@@ -82,7 +82,12 @@ def test_turn_runner_emits_turn_lifecycle(tmp_path) -> None:
             "secretary.agent.turn_runner.AgentLoop",
             MagicMock(return_value=fake_loop),
         )
-        plan = AgentTurnPlan(messages=[{"role": "user", "content": "go"}], max_steps=3, tools=[])
+        plan = AgentTurnPlan(
+            messages=[{"role": "user", "content": "go"}],
+            max_steps=3,
+            tools=[],
+            runtime_backend="legacy",
+        )
         runner.run_agent_turn(
             MagicMock(),
             plan,

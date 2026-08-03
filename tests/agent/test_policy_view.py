@@ -25,3 +25,6 @@ def test_build_policy_view_depth_and_archetypes(tmp_path: Path) -> None:
     assert explore["can_write"] is False
     assert view["session_grants"]["session_write_new"] is True
     assert any(p["id"] == "build" and p["can_spawn"] for p in view["profiles"])
+    assert view["permission_mode"] == "normal"
+    assert view["require_confirm"]["write_new"] is True
+    assert view["editable"] is True

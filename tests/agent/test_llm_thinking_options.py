@@ -8,6 +8,7 @@ from secretary.agent.llm_client import (
     LlmUsage,
     chat_completion,
     chat_completion_with_tools,
+    coerce_tool_choice_for_thinking,
     llm_usage_scope,
     schemas_to_openai_tools,
 )
@@ -91,6 +92,59 @@ def test_chat_completion_with_tools_enables_thinking_and_effort() -> None:
         )
     assert captured.get("thinking") == {"type": "enabled"}
     assert captured.get("reasoning_effort") == "high"
+
+
+def test_thinking_mode_coerces_required_tool_choice_to_auto() -> None:
+    assert (
+        coerce_tool_choice_for_thinking(
+            "required",
+            model="deepseek-v4-flash",
+            thinking="enabled",
+        )
+        == "auto"
+    )
+    assert (
+        coerce_tool_choice_for_thinking(
+            "required",
+            model="deepseek-v4-flash",
+            thinking="disabled",
+        )
+        == "required"
+    )
+    assert (
+        coerce_tool_choice_for_thinking(
+            "required",
+            model="gpt-4o",
+            thinking="enabled",
+        )
+        == "required"
+    )
+
+
+def test_chat_completion_with_tools_coerces_required_under_thinking() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_tools_request(client, url, payload, api_key):  # noqa: ANN001
+        captured.update(payload)
+        from secretary.agent.llm_client import _result_from_assistant_message
+
+        return _result_from_assistant_message(
+            {"role": "assistant", "content": "done", "tool_calls": []}
+        )
+
+    tools = schemas_to_openai_tools(
+        [{"name": "list_dir", "description": "List", "parameters": {"type": "object", "properties": {}}}]
+    )
+    with patch("secretary.agent.llm_client._tools_request", side_effect=fake_tools_request):
+        chat_completion_with_tools(
+            _deepseek_config(),
+            [{"role": "user", "content": "list"}],
+            tools,
+            tool_choice="required",
+            thinking="enabled",
+            reasoning_effort="high",
+        )
+    assert captured.get("tool_choice") == "auto"
 
 
 def test_strict_tools_marks_functions_and_uses_beta_url() -> None:

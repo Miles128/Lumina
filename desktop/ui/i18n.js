@@ -46,6 +46,15 @@
     "chat.newThread": { en: "New chat", zh: "新对话" },
     "chat.welcome": { en: "What to build today?", zh: "今天做点什么？" },
     "chat.placeholder": { en: "Message", zh: "输入消息" },
+    "chat.fullFsAccess": { en: "Full access", zh: "完全权限" },
+    "chat.fullFsAccess.tip": {
+      en: "Off = writes stay in the current workspace/sandbox. On = agent may write anywhere (still may confirm).",
+      zh: "关闭时仅可写当前工作区/会话沙箱；开启后可写任意路径（仍可能需要确认）。",
+    },
+    "chat.fullFsAccess.on": {
+      en: "Full filesystem access enabled",
+      zh: "已开启完全权限（可写沙箱外）",
+    },
     "chat.processing": { en: "Working…", zh: "正在处理…" },
     "chat.thinking": { en: "Thinking", zh: "思考中" },
     "chat.typing.understand": { en: "Understanding your question…", zh: "正在理解你的问题…" },
@@ -68,6 +77,9 @@
       en: "Click a step to expand",
       zh: "点击某一步可展开详情",
     },
+    "chat.progress.command": { en: "Command", zh: "命令" },
+    "chat.progress.action": { en: "Action", zh: "动作" },
+    "chat.progress.output": { en: "Output", zh: "输出" },
     "chat.progress.raw": { en: "Raw", zh: "模型原文" },
     "chat.confirm.subagent": { en: "Sub-agent action", zh: "子 Agent 操作" },
     "chat.turn.root": { en: "Current turn", zh: "当前回合" },
@@ -120,12 +132,138 @@
     "settings.profile": { en: "Profile", zh: "个人画像" },
     "settings.llm": { en: "LLM", zh: "大模型" },
     "settings.delegation": { en: "Delegation & confirm", zh: "委派与确认" },
+    "settings.delegation.desc": {
+      en: "Choose a permission preset (normal / auto / yolo), then fine-tune which actions still require confirmation. Profile and archetype tables below are read-only.",
+      zh: "选择权限档位（normal / auto / yolo），再细调哪些操作仍需确认。下方 Profile / Archetype 表为只读说明。",
+    },
+    "settings.delegation.saved": {
+      en: "Permission policy saved",
+      zh: "权限策略已保存",
+    },
+    "settings.delegation.mode": { en: "Permission mode", zh: "权限档位" },
+    "settings.delegation.mode.normal": {
+      en: "normal — confirm all risky actions",
+      zh: "normal · 危险操作均需确认",
+    },
+    "settings.delegation.mode.auto": {
+      en: "auto — skip new-file write & code_exec",
+      zh: "auto · 新建文件与 code_exec 免确认",
+    },
+    "settings.delegation.mode.yolo": {
+      en: "yolo — skip most confirmations (dangerous)",
+      zh: "yolo · 几乎不确认（危险）",
+    },
+    "settings.delegation.mode.custom": {
+      en: "custom — fine-tuned kinds",
+      zh: "custom · 自定义细粒度",
+    },
+    "settings.delegation.yoloWarn": {
+      en: "Yolo disables write/shell/action confirmations and grants permanent read. Use only in trusted local workspaces.",
+      zh: "Yolo 会关闭写/Shell/其他操作确认，并开启永久读授权。仅在可信本地工作区使用。",
+    },
+    "settings.delegation.requireConfirm": {
+      en: "Require confirmation for",
+      zh: "需确认的操作",
+    },
+    "settings.delegation.kind.write_new": { en: "New file write", zh: "新建文件写入" },
+    "settings.delegation.kind.write_modify": { en: "Modify existing file", zh: "修改已有文件" },
+    "settings.delegation.kind.write_delete": { en: "Delete file", zh: "删除文件" },
+    "settings.delegation.kind.shell": { en: "Non-readonly shell", zh: "非只读 Shell" },
+    "settings.delegation.kind.action": {
+      en: "Other writes / code_exec / MCP",
+      zh: "其他写操作 / code_exec / MCP",
+    },
+    "settings.delegation.grants": { en: "Session grants", zh: "当前会话授权" },
+    "settings.delegation.grant.permanent_read": {
+      en: "Permanent read grant",
+      zh: "永久读授权",
+    },
+    "settings.delegation.grant.session_write_new": {
+      en: "Session: new-file write without confirm",
+      zh: "本会话新建文件免确认",
+    },
+    "settings.delegation.grant.session_code_exec": {
+      en: "Session: code_exec without confirm",
+      zh: "本会话 code_exec 免确认",
+    },
+    "settings.delegation.profiles": { en: "Primary profiles", zh: "主会话 Profile" },
+    "settings.delegation.archetypes": { en: "Sub-agent archetypes", zh: "子 Agent Archetype" },
+    "settings.delegation.notes": { en: "Notes", zh: "说明" },
+    "settings.delegation.limits": {
+      en: "Sub-agent depth cap: {depth} · max spawns/turn: {spawns} · parallel explore: {explore}",
+      zh: "子 Agent 深度上限：{depth} · 每轮最多 spawn：{spawns} · 并行 explore：{explore}",
+    },
     "settings.harness": { en: "Harness", zh: "Harness 参数" },
     "settings.harness.desc": {
       en: "Tune loop budget, compaction, and reasoning-trace retention. Defaults are safe; advanced knobs for controlled environments.",
       zh: "调整工具轮次、上下文压缩与思考链保留策略。默认安全合理；企业可控环境可细调。",
     },
     "settings.harness.saved": { en: "Harness settings saved", zh: "Harness 参数已保存" },
+    "settings.harness.max_tool_rounds": {
+      en: "Max tool rounds",
+      zh: "最大工具轮次",
+    },
+    "settings.harness.light_max_steps": {
+      en: "Light profile max steps",
+      zh: "轻量模式最大步数",
+    },
+    "settings.harness.compaction_max_tokens": {
+      en: "Compaction token budget",
+      zh: "压缩触发 token 上限",
+    },
+    "settings.harness.compaction_keep_tail": {
+      en: "Compaction keep-tail messages",
+      zh: "压缩后保留尾部消息数",
+    },
+    "settings.harness.trace_retention": {
+      en: "Trace retention",
+      zh: "思考链保留策略",
+    },
+    "settings.harness.trace_retention.full": { en: "full", zh: "完整" },
+    "settings.harness.trace_retention.summary": { en: "summary", zh: "摘要" },
+    "settings.harness.trace_retention.off": { en: "off", zh: "关闭" },
+    "settings.harness.trace_retain_days": {
+      en: "Trace retain days",
+      zh: "思考链保留天数",
+    },
+    "settings.harness.max_tool_output_chars": {
+      en: "Max tool output chars",
+      zh: "工具输出最大字符数",
+    },
+    "settings.harness.thinking_mode": {
+      en: "Thinking mode (DeepSeek)",
+      zh: "思考模式（DeepSeek）",
+    },
+    "settings.harness.thinking_mode.auto": {
+      en: "auto — off in DIRECT / on in Agent",
+      zh: "auto · DIRECT 关 / Agent 开",
+    },
+    "settings.harness.thinking_mode.enabled": {
+      en: "enabled — always on",
+      zh: "enabled · 始终开启",
+    },
+    "settings.harness.thinking_mode.disabled": {
+      en: "disabled — always off",
+      zh: "disabled · 始终关闭",
+    },
+    "settings.harness.reasoning_effort": {
+      en: "Reasoning effort (Agent)",
+      zh: "推理强度（Agent）",
+    },
+    "settings.harness.reasoning_effort.low": { en: "low", zh: "低" },
+    "settings.harness.reasoning_effort.high": {
+      en: "high (default)",
+      zh: "high（默认）",
+    },
+    "settings.harness.reasoning_effort.max": { en: "max", zh: "最大" },
+    "settings.harness.strict_tools": {
+      en: "Strict tools (DeepSeek beta)",
+      zh: "严格工具调用（DeepSeek beta）",
+    },
+    "settings.harness.footer": {
+      en: "Sub-agent depth hard-limit is depth=1 and cannot be bypassed. See Delegation & confirm.",
+      zh: "子 Agent 深度硬限 depth=1 不可配置绕过。委派说明见「委派与确认」。",
+    },
     "chat.progress.exportTrace": { en: "Export trace", zh: "导出思考链" },
     "chat.progress.loadTrace": { en: "Reload trace", zh: "加载轨迹" },
     "workflows.fromTemplate": { en: "From template", zh: "从模板" },

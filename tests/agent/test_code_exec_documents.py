@@ -118,13 +118,21 @@ def test_code_exec_session_grant_skips_confirmation(tmp_path: Path) -> None:
     tool = CodeExecTool()
     auth = FileAuthService(tmp_path / "file_auth.json")
     needs, kind = tool_requires_confirmation(
-        tool, {"code": "print(1)"}, working_dir=tmp_path, file_auth=auth
+        tool,
+        {"code": "print(1)"},
+        working_dir=tmp_path,
+        file_auth=auth,
+        full_fs_access=True,
     )
     assert needs is True
     assert kind == "action"
     auth.grant_session_code_exec()
     needs2, kind2 = tool_requires_confirmation(
-        tool, {"code": "print(1)"}, working_dir=tmp_path, file_auth=auth
+        tool,
+        {"code": "print(1)"},
+        working_dir=tmp_path,
+        file_auth=auth,
+        full_fs_access=True,
     )
     assert needs2 is False
     assert kind2 == ""

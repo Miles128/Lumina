@@ -116,9 +116,18 @@
   function noteToolEvent(event) {
     const kind = String(event?.kind || "");
     const tool = String(event?.tool_name || "");
-    if (!WRITE_TOOLS.test(tool)) return;
     if (kind !== "tool_started" && kind !== "tool_finished") return;
     if (kind === "tool_finished" && event?.success === false) return;
+
+    const structured = Array.isArray(event?.paths)
+      ? event.paths.map((p) => String(p || "").trim()).filter(Boolean)
+      : [];
+    if (structured.length) {
+      for (const path of structured) noteFile(path, tool || "tool");
+      return;
+    }
+
+    if (!WRITE_TOOLS.test(tool)) return;
     const detail = String(event?.detail || event?.message || "");
     const paths = extractPaths(detail);
     if (tool === "move" && paths.length >= 2) {

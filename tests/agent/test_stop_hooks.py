@@ -171,9 +171,68 @@ def test_orchestrator_confirmed_action_continues_loop_after_followup_tool_call(
             messages=[{"role": "user", "content": "执行命令后继续完成任务"}],
             temperature=0.0,
             working_dir=tmp_path,
+            runtime_backend="legacy",
         )
 
     assert result.reply == final_answer
     assert result.used_tools == ["shell", "list_dir"]
     assert mocked.call_count == 2
+
+
+def test_resume_after_confirmation_pairs_native_tool_result(tmp_path: Path) -> None:
+    """Confirmed code_exec/shell must close the open tool_call and continue the loop."""
+    from secretary.agent.loop import AgentLoop
+    from secretary.agent.tools.code_exec import CodeExecTool
+
+    loop = AgentLoop(_llm_config(), tools=[CodeExecTool()], working_dir=tmp_path)
+    pending = PendingConfirmation(
+        action_id="act_ce",
+        tool_name="code_exec",
+        arguments={"code": "print('from-sandbox')"},
+        description="🐍 运行 Python",
+        risk_level="high",
+        confirmation_kind="action",
+    )
+    messages = [
+        {"role": "user", "content": "跑一段 python 告诉我输出"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_code_exec_1",
+                    "type": "function",
+                    "function": {
+                        "name": "code_exec",
+                        "arguments": '{"code":"print(\'from-sandbox\')"}',
+                    },
+                }
+            ],
+        },
+    ]
+    final_answer = "输出是 from-sandbox。"
+    captured: list[list[dict]] = []
+
+    def fake_completion(config, payload, **kwargs):  # noqa: ANN001, ANN003
+        del config, kwargs
+        captured.append(list(payload))
+        return final_answer
+
+    with (
+        patch(
+            "secretary.agent.loop.chat_completion_with_tools",
+            side_effect=AgentError("native tools unavailable"),
+        ),
+        patch("secretary.agent.loop.chat_completion", side_effect=fake_completion),
+    ):
+        result = loop.resume_after_confirmation(pending, messages, temperature=0.0)
+
+    assert "from-sandbox" in result.reply or result.reply == final_answer
+    assert "code_exec" in result.used_tools
+    assert captured, "expected loop to call the model after tool result"
+    roles = [m.get("role") for m in captured[0]]
+    assert "tool" in roles
+    tool_msgs = [m for m in captured[0] if m.get("role") == "tool"]
+    assert tool_msgs[0]["tool_call_id"] == "call_code_exec_1"
+    assert "from-sandbox" in tool_msgs[0]["content"]
 

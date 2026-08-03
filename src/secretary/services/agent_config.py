@@ -127,12 +127,13 @@ MODEL_PRESETS: list[dict[str, str]] = [
 
 
 class BackgroundConfig(BaseModel):
-    """Periodic background think + daily MEMORY.md summarization."""
+    """Periodic background think + MEMORY.md capture keywords."""
 
     think_enabled: bool = True
     think_interval_hours: int = Field(default=6, ge=1, le=168)
-    memory_summary_enabled: bool = True
-    memory_summary_hour: int = Field(default=23, ge=0, le=23)
+    # When the user message contains one of these keywords, text after it is
+    # appended to MEMORY.md automatically (settings → 持久记忆).
+    auto_memory_keywords: list[str] = Field(default_factory=lambda: ["记住"])
 
 
 class AgentConfigDocument(BaseModel):
@@ -145,6 +146,9 @@ class AgentConfigDocument(BaseModel):
     response_style: str = Field(default="standard", pattern="^(standard|brief)$")
     agent_profile: str = Field(default="auto", pattern="^(auto|build|ask|plan)$")
     shell_working_dir: str = ""
+    # When False (default), writes/deletes/escaping shell paths must stay under
+    # the turn working_dir (thread sandbox or selected workspace).
+    full_fs_access: bool = False
     hooks: dict[str, Any] = Field(default_factory=dict)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     background: BackgroundConfig = Field(default_factory=BackgroundConfig)
@@ -162,6 +166,7 @@ class AgentConfigView:
     response_style: str
     agent_profile: str
     shell_working_dir: str
+    full_fs_access: bool
     status: str
     status_message: str
     active_source: str
@@ -240,6 +245,7 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
             hooks=current.hooks,
             agent_profile=current.agent_profile,
             shell_working_dir=current.shell_working_dir,
+            full_fs_access=current.full_fs_access,
         )
         self.save(document)
         return document
@@ -275,6 +281,7 @@ class AgentConfigStore(BaseJsonConfigStore[AgentConfigDocument]):
             response_style=document.response_style,
             agent_profile=document.agent_profile,
             shell_working_dir=document.shell_working_dir,
+            full_fs_access=document.full_fs_access,
             status=status,
             status_message=message,
             active_source=resolved.source if resolved else "none",
@@ -297,8 +304,7 @@ def resolve_background_config(
     return BackgroundConfig(
         think_enabled=settings.think_enabled,
         think_interval_hours=settings.think_interval_hours,
-        memory_summary_enabled=settings.memory_summary_enabled,
-        memory_summary_hour=settings.memory_summary_hour,
+        auto_memory_keywords=["记住"],
     )
 
 

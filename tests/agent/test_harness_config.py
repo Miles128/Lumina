@@ -20,6 +20,10 @@ def test_harness_defaults() -> None:
     assert cfg.thinking_mode == "auto"
     assert cfg.reasoning_effort == "high"
     assert cfg.strict_tools is False
+    assert cfg.runtime_backend == "aisuite"
+    assert cfg.permission_mode == "normal"
+    assert cfg.require_confirm.write_new is True
+    assert cfg.require_confirm.shell is True
 
 
 def test_harness_persisted_on_agent_config(tmp_path: Path) -> None:

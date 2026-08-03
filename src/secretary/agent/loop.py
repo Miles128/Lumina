@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from secretary.agent.artifact_paths import collect_artifact_paths
 from secretary.agent.confirmation_policy import tool_requires_confirmation
 from secretary.agent.context_compaction import compact_messages_if_needed
 from secretary.agent.grounding import (
@@ -38,6 +39,7 @@ from secretary.agent.grounding import (
     should_retry_for_verification,
     verify_reply_against_evidence,
 )
+from secretary.agent.harness_config import ConfirmRequireConfig
 from secretary.agent.lifecycle_hooks import (
     AfterToolContext,
     AfterToolExecutionHook,
@@ -122,6 +124,38 @@ def _tool_action_detail(tool: Any, arguments: dict[str, Any], working_dir: Path)
             return ""
 
 
+def _pending_tool_call_id(messages: list[dict[str, Any]], tool_name: str) -> str | None:
+    """Return an unanswered native tool_call id for ``tool_name`` after the last assistant."""
+    answered: set[str] = set()
+    last_assistant_idx = -1
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        if role == "assistant" and isinstance(message.get("tool_calls"), list):
+            last_assistant_idx = index
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id") or "").strip()
+            if call_id:
+                answered.add(call_id)
+    if last_assistant_idx < 0:
+        return None
+    tool_calls = messages[last_assistant_idx].get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return None
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        name = ""
+        if isinstance(function, dict):
+            name = str(function.get("name") or "")
+        elif call.get("name"):
+            name = str(call.get("name") or "")
+        call_id = str(call.get("id") or "").strip()
+        if name == tool_name and call_id and call_id not in answered:
+            return call_id
+    return None
+
+
 @dataclass
 class StepResult:
     thought: str
@@ -186,6 +220,7 @@ class AgentLoop:
         thinking: str = "enabled",
         reasoning_effort: str | None = "high",
         strict_tools: bool = False,
+        require_confirm: ConfirmRequireConfig | None = None,
     ) -> None:
         self._llm_config = llm_config
         raw_tools = list(tools or _default_tools())
@@ -195,6 +230,7 @@ class AgentLoop:
         if not self._working_dir.is_dir():
             self._working_dir = Path.home()
         self._file_auth = file_auth
+        self._require_confirm = require_confirm
         self._stop_hooks = stop_hooks or [
             MaxIterationsStopHook(max_steps),
             ThirdPersonMetaReplyStopHook(),
@@ -885,10 +921,11 @@ class AgentLoop:
                     tool_call.arguments,
                     self._working_dir,
                 )
+                paired_call = ensure_tool_call_id(tool_call, suffix=str(step_idx))
                 pending = PendingConfirmation(
                     action_id=action_id,
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
+                    tool_name=paired_call.name,
+                    arguments=paired_call.arguments,
                     description=desc,
                     risk_level=risk,
                     confirmation_kind=confirmation_kind,
@@ -896,11 +933,21 @@ class AgentLoop:
                 )
                 step = StepResult(
                     thought=thought,
-                    tool_call=tool_call,
+                    tool_call=paired_call,
                     tool_output=f"[Waiting for user confirmation] {desc}",
                     needs_confirmation=True,
                 )
                 steps.append(step)
+                # Keep the assistant tool-call turn in the snapshot so resume can
+                # pair a real tool result (native) or a [Tool Result] user message.
+                if native_used and assistant_message is not None:
+                    current_messages.append(
+                        assistant_message_for_tool_call(assistant_message, paired_call)
+                    )
+                else:
+                    current_messages.append(
+                        {"role": "assistant", "content": raw or thought or desc}
+                    )
                 return LoopResult(
                     reply=f"我需要你的确认才能继续：\n\n{desc}\n\n是否允许？",
                     steps=steps,
@@ -909,6 +956,8 @@ class AgentLoop:
                     pending_confirmation=pending,
                     pending_step=step,
                     messages_snapshot=list(current_messages),
+                    pause_assistant_message=assistant_message,
+                    pause_native_used=native_used,
                 )
 
             # 生命周期钩子：BeforeToolExecution（可修改参数或阻止执行）
@@ -983,6 +1032,15 @@ class AgentLoop:
                         success=True,
                         detail=_progress_detail_preview(tool_output),
                         latency_ms=_tool_latency_ms,
+                        paths=tuple(
+                            collect_artifact_paths(
+                                tool_call.name,
+                                tool_exec_args,
+                                self._working_dir,
+                                output=tool_output,
+                                success=True,
+                            )
+                        ),
                     )
                 )
             except Exception as exc:
@@ -1287,13 +1345,26 @@ class AgentLoop:
             tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
 
         continued = list(messages)
-        continued.append({
-            "role": "user",
-            "content": (
-                f"[User confirmed: {pending.description}]\n"
-                f"[Tool Result: {pending.tool_name}]\n{tool_output}"
-            ),
-        })
+        tool_call_id = _pending_tool_call_id(continued, pending.tool_name)
+        if tool_call_id:
+            # Native tool-calling: close the open tool_call so the model can continue.
+            continued.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": tool_output,
+                }
+            )
+        else:
+            continued.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[User confirmed: {pending.description}]\n"
+                        f"[Tool Result: {pending.tool_name}]\n{tool_output}"
+                    ),
+                }
+            )
         result = self.run(continued, temperature=temperature)
         if pending.tool_name not in result.used_tools:
             result.used_tools.insert(0, pending.tool_name)
@@ -1337,6 +1408,7 @@ class AgentLoop:
             arguments,
             working_dir=self._working_dir,
             file_auth=self._file_auth,
+            require_confirm=self._require_confirm,
         )
 
     def _run_before_iteration_hooks(self, snapshot: LoopSnapshot) -> StopDecision:
@@ -1650,6 +1722,15 @@ class AgentLoop:
                             tool_name=paired_call.name,
                             success=True,
                             detail=_progress_detail_preview(output),
+                            paths=tuple(
+                                collect_artifact_paths(
+                                    paired_call.name,
+                                    paired_call.arguments,
+                                    self._working_dir,
+                                    output=output,
+                                    success=True,
+                                )
+                            ),
                         )
                     )
                 except Exception as exc:

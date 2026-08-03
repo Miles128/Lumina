@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=79" />
+    <link rel="stylesheet" href="/assets/chat.css?v=80" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=12" />
     <link rel="stylesheet" href="/assets/vendor/drawflow.min.css?v=1" />
     <script src="/assets/theme.js?v=2"></script>
@@ -190,6 +190,9 @@
                   </button>
                   <button type="button" class="workspace-chip-clear" id="workspace-chip-clear" title="清除工作区" aria-label="清除工作区" hidden>×</button>
                 </div>
+                <button type="button" class="fs-access-chip" id="fs-access-chip" aria-pressed="false" data-i18n-title="chat.fullFsAccess.tip" title="关闭时仅可写当前工作区/会话沙箱" aria-label="完全权限">
+                  <span class="fs-access-chip-label" data-i18n="chat.fullFsAccess">完全权限</span>
+                </button>
                 <button type="button" class="attach-btn" id="attach-btn" title="添加附件" aria-label="添加附件">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a1.5 1.5 0 1 1-2.12-2.12l7.78-7.78"/>
@@ -313,7 +316,7 @@
     <script src="/assets/vendor/markdown-it.min.js?v=1"></script>
     <script src="/assets/vendor/purify.min.js?v=1"></script>
     <script src="/assets/markdown.js?v=1"></script>
-    <script src="/assets/i18n.js?v=21"></script>
+    <script src="/assets/i18n.js?v=22"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/lunar.js?v=3"></script>
     <script src="/assets/topbar.js?v=10"></script>
@@ -322,8 +325,8 @@
     <script src="/assets/vendor/drawflow.min.js?v=1"></script>
     <script src="/assets/workflow_graph.js?v=2"></script>
     <script src="/assets/workflows.js?v=4"></script>
-    <script src="/assets/artifacts.js?v=2"></script>
-    <script src="/assets/chat.js?v=72"></script>
+    <script src="/assets/artifacts.js?v=3"></script>
+    <script src="/assets/chat.js?v=73"></script>
     <script src="/assets/conversation_map.js?v=11"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->
     <script src="/assets/bootstrap.js?v=1"></script>
