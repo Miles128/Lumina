@@ -4379,3 +4379,25 @@ body.map-view-open .chat-column > .fork-banner {
   background: color-mix(in srgb, var(--danger, #d9413f) 14%, transparent);
   border-color: var(--danger, #d9413f);
 }
+
+/* Composer: artifact sidebar toggle */
+.artifact-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 8px;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.artifact-toggle-btn:hover {
+  background: var(--hover, #262e36);
+  color: var(--text);
+}
+.artifact-toggle-btn[aria-pressed="true"] {
+  color: var(--sig);
+  background: color-mix(in srgb, var(--sig, #4f8cff) 12%, transparent);
+}
