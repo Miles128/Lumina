@@ -36,6 +36,9 @@ def build_provider_configs(config: LlmConfig) -> dict[str, dict[str, Any]]:
     """Provider config dict suitable for ``aisuite.Client``."""
     provider = infer_provider_key(config)
     entry: dict[str, Any] = {"api_key": config.api_key}
+    # Retries are owned by llm_client's unified outer layer (incl. empty-content
+    # retry); disable the openai SDK's inner retries to avoid 2x retry storms.
+    entry["max_retries"] = 0
     base = config.base_url.strip().rstrip("/")
     if provider == "deepseek":
         # DeepSeek OpenAI client expects host without forcing /v1 twice.
