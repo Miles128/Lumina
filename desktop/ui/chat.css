@@ -4401,3 +4401,34 @@ body.map-view-open .chat-column > .fork-banner {
   color: var(--sig);
   background: color-mix(in srgb, var(--sig, #4f8cff) 12%, transparent);
 }
+
+/* Always-visible scrollbars (macOS overlay scrollbars hide by default) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border, #2a323b) transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border, #2a323b);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary, #55606c);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.artifact-toggle-btn .artifact-toggle-label {
+  font-size: 11px;
+  line-height: 1;
+}
