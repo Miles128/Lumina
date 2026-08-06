@@ -1667,14 +1667,22 @@
   }
 
   function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value)
+      : String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
   }
 
   function escapeAttr(value) {
-    return escapeHtml(value).replaceAll('"', "&quot;");
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value, { attrs: true })
+      : String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
   }
 
   window.SettingsModule = { open: openSettings, reload: loadSettings };

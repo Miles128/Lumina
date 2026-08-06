@@ -69,10 +69,10 @@
     return PREVIEW_EXTS.has(extOf(path)) || !extOf(path);
   }
 
-  function escapeHtml(text) {
+    function escapeHtml(value) {
     return window.LuminaUtils?.escapeHtml
-      ? window.LuminaUtils.escapeHtml(text)
-      : String(text || "")
+      ? window.LuminaUtils.escapeHtml(value)
+      : String(value ?? "")
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")

@@ -286,10 +286,23 @@
   }
 
   function escapeHtml(value) {
-    return LuminaUtils.escapeHtml(value, { attrs: true });
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value)
+      : String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
   }
 
   function escapeAttr(value) {
-    return escapeHtml(value).replaceAll("'", "&#39;");
+    const base = window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value, { attrs: true })
+      : String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+    return base.replace(/'/g, "&#39;");
   }
 })();
