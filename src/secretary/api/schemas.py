@@ -266,7 +266,7 @@ class HarnessConfigSchema(BaseModel):
     thinking_mode: str = Field(default="auto", pattern="^(auto|enabled|disabled)$")
     reasoning_effort: str = Field(default="high", pattern="^(low|high|max)$")
     strict_tools: bool = False
-    runtime_backend: str = Field(default="aisuite", pattern="^(legacy|aisuite)$")
+    runtime_backend: str = Field(default="agents_sdk", pattern="^(legacy|aisuite|agents_sdk)$")
     permission_mode: str = Field(
         default="normal",
         pattern="^(normal|auto|yolo|custom)$",

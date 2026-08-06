@@ -207,6 +207,8 @@ class PendingConfirmation:
     risk_level: str
     confirmation_kind: str = "action"
     diff_preview: str = ""
+    # Agents SDK backend: serialized RunState of the paused run (legacy backends leave empty).
+    sdk_state: str = ""
 
 
 class AgentLoop:

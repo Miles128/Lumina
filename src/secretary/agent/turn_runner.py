@@ -25,7 +25,12 @@ from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
 
-RuntimeBackend = Literal["legacy", "aisuite"]
+RuntimeBackend = Literal["legacy", "aisuite", "agents_sdk"]
+
+
+def _uses_legacy_pause(pending: Any) -> bool:
+    """A pending raised by a non-SDK backend (or a legacy restore) has no sdk_state."""
+    return not str(getattr(pending, "sdk_state", "") or "")
 
 
 @dataclass(frozen=True)
@@ -88,18 +93,18 @@ def bind_turn_progress(
 
 
 def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
-    """Features not yet ported to aisuite Runner keep the Lumina AgentLoop.
+    """Features not yet ported to aisuite/SDK Runners keep the Lumina AgentLoop.
 
-    Completions still go through vendored aisuite via ``llm_client``.
+    Completions still go through vendored aisuite via ``llm_client`` (legacy path).
     """
-    if plan.runtime_backend != "aisuite":
+    if plan.runtime_backend == "legacy":
         return True
     if plan.force_web_first_step:
         return True
     # strict_tools (beta tool schema / additionalProperties) is not honored by
     # the aisuite Runner's inspect-based tool wrapping — fall back to the loop
     # that does honor it instead of silently dropping the user's config.
-    if plan.strict_tools:
+    if plan.runtime_backend == "aisuite" and plan.strict_tools:
         logger.info("strict_tools=True not supported on aisuite Runner; using legacy AgentLoop")
         return True
     # Nested subagent pause/resume stack still lives in AgentLoop.
@@ -207,7 +212,28 @@ class TurnRunner:
 
             with full_fs_access_scope(plan.full_fs_access):
                 cwd = working_dir or Path.home()
-                if plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
+                if plan.runtime_backend == "agents_sdk":
+                    from secretary.agent.agents_sdk_runtime import run_with_agents_sdk
+
+                    result = run_with_agents_sdk(
+                        llm_config=llm_config,
+                        messages=list(plan.messages),
+                        tools=plan.tools,
+                        working_dir=cwd,
+                        max_turns=plan.max_steps,
+                        temperature=temperature,
+                        thinking=plan.thinking,
+                        reasoning_effort=plan.reasoning_effort,
+                        strict_tools=plan.strict_tools,
+                        file_auth=self._file_auth,
+                        progress_callback=wrapped,
+                        cancel_check=cancel_check,
+                        explicit_working_dir=plan.explicit_working_dir,
+                        require_confirm=plan.require_confirm,
+                        compaction_max_tokens=plan.compaction_max_tokens,
+                        compaction_keep_tail=plan.compaction_keep_tail,
+                    )
+                elif plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
                     from secretary.agent.aisuite_runtime import run_with_aisuite
 
                     result = run_with_aisuite(
@@ -313,6 +339,24 @@ class TurnRunner:
         from secretary.agent.fs_jail import full_fs_access_scope
 
         with full_fs_access_scope(full_fs_access):
+            if runtime_backend == "agents_sdk" and not _uses_legacy_pause(pending):
+                from secretary.agent.agents_sdk_runtime import resume_with_agents_sdk
+
+                return resume_with_agents_sdk(
+                    llm_config=llm_config,
+                    pending=pending,
+                    messages=list(messages),
+                    tools=tools,
+                    working_dir=cwd,
+                    max_turns=max_steps,
+                    temperature=temperature,
+                    thinking=thinking,
+                    reasoning_effort=reasoning_effort,
+                    strict_tools=strict_tools,
+                    file_auth=self._file_auth,
+                    progress_callback=wrapped,
+                    cancel_check=cancel_check,
+                )
             if use_aisuite:
                 from secretary.agent.aisuite_runtime import resume_with_aisuite
 
