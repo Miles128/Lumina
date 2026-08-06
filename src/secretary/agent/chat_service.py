@@ -1720,9 +1720,12 @@ class ChatService:
 
     def delete_thread(self, thread_id: str) -> dict[str, object]:
         from secretary.agent import thread_sandbox
+        from secretary.services.chat_uploads import remove_thread_uploads
 
         result = self._thread_store.delete_thread(thread_id)
-        thread_sandbox.remove(thread_id, self._settings.resolved_data_dir())
+        data_dir = self._settings.resolved_data_dir()
+        thread_sandbox.remove(thread_id, data_dir)
+        remove_thread_uploads(data_dir, thread_id)
         return result
 
     def save_threads(self, *, current_id: str, threads: list[dict[str, object]]) -> dict[str, object]:

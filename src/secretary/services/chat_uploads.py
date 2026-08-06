@@ -45,6 +45,30 @@ def thread_upload_dir(data_dir: Path, thread_id: str) -> Path:
     return path
 
 
+def thread_upload_dir_for_cleanup(data_dir: Path, thread_id: str) -> Path | None:
+    """Return the uploads dir for a thread id, or None when the id is unsafe."""
+    tid = (thread_id or "").strip()
+    if not tid:
+        return None
+    tid = re.sub(r"[^\w\-]", "_", tid)[:64]
+    if not tid:
+        return None
+    root = uploads_root(data_dir).resolve()
+    path = (root / tid).resolve()
+    if not path.is_relative_to(root):
+        return None
+    return path
+
+
+def remove_thread_uploads(data_dir: Path, thread_id: str) -> bool:
+    """Delete the uploads dir (attachments) for a deleted thread. Returns True when removed."""
+    path = thread_upload_dir_for_cleanup(data_dir, thread_id)
+    if path is None or not path.exists():
+        return False
+    shutil.rmtree(path, ignore_errors=True)
+    return True
+
+
 def _check_size(size: int) -> None:
     if size > MAX_UPLOAD_BYTES:
         raise ValueError(f"file too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")

@@ -3106,6 +3106,13 @@
     if (!threadId) return;
     const index = threads.findIndex((item) => item.id === threadId);
     if (index < 0) return;
+    const threadTitle = threads[index].title || t("thread.new");
+    const confirmed = await window.LuminaConfirm?.confirmDanger?.({
+      title: t("thread.delete"),
+      message: `确定要删除对话「${threadTitle}」吗？`,
+      secondMessage: "删除后将同时清理该对话的沙箱工作区与上传附件，且不可恢复。确定删除？",
+    });
+    if (!confirmed) return;
     threads.splice(index, 1);
     if (currentThreadId === threadId) {
       if (threads.length) {

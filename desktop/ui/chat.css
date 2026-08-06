@@ -4315,3 +4315,84 @@ body.map-view-open .chat-column > .fork-banner {
 .artifact-md p {
   margin: 0.4em 0;
 }
+
+/* LuminaConfirm — two-stage danger dialog */
+.lumina-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, var(--bg, #101418) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: confirm-fade-in 0.16s ease-out;
+}
+.lumina-confirm-dialog {
+  min-width: 320px;
+  max-width: 440px;
+  background: var(--panel, #171c21);
+  border: 1px solid var(--border, #2a323b);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.45);
+  font-family: inherit;
+}
+.lumina-confirm-dialog h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #e8edf2);
+}
+.lumina-confirm-message {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted, #9aa7b4);
+  white-space: pre-wrap;
+}
+.lumina-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.lumina-confirm-btn {
+  appearance: none;
+  border: 1px solid var(--border, #2a323b);
+  background: var(--panel-2, #20262d);
+  color: var(--text, #e8edf2);
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.lumina-confirm-btn:hover {
+  background: var(--hover, #262e36);
+}
+.lumina-confirm-btn.danger {
+  background: var(--danger, #d9413f);
+  border-color: transparent;
+  color: #fff;
+}
+.lumina-confirm-btn.danger:hover {
+  background: var(--danger-hover, #e55350);
+}
+@keyframes confirm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Settings: sandbox cleanup section */
+.settings-section-divider {
+  height: 1px;
+  background: var(--border, #2a323b);
+  margin: 18px 0 14px;
+}
+.platform-actions .btn-text.danger-btn {
+  color: var(--danger, #d9413f);
+  border-color: color-mix(in srgb, var(--danger, #d9413f) 45%, transparent);
+}
+.platform-actions .btn-text.danger-btn:hover {
+  background: color-mix(in srgb, var(--danger, #d9413f) 14%, transparent);
+  border-color: var(--danger, #d9413f);
+}

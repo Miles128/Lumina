@@ -10,7 +10,10 @@ from secretary.api.app import app
 from secretary.services.chat_uploads import (
     copy_local_path,
     format_attachments_block,
+    remove_thread_uploads,
     save_upload_bytes,
+    thread_upload_dir_for_cleanup,
+    uploads_root,
 )
 
 
@@ -42,6 +45,22 @@ def test_format_attachments_block(tmp_path: Path) -> None:
     assert "read_document" in block
     assert "a.pdf" in block
     assert str(f.resolve()) in block
+
+
+def test_remove_thread_uploads(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    save_upload_bytes(data_dir, thread_id="t_del", filename="a.txt", content=b"x")
+    assert (uploads_root(data_dir) / "t_del").is_dir()
+    assert remove_thread_uploads(data_dir, "t_del") is True
+    assert not (uploads_root(data_dir) / "t_del").exists()
+    assert remove_thread_uploads(data_dir, "t_del") is False
+
+
+def test_thread_upload_dir_for_cleanup_rejects_unsafe_ids(tmp_path: Path) -> None:
+    assert thread_upload_dir_for_cleanup(tmp_path / "data", "") is None
+    path = thread_upload_dir_for_cleanup(tmp_path / "data", "../escape")
+    assert path is not None
+    assert path.is_relative_to(uploads_root(tmp_path / "data").resolve())
 
 
 def test_upload_endpoints(tmp_path: Path, monkeypatch) -> None:
