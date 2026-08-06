@@ -600,14 +600,24 @@
   }
 
   function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value)
+      : String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
   }
 
   function escapeAttr(value) {
-    return escapeHtml(value).replaceAll('"', "&quot;");
+    const base = window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value, { attrs: true })
+      : String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+    return base.replace(/'/g, "&#39;");
   }
 
   window.SkillsModule = { open: openSkills, close: closeSkills };

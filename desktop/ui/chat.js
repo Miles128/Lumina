@@ -2954,10 +2954,12 @@
   }
 
   function escapeAttr(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("<", "&lt;");
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value, { attrs: true })
+      : String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("<", "&lt;");
   }
 
   function renderMarkdown(text) {

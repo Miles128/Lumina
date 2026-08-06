@@ -34,12 +34,14 @@
     return window.LuminaI18n?.t?.(key) || key;
   }
 
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    function escapeHtml(value) {
+    return window.LuminaUtils?.escapeHtml
+      ? window.LuminaUtils.escapeHtml(value)
+      : String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
   }
 
   openBtn.addEventListener("click", openWorkflows);
