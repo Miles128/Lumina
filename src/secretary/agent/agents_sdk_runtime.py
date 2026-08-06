@@ -24,6 +24,7 @@ from uuid import uuid4
 
 from agents import (
     Agent,
+    AgentHooks,
     ModelSettings,
     Runner,
     RunState,
@@ -33,6 +34,7 @@ from agents import (
 from agents.run import RunConfig
 from agents.tool import FunctionTool
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from secretary.agent.artifact_paths import collect_artifact_paths
 from secretary.agent.confirmation_policy import tool_requires_confirmation
@@ -290,6 +292,168 @@ def _make_approval(
     return _needs_approval
 
 
+# ---------------------------------------------------------------------------
+# Sub-agent delegation (Phase 2): one static Agent.as_tool per archetype.
+# The tool carries goal/context/criteria params; nested tool approvals float
+# to the outer run's interruptions (SDK native).
+# ---------------------------------------------------------------------------
+
+class SpawnParams(BaseModel):
+    """Tool arguments for spawning a sub-agent of one archetype."""
+
+    goal: str = Field(..., description="Clear, self-contained task for the sub-agent.")
+    context: str = Field(default="", description="Optional paths, constraints, or facts.")
+    success_criteria: str = Field(
+        default="",
+        description="Optional machine-verifiable acceptance criteria (verify archetype).",
+    )
+
+
+def _subagent_input_builder(options: Any) -> list[dict[str, Any]]:
+    params = options.get("params") or {}
+    parts = [f"任务目标：{str(params.get('goal') or '').strip()}"]
+    context = str(params.get("context") or "").strip()
+    if context:
+        parts.append(f"背景/约束：{context}")
+    criteria = str(params.get("success_criteria") or "").strip()
+    if criteria:
+        parts.append(f"验收标准：{criteria}")
+    return [{"role": "user", "content": "\n\n".join(parts)}]
+
+
+class _ParentSpawnHooks(AgentHooks[Any]):
+    """Record spawn_* as_tool calls on the parent run into used_tools."""
+
+    def __init__(self, tracked: list[str]) -> None:
+        self._tracked = tracked
+
+    async def on_tool_start(
+        self,
+        context: Any,
+        agent: Any,
+        tool: Any,
+    ) -> None:
+        tool_name = str(getattr(context, "tool_name", "") or "")
+        if tool_name.startswith("spawn_") and tool_name not in self._tracked:
+            self._tracked.append(tool_name)
+
+
+class _SubagentHooks(AgentHooks[Any]):
+    """Progress events for the sub-agent lane (archetype-scoped)."""
+
+    def __init__(
+        self,
+        archetype: str,
+        progress_callback: Callable[[ProgressEvent], None] | None,
+    ) -> None:
+        self._archetype = archetype
+        self._progress_callback = progress_callback
+
+    async def on_start(self, context: Any, agent: Any) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(
+                ProgressEvent(
+                    kind="subagent_started",
+                    iteration=0,
+                    message=f"正在派生子 Agent（{self._archetype}）",
+                    archetype=self._archetype,
+                    subagent_status="running",
+                )
+            )
+
+    async def on_end(self, context: Any, agent: Any, agent_input: Any = None, agent_output: Any = None) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(
+                ProgressEvent(
+                    kind="subagent_finished",
+                    iteration=0,
+                    message=f"子 Agent（{self._archetype}）已完成",
+                    archetype=self._archetype,
+                    subagent_status="completed",
+                )
+            )
+
+
+def build_subagent_tools(
+    *,
+    llm_config: LlmConfig,
+    tools_by_name: dict[str, Tool],
+    working_dir: Path,
+    needs_confirm: Callable[[str, dict[str, Any]], bool],
+    progress_callback: Callable[[ProgressEvent], None] | None,
+    cancel_check: Callable[[], bool] | None,
+    strict_tools: bool,
+    thinking: str,
+    reasoning_effort: str | None,
+    temperature: float,
+    lumina_dir: Path | None,
+    archetypes: tuple[str, ...] | None = None,
+    tracked: list[str] | None = None,
+    steps_out: list[StepResult] | None = None,
+) -> list[FunctionTool]:
+    """Build one ``spawn_{archetype}`` as_tool per archetype.
+
+    Each sub-agent gets the archetype system prompt, its tool allowlist, the
+    same confirm policy (nested approvals float to the outer run), and its own
+    max_turns ceiling. Tool usage is recorded into the shared ``tracked`` /
+    ``steps_out`` lists (outer run view).
+    """
+    from secretary.agent.subagent.registry import get_archetype, list_archetype_names
+
+    names = archetypes or tuple(list_archetype_names(lumina_dir))
+    wrapped: list[FunctionTool] = []
+    shared_tracked = tracked if tracked is not None else []
+    shared_steps = steps_out if steps_out is not None else []
+    for archetype in names:
+        spec = get_archetype(archetype, lumina_dir)
+        if spec is None:
+            continue
+        sub_tools = [
+            tools_by_name[name]
+            for name in (spec.tool_names or ())
+            if name in tools_by_name
+        ]
+        tracked = shared_tracked
+        steps_out = shared_steps
+        agent = Agent(
+            name=f"lumina-{archetype}",
+            model=llm_config.model,
+            instructions=spec.system_prompt,
+            tools=cast(Any, wrap_lumina_tools(
+                sub_tools,
+                working_dir,
+                needs_confirm=needs_confirm,
+                progress_callback=progress_callback,
+                cancel_check=cancel_check,
+                tracked=tracked,
+                steps_out=steps_out,
+                strict_tools=strict_tools,
+            )),
+            model_settings=_model_settings(
+                llm_config,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                strict_tools=strict_tools,
+            ),
+            hooks=_SubagentHooks(archetype, progress_callback),
+        )
+        wrapped.append(
+            agent.as_tool(
+                tool_name=f"spawn_{archetype}",
+                tool_description=(
+                    f"Delegate a {archetype} sub-task to an isolated sub-agent. "
+                    "The sub-agent only has a restricted tool set and returns a "
+                    "summary. `goal` is required."
+                ),
+                parameters=SpawnParams,
+                input_builder=cast(Any, _subagent_input_builder),
+                max_turns=spec.max_steps,
+            )
+        )
+    return wrapped
+
+
 def wrap_lumina_tools(
     tools: list[Tool],
     working_dir: Path,
@@ -340,6 +504,7 @@ def _build_agent(
     instructions: str,
     tools: list[FunctionTool],
     model_settings: ModelSettings,
+    hooks: AgentHooks[Any] | None = None,
 ) -> Agent:
     return Agent(
         name="lumina",
@@ -347,6 +512,7 @@ def _build_agent(
         instructions=instructions or None,
         tools=cast(Any, tools),
         model_settings=model_settings,
+        hooks=hooks,
     )
 
 
@@ -414,10 +580,14 @@ def run_with_agents_sdk(
     require_confirm: ConfirmRequireConfig | None = None,
     compaction_max_tokens: int | None = None,
     compaction_keep_tail: int | None = None,
+    subagent_deps: Any | None = None,
 ) -> LoopResult:
     """Run one Agents SDK turn and map to LoopResult (HITL + grounding)."""
     _bind_default_client(llm_config)
-    tools_by_name = {t.name: t for t in tools if getattr(t, "name", "")}
+    # The dynamic spawn_subagent tool is replaced by per-archetype as_tools on
+    # this backend (nested approvals float to the outer run).
+    parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
+    tools_by_name = {t.name: t for t in parent_tools if getattr(t, "name", "")}
     tracked: list[str] = []
     tracked_steps: list[StepResult] = []
     run_messages = list(messages)
@@ -485,19 +655,43 @@ def run_with_agents_sdk(
         return needs
 
     instructions, input_messages = _split_system_and_input(run_messages)
-    agent = _build_agent(
-        llm_config,
-        instructions=instructions,
-        tools=wrap_lumina_tools(
-            tools,
-            working_dir,
+    subagent_tools: list[FunctionTool] = []
+    if subagent_deps is not None:
+        subagent_tools = build_subagent_tools(
+            llm_config=llm_config,
+            tools_by_name=tools_by_name,
+            working_dir=working_dir,
             needs_confirm=_needs_confirm,
             progress_callback=progress_callback,
             cancel_check=cancel_check,
+            strict_tools=strict_tools,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            temperature=temperature,
+            lumina_dir=getattr(subagent_deps, "lumina_dir", None),
             tracked=tracked,
             steps_out=tracked_steps,
-            strict_tools=strict_tools,
-        ),
+        )
+    parent_hooks: AgentHooks[Any] | None = (
+        _ParentSpawnHooks(tracked) if subagent_deps is not None else None
+    )
+    agent = _build_agent(
+        llm_config,
+        instructions=instructions,
+        hooks=parent_hooks,
+        tools=[
+            *wrap_lumina_tools(
+                parent_tools,
+                working_dir,
+                needs_confirm=_needs_confirm,
+                progress_callback=progress_callback,
+                cancel_check=cancel_check,
+                tracked=tracked,
+                steps_out=tracked_steps,
+                strict_tools=strict_tools,
+            ),
+            *subagent_tools,
+        ],
         model_settings=_model_settings(
             llm_config,
             thinking=thinking,
@@ -639,12 +833,13 @@ def resume_with_agents_sdk(
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     require_confirm: ConfirmRequireConfig | None = None,
+    subagent_deps: Any | None = None,
 ) -> LoopResult:
     """Approve a paused SDK interruption (RunState round-trip) and continue.
 
     ``messages`` is the pause-time conversation snapshot used to rebuild the
     agent (instructions + tools) for ``RunState.from_string``, which requires
-    the original top-level agent definition.
+    the original top-level agent definition (including any as_tool sub-agents).
     """
     sdk_state = str(getattr(pending, "sdk_state", "") or "")
     if not sdk_state:
@@ -670,19 +865,42 @@ def resume_with_agents_sdk(
 
     async def _resume() -> LoopResult:
         instructions, input_messages = _split_system_and_input(messages)
-        agent = _build_agent(
-            llm_config,
-            instructions=instructions,
-            tools=wrap_lumina_tools(
-                tools,
-                working_dir,
+        parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
+        parent_by_name = {t.name: t for t in parent_tools}
+        subagent_tools: list[FunctionTool] = []
+        if subagent_deps is not None:
+            subagent_tools = build_subagent_tools(
+                llm_config=llm_config,
+                tools_by_name=parent_by_name,
+                working_dir=working_dir,
                 needs_confirm=_needs_confirm,
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
+                strict_tools=strict_tools,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                lumina_dir=getattr(subagent_deps, "lumina_dir", None),
                 tracked=tracked,
                 steps_out=tracked_steps,
-                strict_tools=strict_tools,
-            ),
+            )
+        agent = _build_agent(
+            llm_config,
+            instructions=instructions,
+            hooks=_ParentSpawnHooks(tracked) if subagent_deps is not None else None,
+            tools=[
+                *wrap_lumina_tools(
+                    parent_tools,
+                    working_dir,
+                    needs_confirm=_needs_confirm,
+                    progress_callback=progress_callback,
+                    cancel_check=cancel_check,
+                    tracked=tracked,
+                    steps_out=tracked_steps,
+                    strict_tools=strict_tools,
+                ),
+                *subagent_tools,
+            ],
             model_settings=_model_settings(
                 llm_config,
                 thinking=thinking,

@@ -33,6 +33,7 @@ class SpawnSubagentTool(Tool):
         deps: SubAgentDeps,
         spawn_context: SpawnContext,
     ) -> None:
+        self.deps = deps
         self._spawn_context = spawn_context
         self._progress_callback: Callable[[ProgressEvent], None] | None = None
         self._cancel_check: Callable[[], bool] | None = None

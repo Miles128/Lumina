@@ -33,6 +33,14 @@ def _uses_legacy_pause(pending: Any) -> bool:
     return not str(getattr(pending, "sdk_state", "") or "")
 
 
+def _find_spawn_deps(tools: list[Tool]) -> Any | None:
+    """Extract SubAgentDeps from the SpawnSubagentTool in a tool set, if any."""
+    for tool in tools:
+        if getattr(tool, "name", "") == "spawn_subagent":
+            return getattr(tool, "deps", None)
+    return None
+
+
 @dataclass(frozen=True)
 class AgentTurnPlan:
     """Prepared inputs for one agent loop turn."""
@@ -101,13 +109,13 @@ def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
         return True
     if plan.force_web_first_step:
         return True
-    # strict_tools (beta tool schema / additionalProperties) is not honored by
-    # the aisuite Runner's inspect-based tool wrapping — fall back to the loop
-    # that does honor it instead of silently dropping the user's config.
-    if plan.runtime_backend == "aisuite" and plan.strict_tools:
+    if plan.runtime_backend == "agents_sdk":
+        # Sub-agent delegation is handled natively (per-archetype as_tools).
+        return False
+    # aisuite backend: strict_tools unsupported and spawn falls back to legacy.
+    if plan.strict_tools:
         logger.info("strict_tools=True not supported on aisuite Runner; using legacy AgentLoop")
         return True
-    # Nested subagent pause/resume stack still lives in AgentLoop.
     tool_names = {getattr(tool, "name", "") for tool in plan.tools}
     if "spawn_subagent" in tool_names:
         return True
@@ -232,6 +240,7 @@ class TurnRunner:
                         require_confirm=plan.require_confirm,
                         compaction_max_tokens=plan.compaction_max_tokens,
                         compaction_keep_tail=plan.compaction_keep_tail,
+                        subagent_deps=_find_spawn_deps(plan.tools),
                     )
                 elif plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
                     from secretary.agent.aisuite_runtime import run_with_aisuite
@@ -356,6 +365,7 @@ class TurnRunner:
                     file_auth=self._file_auth,
                     progress_callback=wrapped,
                     cancel_check=cancel_check,
+                    subagent_deps=_find_spawn_deps(tools),
                 )
             if use_aisuite:
                 from secretary.agent.aisuite_runtime import resume_with_aisuite

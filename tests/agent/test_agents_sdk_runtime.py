@@ -327,3 +327,75 @@ def test_run_with_agents_sdk_steps_returned(monkeypatch) -> None:
     )
     assert result.steps == []
     assert result.used_tools == []
+
+
+def test_subagent_input_builder_builds_goal_message() -> None:
+    from secretary.agent.agents_sdk_runtime import _subagent_input_builder
+
+    messages = _subagent_input_builder(
+        {"params": {"goal": "调研项目结构", "context": "只看 src/", "success_criteria": "列出模块"}}
+    )
+    assert messages[0]["role"] == "user"
+    content = str(messages[0]["content"])
+    assert "调研项目结构" in content
+    assert "只看 src/" in content
+    assert "列出模块" in content
+
+
+def test_build_subagent_tools_registers_archetypes(monkeypatch) -> None:
+    from secretary.agent import agents_sdk_runtime
+
+    tools = [FileWriteTool(), ListDirTool()]
+    by_name = {t.name: t for t in tools}
+    wrapped = agents_sdk_runtime.build_subagent_tools(
+        llm_config=_llm_config(),
+        tools_by_name=by_name,
+        working_dir=Path("/tmp"),
+        needs_confirm=lambda name, args: False,
+        progress_callback=None,
+        cancel_check=None,
+        strict_tools=False,
+        thinking="enabled",
+        reasoning_effort="high",
+        temperature=0.7,
+        lumina_dir=None,
+        archetypes=("explore", "worker"),
+    )
+    by_tool_name = {tool.name: tool for tool in wrapped}
+    assert "spawn_explore" in by_tool_name
+    assert "spawn_worker" in by_tool_name
+    params = by_tool_name["spawn_explore"].params_json_schema
+    assert "goal" in params["properties"]
+    assert "required" in params and "goal" in params["required"]
+
+
+def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
+    from secretary.agent import agents_sdk_runtime
+    from secretary.agent.subagent.runner import SubAgentDeps
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+        captured["tool_names"] = sorted(getattr(t, "name", "") for t in agent.tools)
+        return _fake_result(final_output="ok")
+
+    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    deps = SubAgentDeps(
+        llm_config=_llm_config(),
+        file_auth=None,
+        memory_store=None,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+    )
+    tools = [FileWriteTool(), ListDirTool()]
+    run_with_agents_sdk(
+        llm_config=_llm_config(),
+        messages=[{"role": "user", "content": "hi"}],
+        tools=tools,
+        working_dir=Path("/tmp"),
+        max_turns=3,
+        subagent_deps=deps,
+    )
+    names = captured["tool_names"]
+    assert "spawn_subagent" not in names
+    assert "spawn_explore" in names
+    assert "spawn_worker" in names
