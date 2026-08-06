@@ -55,7 +55,13 @@ logger = logging.getLogger(__name__)
 
 def _build_async_client(llm_config: LlmConfig) -> AsyncOpenAI:
     base = (llm_config.base_url or "").rstrip("/")
-    return AsyncOpenAI(api_key=llm_config.api_key, base_url=base or None)
+    # Network retries come from the openai SDK itself (parity with the legacy
+    # outer layer's 3 attempts).
+    return AsyncOpenAI(
+        api_key=llm_config.api_key,
+        base_url=base or None,
+        max_retries=3,
+    )
 
 
 def _bind_default_client(llm_config: LlmConfig) -> None:

@@ -40,6 +40,23 @@ Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpo
 - MCP config lives in secretary services — read existing patterns before adding servers.
 - Python env: **uv** + `uv.lock` (`.venv/` local). CI uses `uv sync --all-extras`.
 
+## 不造轮子纪律（No-reinventing rule）
+
+协议/运行时层必须用库，禁止自研；产品策略层必须自研，禁止引库替代。
+
+| 层 | 做法 | 代码位置 |
+|---|---|---|
+| LLM 协议 / tool 解析 / provider 适配 | **openai-agents SDK**（`agents_sdk_runtime.py`） | 边界文件，别处不 import SDK |
+| HITL 暂停/恢复/状态序列化 | SDK `interruptions` + `RunState`（`sdk_state`） | 同上 |
+| 网络重试/退避 | SDK 内置（legacy 路径自研重试是统一层；aisuite 内层已 `max_retries=0`） | `llm_client.py` / `aisuite_bridge.py` |
+| MCP 连接（stdio/SSE/HTTP） | 官方 `mcp` SDK；`mcp_manager` 只做工具桥接/审批（产品层，保留） | `mcp_manager.py` |
+| Markdown 渲染/消毒 | markdown-it + DOMPurify | `desktop/ui/markdown.js` |
+| 前端打包 | esbuild（未引入前保持 script 顺序 + `node --check`） | `desktop/ui/*` |
+
+**必须自研（差异化，勿外包）**：grounding 校验、confirmation_policy、fs_jail、WriteGate、对话地图、TraceStore、Shibei 集成、Skill 编排。
+
+**禁止**：import Hermes / opencode 产品 runtime（PRD 非目标）；新增手写 LLM 协议解析；vendor fork 上游库（最后手段）。
+
 ## Agent workflows
 
 - Prefer minimal diffs; Lumina has many integrated subsystems (MCP, memory).

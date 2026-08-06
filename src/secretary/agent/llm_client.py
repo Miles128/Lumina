@@ -34,6 +34,14 @@ _MAX_BACKOFF_SECONDS = 30.0
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
+# Unified retry layer (no-reinventing rule): the aisuite inner openai client is
+# configured with max_retries=0 (aisuite_bridge.build_provider_configs), so this
+# is the ONLY retry/backoff for the legacy path. The agents-sdk path uses the
+# openai SDK's built-in retries (agents_sdk_runtime._build_async_client). The
+# httpx streaming path below has no library equivalent (SSE streaming), so it
+# shares this layer by design.
+
+
 def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.TimeoutException):
         return True
