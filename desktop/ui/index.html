@@ -19,12 +19,26 @@
       <header class="topbar chrome-float">
         <div class="chrome-drag" aria-hidden="true"></div>
         <div class="topbar-left">
+          <button id="btn-settings-top" type="button" class="topbar-icon-btn" title="设置" aria-label="设置">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
           <button id="btn-moon" type="button" class="moon-btn" data-tip="月相与节气" aria-label="月相与节气" aria-expanded="false"></button>
           <span id="moon-info-bar" class="moon-info-bar" hidden></span>
           <span class="model-status-dot" id="model-status-dot" data-state="idle" aria-hidden="true"></span>
           <span class="topbar-model" id="topbar-model" data-i18n-title="model.current">加载中…</span>
         </div>
         <div class="topbar-right">
+          <button type="button" class="artifact-toggle-btn" id="btn-artifacts" title="文档侧栏（xlsx / docx / pdf 预览）" aria-label="文档侧栏" aria-pressed="false">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 2v6h6"/>
+              <path d="M8 13h8M8 17h8"/>
+            </svg>
+            <span class="artifact-toggle-label">文档</span>
+          </button>
           <div class="token-usage" data-i18n-title="token.usage" data-tip="累计 token">
             <strong id="token-usage-value">0</strong>
           </div>
@@ -196,14 +210,6 @@
                 </div>
                 <button type="button" class="fs-access-chip" id="fs-access-chip" aria-pressed="false" data-i18n-title="chat.fullFsAccess.tip" title="关闭时仅可写当前工作区/会话沙箱" aria-label="完全权限">
                   <span class="fs-access-chip-label" data-i18n="chat.fullFsAccess">完全权限</span>
-                </button>
-                <button type="button" class="artifact-toggle-btn" id="btn-artifacts" title="文档侧栏（xlsx / docx / pdf 预览）" aria-label="文档侧栏" aria-pressed="false">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <path d="M14 2v6h6"/>
-                    <path d="M8 13h8M8 17h8"/>
-                  </svg>
-                  <span class="artifact-toggle-label">文档</span>
                 </button>
                 <button type="button" class="attach-btn" id="attach-btn" title="添加附件" aria-label="添加附件">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

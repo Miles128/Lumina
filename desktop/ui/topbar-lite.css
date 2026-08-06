@@ -366,3 +366,24 @@
   text-underline-offset: 2px;
   word-break: break-all;
 }
+
+/* —— 顶栏图标按钮（设置等） —— */
+.topbar-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  flex-shrink: 0;
+  color: var(--text-secondary, #9aa7b4);
+  transition: background 0.15s ease, color 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+.topbar-icon-btn:hover {
+  background: var(--hover, #262e36);
+  color: var(--text, #e8edf2);
+}

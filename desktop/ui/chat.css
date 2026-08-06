@@ -4432,3 +4432,8 @@ body.map-view-open .chat-column > .fork-banner {
   font-size: 11px;
   line-height: 1;
 }
+
+/* Topbar-hosted artifact toggle must stay clickable in the drag region */
+.topbar-right .artifact-toggle-btn {
+  -webkit-app-region: no-drag;
+}
