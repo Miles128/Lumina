@@ -36,12 +36,18 @@ from openai import AsyncOpenAI
 
 from secretary.agent.artifact_paths import collect_artifact_paths
 from secretary.agent.confirmation_policy import tool_requires_confirmation
-from secretary.agent.grounding import enforce_grounded_reply, resolve_turn_user_message
+from secretary.agent.grounding import (
+    collect_command_evidence,
+    collect_read_evidence,
+    enforce_grounded_reply,
+    resolve_turn_user_message,
+    verify_reply_against_evidence,
+)
 from secretary.agent.harness_config import ConfirmRequireConfig
 from secretary.agent.llm_config import LlmConfig, model_supports_thinking
 from secretary.agent.loop import LoopResult, PendingConfirmation, StepResult
 from secretary.agent.progress_events import ProgressEvent
-from secretary.agent.tools.base import Tool, _coerce_to_tool_result
+from secretary.agent.tools.base import Tool, ToolCall, _coerce_to_tool_result
 from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
@@ -111,6 +117,70 @@ def _safe_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     return cleaned
 
 
+def _pick_retry(
+    reply: str,
+    used_tools: list[str],
+    user_message: str,
+    steps: list[StepResult],
+) -> str | None:
+    """Mirror the legacy AgentLoop retry ladder.
+
+    Returns a retry user-prompt to append, or "web_claim" (injected web_search
+    execution), or None when the reply passes without another attempt.
+    """
+    from secretary.agent.grounding import (
+        GROUNDING_RETRY_USER,
+        collect_command_evidence,
+        collect_read_evidence,
+        has_content_grounding,
+        is_file_content_question,
+        should_retry_for_grounding,
+        should_retry_for_verification,
+        verify_reply_against_evidence,
+    )
+    from secretary.agent.knowledge_work import (
+        OFFICE_RETRY_USER,
+        RESEARCH_RETRY_USER,
+        should_retry_for_office,
+        should_retry_for_research_intent,
+    )
+    from secretary.agent.web_research import (
+        WEB_RETRY_USER,
+        reply_claims_web_search,
+        should_retry_for_web_research,
+    )
+
+    if reply_claims_web_search(reply, used_tools):
+        return "web_claim"
+    if should_retry_for_grounding(user_message, reply, used_tools):
+        if is_file_content_question(user_message) and not has_content_grounding(used_tools):
+            from secretary.agent.grounding import CONTENT_GROUNDING_RETRY_USER
+
+            return CONTENT_GROUNDING_RETRY_USER
+        return GROUNDING_RETRY_USER
+    if should_retry_for_web_research(user_message, reply, used_tools):
+        return WEB_RETRY_USER
+    if should_retry_for_research_intent(user_message, reply, used_tools):
+        return RESEARCH_RETRY_USER
+    if should_retry_for_office(user_message, reply, used_tools):
+        return OFFICE_RETRY_USER
+    evidence = collect_read_evidence(steps)
+    command_evidence = collect_command_evidence(steps)
+    verification = verify_reply_against_evidence(
+        reply,
+        evidence,
+        user_message,
+        command_evidence=command_evidence,
+    )
+    if should_retry_for_verification(verification):
+        from secretary.agent.grounding import format_verify_retry
+
+        return format_verify_retry(
+            verification, evidence, command_evidence=command_evidence
+        )
+    return None
+
+
 def _tool_invoke(
     tool: Tool,
     tool_name: str,
@@ -119,9 +189,9 @@ def _tool_invoke(
     progress_callback: Callable[[ProgressEvent], None] | None,
     cancel_check: Callable[[], bool] | None,
     tracked: list[str],
+    steps_out: list[StepResult],
 ) -> Callable[[Any, str], Awaitable[str]]:
     async def _invoke(ctx: Any, arguments: str) -> str:
-        del ctx  # unused in v1
         if cancel_check is not None and cancel_check():
             raise RuntimeError("cancelled")
         if hasattr(tool, "bind_progress"):
@@ -156,6 +226,17 @@ def _tool_invoke(
             raise
         tracked.append(tool_name)
         ok = not text.startswith("Error")
+        # Shell receipt: citeable command evidence for grounding verification.
+        call_id = str(getattr(ctx, "tool_call_id", "") or "").strip() or f"{tool_name}_{len(tracked)}"
+        if tool_name == "shell" and ok:
+            text = f"[receipt:{call_id}]\n{text}"
+        steps_out.append(
+            StepResult(
+                thought="",
+                tool_call=ToolCall(name=tool_name, arguments=args_dict, id=call_id),
+                tool_output=text,
+            )
+        )
         if progress_callback is not None:
             progress_callback(
                 ProgressEvent(
@@ -211,10 +292,12 @@ def wrap_lumina_tools(
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     tracked: list[str] | None = None,
+    steps_out: list[StepResult] | None = None,
     strict_tools: bool = False,
 ) -> list[FunctionTool]:
     """Convert Lumina Tool objects into Agents SDK FunctionTool."""
     used = tracked if tracked is not None else []
+    used_steps = steps_out if steps_out is not None else []
     wrapped: list[FunctionTool] = []
     for tool in tools:
         schema = tool.schema() if hasattr(tool, "schema") else {}
@@ -236,6 +319,7 @@ def wrap_lumina_tools(
                     progress_callback=progress_callback,
                     cancel_check=cancel_check,
                     tracked=used,
+                    steps_out=used_steps,
                 ),
                 strict_json_schema=strict_tools,
                 needs_approval=_make_approval(name, needs_confirm),
@@ -329,6 +413,7 @@ def run_with_agents_sdk(
     _bind_default_client(llm_config)
     tools_by_name = {t.name: t for t in tools if getattr(t, "name", "")}
     tracked: list[str] = []
+    tracked_steps: list[StepResult] = []
     run_messages = list(messages)
 
     if explicit_working_dir:
@@ -404,6 +489,7 @@ def run_with_agents_sdk(
             progress_callback=progress_callback,
             cancel_check=cancel_check,
             tracked=tracked,
+            steps_out=tracked_steps,
             strict_tools=strict_tools,
         ),
         model_settings=_model_settings(
@@ -414,48 +500,116 @@ def run_with_agents_sdk(
             strict_tools=strict_tools,
         ),
     )
-    result = Runner.run_sync(
-        agent,
-        cast(Any, input_messages if input_messages else run_messages),
-        max_turns=max_turns,
-        run_config=RunConfig(tracing_disabled=True),
+    # Retry ladder mirroring the legacy AgentLoop (shared budget): the model
+    # often *claims* it searched / verified without calling a tool; give it a
+    # chance to ground the answer instead of ending the turn unverified.
+    max_shared_retries = 3
+    shared_retries = 0
+    final_reply = ""
+    verified = True
+    note = ""
+    while True:
+        current_input = _split_system_and_input(run_messages)[1]
+        result = Runner.run_sync(
+            agent,
+            cast(Any, current_input if current_input else run_messages),
+            max_turns=max_turns,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+
+        interruptions = getattr(result, "interruptions", None) or []
+        if interruptions:
+            first = interruptions[0]
+            sdk_state = result.to_state().to_string()
+            pending, step = _pending_from_interruption(
+                first,
+                tools_by_name=tools_by_name,
+                working_dir=working_dir,
+                require_confirm=require_confirm,
+                sdk_state=sdk_state,
+            )
+            return LoopResult(
+                reply=f"我需要你的确认才能继续：\n\n{pending.description}\n\n是否允许？",
+                steps=[step],
+                used_tools=tracked,
+                total_steps=len(tracked) or 1,
+                pending_confirmation=pending,
+                pending_step=step,
+                messages_snapshot=_safe_messages(run_messages),
+            )
+
+        reply = getattr(result, "final_output", None)
+        final_reply = reply if isinstance(reply, str) else ("" if reply is None else str(reply))
+        safe_messages = _safe_messages(run_messages)
+        user_message = resolve_turn_user_message(safe_messages)
+
+        if shared_retries >= max_shared_retries:
+            break
+
+        retry_kind = _pick_retry(
+            final_reply,
+            tracked,
+            user_message,
+            tracked_steps,
+        )
+        if retry_kind is None:
+            break
+        shared_retries += 1
+        if retry_kind == "web_claim":
+            # Legacy behavior: inject an actual web_search execution.
+            web_tool = tools_by_name.get("web_search")
+            if web_tool is None:
+                break
+            try:
+                output = _coerce_to_tool_result(
+                    web_tool.execute({"query": user_message.strip()[:200]}, working_dir),
+                    tool_name="web_search",
+                ).to_output_string()
+            except Exception as exc:
+                logger.warning("agents-sdk injected web_search failed: %s", exc)
+                break
+            tracked.append("web_search")
+            tracked_steps.append(
+                StepResult(
+                    thought="",
+                    tool_call=ToolCall(
+                        name="web_search",
+                        arguments={"query": user_message.strip()[:200]},
+                        id=f"call_auto_web_search_{shared_retries}",
+                    ),
+                    tool_output=output,
+                )
+            )
+            run_messages.append(
+                {
+                    "role": "user",
+                    "content": f"[Tool Result: web_search]\n{output}",
+                }
+            )
+        else:
+            run_messages.append({"role": "assistant", "content": final_reply})
+            run_messages.append({"role": "user", "content": retry_kind})
+        continue
+
+    evidence = collect_read_evidence(tracked_steps)
+    command_evidence = collect_command_evidence(tracked_steps)
+    verification = verify_reply_against_evidence(
+        final_reply,
+        evidence,
+        user_message,
+        command_evidence=command_evidence,
     )
-
-    interruptions = getattr(result, "interruptions", None) or []
-    if interruptions:
-        first = interruptions[0]
-        sdk_state = result.to_state().to_string()
-        pending, step = _pending_from_interruption(
-            first,
-            tools_by_name=tools_by_name,
-            working_dir=working_dir,
-            require_confirm=require_confirm,
-            sdk_state=sdk_state,
-        )
-        return LoopResult(
-            reply=f"我需要你的确认才能继续：\n\n{pending.description}\n\n是否允许？",
-            steps=[step],
-            used_tools=tracked,
-            total_steps=len(tracked) or 1,
-            pending_confirmation=pending,
-            pending_step=step,
-            messages_snapshot=_safe_messages(run_messages),
-        )
-
-    reply = getattr(result, "final_output", None)
-    final_reply = reply if isinstance(reply, str) else ("" if reply is None else str(reply))
-    safe_messages = _safe_messages(run_messages)
-    user_message = resolve_turn_user_message(safe_messages)
     final_reply, verified, note = enforce_grounded_reply(
         final_reply,
         user_message,
         tracked,
-        grounding_verified=True,
-        grounding_note="",
+        grounding_verified=verification.ok,
+        grounding_note=verification.note,
+        command_evidence=command_evidence,
     )
     return LoopResult(
         reply=final_reply,
-        steps=[],
+        steps=tracked_steps,
         used_tools=tracked,
         total_steps=len(tracked) or 1,
         grounding_verified=verified,
@@ -493,6 +647,7 @@ def resume_with_agents_sdk(
     _bind_default_client(llm_config)
     tools_by_name = {t.name: t for t in tools if getattr(t, "name", "")}
     tracked: list[str] = []
+    tracked_steps: list[StepResult] = []
 
     def _needs_confirm(tool_name: str, arguments: dict[str, Any]) -> bool:
         tool = tools_by_name.get(tool_name)
@@ -519,6 +674,7 @@ def resume_with_agents_sdk(
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
                 tracked=tracked,
+                steps_out=tracked_steps,
                 strict_tools=strict_tools,
             ),
             model_settings=_model_settings(
@@ -558,12 +714,21 @@ def resume_with_agents_sdk(
                 pending_step=step,
                 messages_snapshot=_safe_messages(messages),
             )
-        return _result_to_loop_result(result, safe_messages=_safe_messages(messages))
+        return _result_to_loop_result(
+            result,
+            safe_messages=_safe_messages(messages),
+            tracked_steps=tracked_steps,
+        )
 
     return asyncio.run(_resume())
 
 
-def _result_to_loop_result(result: Any, *, safe_messages: list[dict[str, str]]) -> LoopResult:
+def _result_to_loop_result(
+    result: Any,
+    *,
+    safe_messages: list[dict[str, str]],
+    tracked_steps: list[StepResult] | None = None,
+) -> LoopResult:
     reply = getattr(result, "final_output", None)
     final_reply = reply if isinstance(reply, str) else ("" if reply is None else str(reply))
     used_tools: list[str] = []
@@ -572,6 +737,7 @@ def _result_to_loop_result(result: Any, *, safe_messages: list[dict[str, str]]) 
         name = data.get("tool_name") or getattr(step, "name", None)
         if isinstance(name, str) and name and name not in used_tools:
             used_tools.append(name)
+    steps = list(tracked_steps) if tracked_steps else []
     user_message = resolve_turn_user_message(safe_messages) if safe_messages else ""
     final_reply, verified, note = enforce_grounded_reply(
         final_reply,
@@ -582,7 +748,7 @@ def _result_to_loop_result(result: Any, *, safe_messages: list[dict[str, str]]) 
     )
     return LoopResult(
         reply=final_reply,
-        steps=[],
+        steps=steps,
         used_tools=used_tools,
         total_steps=len(used_tools) or 1,
         grounding_verified=verified,
