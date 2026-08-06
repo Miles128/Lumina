@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 TraceRetention = Literal["full", "summary", "off"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 ReasoningEffort = Literal["low", "high", "max"]
-RuntimeBackend = Literal["legacy", "aisuite"]
+RuntimeBackend = Literal["legacy", "aisuite", "agents_sdk"]
 PermissionMode = Literal["normal", "auto", "yolo", "custom"]
 
 CONFIRM_KIND_KEYS = (
@@ -80,10 +80,12 @@ class HarnessConfig(BaseModel):
     thinking_mode: ThinkingMode = "auto"
     reasoning_effort: ReasoningEffort = "high"
     strict_tools: bool = False
-    # Phase 1: Completions always use vendored aisuite via llm_client.
-    # ``aisuite`` also drives Agent turns via Runner when spawn_subagent /
-    # force_web_first are absent; otherwise AgentLoop (still aisuite LLM).
-    runtime_backend: RuntimeBackend = "aisuite"
+    # Backend selection: ``agents_sdk`` (default) drives turns through the
+    # OpenAI Agents SDK Runner (native HITL + RunState persistence); ``aisuite``
+    # uses the vendored aisuite Runner; ``legacy`` uses the in-house AgentLoop.
+    # All backends fall back to AgentLoop when spawn_subagent / force_web_first
+    # are in play (nested pause stack not ported yet).
+    runtime_backend: RuntimeBackend = "agents_sdk"
     # Confirmation policy (FR-46 editable): presets + fine-grained kinds.
     permission_mode: PermissionMode = "normal"
     require_confirm: ConfirmRequireConfig = Field(default_factory=ConfirmRequireConfig)

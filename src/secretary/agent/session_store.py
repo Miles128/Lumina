@@ -58,6 +58,7 @@ def _pending_from_dict(raw: dict[str, Any]) -> PendingConfirmation:
         risk_level=str(raw.get("risk_level") or "medium"),
         confirmation_kind=str(raw.get("confirmation_kind") or "action"),
         diff_preview=str(raw.get("diff_preview") or ""),
+        sdk_state=str(raw.get("sdk_state") or ""),
     )
 
 

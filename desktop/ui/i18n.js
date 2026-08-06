@@ -280,9 +280,13 @@
       en: "Agent runtime backend",
       zh: "Agent 运行时后端",
     },
+    "settings.harness.runtime_backend.agents_sdk": {
+      en: "OpenAI Agents SDK (default)",
+      zh: "OpenAI Agents SDK（默认）",
+    },
     "settings.harness.runtime_backend.aisuite": {
-      en: "aisuite (default)",
-      zh: "aisuite（默认）",
+      en: "aisuite Runner",
+      zh: "aisuite Runner",
     },
     "settings.harness.runtime_backend.legacy": {
       en: "legacy AgentLoop",

@@ -2,7 +2,7 @@
 
 > 产品定位：本地优先的**通用 Agent 生产力工具**（非个人 AI 秘书）。  
 > 参考 Claude Code、OpenCode、Hermes Agent、Pi 的**设计思路**（薄 prompt / 权限过滤等），**不 fork、不嵌入**它们的产品 runtime。  
-> **库基座例外（2026-08）：** vendor fork **aisuite**（Completions + Agents Runner）作为 LLM/agent loop 底座；产品 harness 仍在 Lumina。规格：[superpowers/specs/2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md)。  
+> **库基座（2026-08）：** 主后端为 **OpenAI Agents SDK**（`agents_sdk`，原生 HITL + `RunState` 持久化 + 嵌套审批浮层）；LLM 客户端沿用 vendor fork **aisuite**（legacy 路径）；可选 **aisuite Runner** / 自研 **AgentLoop**（`legacy`）作兼容后端。规格：[superpowers/specs/2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md)。  
 > 子 Agent：**depth=1**（不可再 spawn）；多路 explore 由主 Agent 汇总；**不做**多 Agent 辩论。  
 > 抽象对比见 [4-harness-comparison.md](4-harness-comparison.md)、[subagent-loop-comparison.md](subagent-loop-comparison.md)。  
 > 产品需求与集成原则见 [PRD.md](PRD.md)（v0.3.1）。  

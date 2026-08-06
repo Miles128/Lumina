@@ -769,7 +769,7 @@
         thinking_mode: document.getElementById("harness-thinking-mode")?.value || "auto",
         reasoning_effort: document.getElementById("harness-reasoning-effort")?.value || "high",
         strict_tools: Boolean(document.getElementById("harness-strict-tools")?.checked),
-        runtime_backend: document.getElementById("harness-runtime-backend")?.value || "aisuite",
+        runtime_backend: document.getElementById("harness-runtime-backend")?.value || "agents_sdk",
       },
     };
   }
@@ -797,7 +797,9 @@
       return;
     }
     const h = agentConfig?.harness || {};
-    const runtimeBackend = h.runtime_backend === "legacy" ? "legacy" : "aisuite";
+    const runtimeBackend = ["legacy", "aisuite", "agents_sdk"].includes(h.runtime_backend)
+      ? h.runtime_backend
+      : "agents_sdk";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -851,6 +853,7 @@
           <label class="settings-field">
             <span>${escapeHtml(t("settings.harness.runtime_backend"))}</span>
             <select id="harness-runtime-backend">
+              <option value="agents_sdk" ${runtimeBackend === "agents_sdk" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.agents_sdk"))}</option>
               <option value="aisuite" ${runtimeBackend === "aisuite" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.aisuite"))}</option>
               <option value="legacy" ${runtimeBackend === "legacy" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.legacy"))}</option>
             </select>
