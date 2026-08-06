@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.fs_jail import shell_escapes_jail
 from secretary.agent.text_utils import truncate_chars
 from secretary.agent.tools.base import Tool, ToolCall, ToolResult
 
@@ -147,6 +148,9 @@ class ShellTool(Tool):
                 error_type="validation",
                 retryable=False,
             )
+        jail_err = shell_escapes_jail(command, working_dir)
+        if jail_err:
+            return ToolResult.failure(jail_err, error_type="permission", retryable=False)
         cwd = working_dir if working_dir.is_dir() else Path.home()
         env = os.environ.copy()
 

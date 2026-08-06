@@ -34,7 +34,7 @@
 | **Traceable reasoning** | **思考链可记录、可追溯、可分析**——模型推理 / 工具决策 / 确认与委派节点形成结构化轨迹，支持回放、审计与事后分析；对企业可控运行环境（合规、事故复盘、质量评估）是一等公民能力，而非调试彩蛋 |
 | **Configurable harness** | **Harness 功能暴露大量可定制参数**（确认策略、委派上限、compaction、工具轮次、超时、模型/profile 路由、思考链保留策略等）；默认合理、高级可调；配置可持久化、可导出/复用，避免「黑盒运行时」 |
 | **Grounded** | 文件/记忆类回答必须基于工具输出；**内容类问题未 `file_read`（或等价 MCP 读文件）不准回复**（仅 `list_dir` 不够） |
-| **Harness-first** | 自研 Turn + AgentLoop + `spawn_subagent`；**不用 LangGraph**；**不 fork / 不嵌入 Pi · Hermes · OpenCode runtime** |
+| **Harness-first** | 产品 harness（Turn · confirm · SSE · profiles）自研；LLM/Agents **库**基座为 vendor fork **aisuite**；**不用 LangGraph**；**不 fork / 不嵌入** Pi · Hermes · OpenCode · OpenWorker 产品 runtime |
 | **Controlled tree** | 默认浅树（`depth=1`）；可配 **受控深树** `max_depth≤2`（硬顶 3）；并行与总节点有预算；禁止无限发散 |
 | **Parent / referee decides** | 多路摘要由**项目主管**综合；可选 `verify` / `ask_user`；高分歧或高风险写路径可进入**结构化对抗**（方案主张 ↔ 风险质询，评审仲裁收束）；**禁止**子↔子自由总线与无限互撕 |
 | **WriteGate** | 子 Agent 只写隔离草稿（proposals）；**项目落地**仅主管/仲裁收尾经确认后写入业务路径 |
@@ -53,7 +53,7 @@
 - **无限深度树、无预算并行、子↔子自由 peer 总线、无限互撕式辩论**（受控深树 depth≤2 与结构化对抗见规格，另述）
 - 为各 SaaS（飞书/微信读书/小红书等）继续扩展一等公民自定义 Connector
 - 无需确认的全自动 Agent
-- LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** runtime
+- LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** · OpenWorker runtime（**例外：** 允许 vendor fork [aisuite](https://github.com/andrewyng/aisuite) 作为 LLM + Agents **库**基座，见 [2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md)；不以此替换 Electron 产品壳）
 - IM 网关作为主 UI（FR-16 Deferred）
 - Orchestrator 作为独立 Profile（已移除；委派能力并入 **Build**）
 - 将 Skill DAG 未完成部分宣称为已上线
@@ -339,7 +339,7 @@ spawn_subagent(worker) → file_write 需确认
 | FR-23 | Shibei-first 读记忆路由 | P0 | Done |
 | **FR-48** | **Shibei 每轮自动答前召回**（`context` 注入 system prompt） | **P1** | **Done** |
 | FR-10 | 双语 UI | P1 | Done |
-| FR-11 | Think + 每日摘要 | P1 | Done |
+| FR-11 | 后台思考（Think） | P1 | Done |
 | FR-12 | 多线程持久化 | P1 | Done |
 | FR-13 | Hermes 一键导入 | P1 | Done |
 | FR-14 | Sub-agent Phase 2 | P2 | Done |

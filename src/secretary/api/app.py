@@ -25,18 +25,19 @@ from secretary.agent.soul import load_soul, save_soul
 from secretary.agent.trace_store import TraceStore
 from secretary.agent.turn_runner import TurnRunner
 from secretary.api.deps import svc
+from secretary.api.routes_artifacts import router as artifacts_router
 from secretary.api.routes_chat import router as chat_router
 from secretary.api.routes_mcp import router as mcp_router
 from secretary.api.routes_workflows import router as workflows_router
 from secretary.api.schemas import (
     AgentConfigResponse,
     AgentConfigUpdateRequest,
+    AgentPolicyUpdateRequest,
     AgentTestResponse,
     BackgroundTasksResponse,
     BackgroundTasksUpdateRequest,
     BriefingResponse,
     HarnessConfigSchema,
-    HealthResponse,
     MemorySearchResponse,
     PlatformCardResponse,
     PlatformFieldResponse,
@@ -54,7 +55,6 @@ from secretary.api.schemas import (
     SkillUninstallRequest,
     SoulResponse,
     SoulUpdateRequest,
-    SyncResponse,
     WebSearchResponse,
 )
 from secretary.config import settings
@@ -72,7 +72,6 @@ from secretary.services.briefing import BriefingService
 from secretary.services.file_auth import FileAuthService
 from secretary.services.local_documents_profiler import LocalDocumentsProfiler
 from secretary.services.mcp_config import McpConfigStore
-from secretary.services.memory_summarizer import MemorySummarizerService
 from secretary.services.platform_config import (
     PLATFORM_DEFINITIONS,
     PlatformConfigStore,
@@ -197,12 +196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shutdown = asyncio.Event()
     scheduler_task: asyncio.Task[None] | None = None
     bg = resolve_background_config(settings, app.state.agent_config_store)
-    if (
-        settings.auto_sync_enabled
-        or settings.briefing_enabled
-        or bg.think_enabled
-        or bg.memory_summary_enabled
-    ):
+    if settings.auto_sync_enabled or settings.briefing_enabled or bg.think_enabled:
         briefing_service = BriefingService(
             settings,
             app.state.store,
@@ -216,18 +210,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.agent_config_store,
             shibei_service=app.state.shibei_service,
         )
-        memory_summarizer = MemorySummarizerService(
-            settings,
-            memory,
-            app.state.agent_config_store,
-        )
         scheduler = BackgroundScheduler(
             settings,
             app.state.sync_service,
             app.state.profile_service,
             briefing_service,
             think_service=think_service,
-            memory_summarizer=memory_summarizer,
         )
         scheduler_task = asyncio.create_task(scheduler.run_until_stopped(shutdown))
 
@@ -267,6 +255,7 @@ app.add_middleware(
 app.include_router(mcp_router)
 app.include_router(chat_router)
 app.include_router(workflows_router)
+app.include_router(artifacts_router)
 
 
 @app.get("/api/agent/background")
@@ -275,16 +264,14 @@ def agent_background_status(request: Request) -> BackgroundTasksResponse:
     agent_config_store: AgentConfigStore = svc(request).agent_config_store
     bg = resolve_background_config(settings, agent_config_store)
     think = ScheduledThinkService.load_latest(data_dir) or {}
-    summary = MemorySummarizerService.load_latest(data_dir) or {}
+    from secretary.agent.grounding import normalize_auto_memory_keywords
+
     return BackgroundTasksResponse(
         think_enabled=bg.think_enabled,
         think_interval_hours=bg.think_interval_hours,
         last_think_at=str(think.get("last_run_at", "")),
         last_think_markdown=str(think.get("markdown", "")),
-        memory_summary_enabled=bg.memory_summary_enabled,
-        memory_summary_hour=bg.memory_summary_hour,
-        last_summary_date=str(summary.get("last_summary_date", "")),
-        last_summary=str(summary.get("summary", "")),
+        auto_memory_keywords=list(normalize_auto_memory_keywords(bg.auto_memory_keywords)),
     )
 
 
@@ -298,55 +285,21 @@ def update_agent_background(
         payload["think_enabled"] = body.think_enabled
     if body.think_interval_hours is not None:
         payload["think_interval_hours"] = body.think_interval_hours
-    if body.memory_summary_enabled is not None:
-        payload["memory_summary_enabled"] = body.memory_summary_enabled
-    if body.memory_summary_hour is not None:
-        payload["memory_summary_hour"] = body.memory_summary_hour
+    if body.auto_memory_keywords is not None:
+        from secretary.agent.grounding import normalize_auto_memory_keywords
+
+        payload["auto_memory_keywords"] = list(
+            normalize_auto_memory_keywords(body.auto_memory_keywords)
+        )
     if payload:
         agent_config_store.update({"background": payload})
     return agent_background_status(request)
 
 
 @app.get("/api/health")
-def get_health(request: Request) -> list[HealthResponse]:
-    sync_service: SyncService = svc(request).sync_service
-    return [
-        HealthResponse(
-            source=item.source.value,
-            status=item.status.value,
-            message=format_connector_message(item.message),
-            last_sync_at=item.last_sync_at,
-            item_count=item.item_count,
-        )
-        for item in sync_service.get_stored_health()
-    ]
-
-
-@app.post("/api/sync")
-async def sync_all(request: Request) -> list[SyncResponse]:
-    sync_service: SyncService = svc(request).sync_service
-    results = await asyncio.to_thread(sync_service.sync_all, include_browser_sources=True)
-    return [
-        SyncResponse(
-            source=result.source.value,
-            inserted=result.inserted,
-            status=result.health.status.value,
-            message=result.health.message,
-        )
-        for result in results
-    ]
-
-
-@app.post("/api/sync/{source}")
-async def sync_one(source: SourceKind, request: Request) -> SyncResponse:
-    sync_service: SyncService = svc(request).sync_service
-    result = await asyncio.to_thread(sync_service.sync_source, source)
-    return SyncResponse(
-        source=result.source.value,
-        inserted=result.inserted,
-        status=result.health.status.value,
-        message=result.health.message,
-    )
+def get_health() -> dict[str, str]:
+    """Liveness probe for the Electron shell / e2e waiters."""
+    return {"status": "ok"}
 
 
 @app.get("/api/profile")
@@ -503,11 +456,55 @@ def update_agent_soul(body: SoulUpdateRequest) -> SoulResponse:
 
 @app.get("/api/agent/policy")
 def get_agent_policy(request: Request) -> dict[str, object]:
-    """FR-46: harness delegation + confirmation policy summary (read-only)."""
+    """FR-46: harness delegation + confirmation policy (editable + summary)."""
     from secretary.agent.policy_view import build_policy_view
 
     file_auth = getattr(request.app.state, "file_auth", None)
-    return build_policy_view(file_auth)
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
+    harness = agent_config_store.load().harness
+    return build_policy_view(file_auth, harness=harness)
+
+
+@app.put("/api/agent/policy")
+def update_agent_policy(
+    request: Request,
+    body: AgentPolicyUpdateRequest,
+) -> dict[str, object]:
+    """Update permission mode / confirm kinds / session grants."""
+    from secretary.agent.harness_config import ConfirmRequireConfig
+    from secretary.agent.policy_view import build_policy_view, resolve_policy_update
+
+    file_auth = getattr(request.app.state, "file_auth", None)
+    agent_config_store: AgentConfigStore = svc(request).agent_config_store
+    current = agent_config_store.load().harness
+    require = (
+        ConfirmRequireConfig.model_validate(body.require_confirm.model_dump())
+        if body.require_confirm is not None
+        else None
+    )
+    # Mode-only change should apply the preset table (ignore stale require_confirm).
+    if (
+        body.permission_mode in {"normal", "auto", "yolo"}
+        and body.require_confirm is None
+    ):
+        require = None
+    updated, _mode = resolve_policy_update(
+        current=current,
+        permission_mode=body.permission_mode,
+        require_confirm=require,
+        session_grants=body.session_grants,
+        file_auth=file_auth,
+    )
+    agent_config_store.update(
+        {
+            "harness": {
+                "permission_mode": updated.permission_mode,
+                "require_confirm": updated.require_confirm.model_dump(),
+            }
+        }
+    )
+    harness = agent_config_store.load().harness
+    return build_policy_view(file_auth, harness=harness)
 
 
 @app.get("/api/agent/config")
@@ -534,6 +531,7 @@ def get_agent_config(request: Request) -> AgentConfigResponse:
         response_style=view.response_style,
         agent_profile=view.agent_profile,
         shell_working_dir=view.shell_working_dir,
+        full_fs_access=view.full_fs_access,
         status=view.status,
         status_message=view.status_message,
         active_source=view.active_source,
@@ -565,8 +563,11 @@ def update_agent_config(request: Request, body: AgentConfigUpdateRequest) -> Age
         payload["agent_profile"] = body.agent_profile.strip()
     if body.shell_working_dir is not None:
         payload["shell_working_dir"] = body.shell_working_dir.strip()
+    if body.full_fs_access is not None:
+        payload["full_fs_access"] = bool(body.full_fs_access)
     if body.harness is not None:
-        payload["harness"] = body.harness.model_dump()
+        # Only merge fields the client actually sent (avoid wiping permission_mode).
+        payload["harness"] = body.harness.model_dump(exclude_unset=True)
     agent_config_store.update(payload)
     agent_config_store.apply_to_settings(settings)
     return get_agent_config(request)

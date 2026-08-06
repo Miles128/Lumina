@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.fs_jail import FsJailError, assert_writable
 from secretary.agent.tools.base import Tool, ToolResult, _resolve_path
 from secretary.agent.write_gate import WriteGateError, assert_write_allowed
 
@@ -355,7 +356,8 @@ class WriteTool(Tool):
         append = arguments.get("append", False)
         try:
             assert_write_allowed(path)
-        except WriteGateError as exc:
+            assert_writable(path, working_dir)
+        except (WriteGateError, FsJailError) as exc:
             return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,7 +435,9 @@ class MoveTool(Tool):
         try:
             assert_write_allowed(src)
             assert_write_allowed(dst)
-        except WriteGateError as exc:
+            assert_writable(src, working_dir)
+            assert_writable(dst, working_dir)
+        except (WriteGateError, FsJailError) as exc:
             return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -489,7 +493,8 @@ class FileDeleteTool(Tool):
             )
         try:
             assert_write_allowed(path)
-        except WriteGateError as exc:
+            assert_writable(path, working_dir)
+        except (WriteGateError, FsJailError) as exc:
             return ToolResult.failure(str(exc), error_type="permission", retryable=False)
         try:
             path.unlink()

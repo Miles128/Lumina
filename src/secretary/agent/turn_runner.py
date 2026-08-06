@@ -1,12 +1,14 @@
-"""Turn-scoped runner that constructs AgentLoop and emits turn_* progress events."""
+"""Turn-scoped runner that constructs AgentLoop / aisuite runtime and emits turn_* events."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from secretary.agent.harness_config import ConfirmRequireConfig
 from secretary.agent.lifecycle_hooks import (
     AfterToolExecutionHook,
     BeforeModelCallHook,
@@ -20,6 +22,10 @@ from secretary.agent.session_store import SessionStore
 from secretary.agent.tools.base import Tool
 from secretary.agent.turn_models import TurnContext
 from secretary.services.file_auth import FileAuthService
+
+logger = logging.getLogger(__name__)
+
+RuntimeBackend = Literal["legacy", "aisuite"]
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,10 @@ class AgentTurnPlan:
     thinking: str = "enabled"
     reasoning_effort: str | None = "high"
     strict_tools: bool = False
+    runtime_backend: RuntimeBackend = "aisuite"
+    require_confirm: ConfirmRequireConfig | None = None
+    full_fs_access: bool = False
+    max_tool_output_chars: int | None = None
 
 
 @dataclass
@@ -77,6 +87,28 @@ def bind_turn_progress(
     return wrapped
 
 
+def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
+    """Features not yet ported to aisuite Runner keep the Lumina AgentLoop.
+
+    Completions still go through vendored aisuite via ``llm_client``.
+    """
+    if plan.runtime_backend != "aisuite":
+        return True
+    if plan.force_web_first_step:
+        return True
+    # strict_tools (beta tool schema / additionalProperties) is not honored by
+    # the aisuite Runner's inspect-based tool wrapping — fall back to the loop
+    # that does honor it instead of silently dropping the user's config.
+    if plan.strict_tools:
+        logger.info("strict_tools=True not supported on aisuite Runner; using legacy AgentLoop")
+        return True
+    # Nested subagent pause/resume stack still lives in AgentLoop.
+    tool_names = {getattr(tool, "name", "") for tool in plan.tools}
+    if "spawn_subagent" in tool_names:
+        return True
+    return False
+
+
 class TurnRunner:
     """Runs agent loops inside a Turn lifecycle with turn_* progress events."""
 
@@ -102,6 +134,51 @@ class TurnRunner:
             return self._hooks_factory(tools)
         return self._hooks or LoopHookBundle()
 
+    def _build_agent_loop(
+        self,
+        llm_config: LlmConfig,
+        *,
+        tools: list[Tool],
+        max_steps: int,
+        working_dir: Path | None,
+        progress_callback: Callable[[ProgressEvent], None] | None,
+        on_subagent_paused: Callable[[Any], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        force_web_first_step: bool = False,
+        explicit_working_dir: bool = False,
+        compaction_max_tokens: int | None = None,
+        compaction_keep_tail: int | None = None,
+        thinking: str = "enabled",
+        reasoning_effort: str | None = "high",
+        strict_tools: bool = False,
+        require_confirm: ConfirmRequireConfig | None = None,
+        max_tool_output_chars: int | None = None,
+    ) -> AgentLoop:
+        hooks = self._resolve_hooks(tools)
+        return AgentLoop(
+            llm_config,
+            tools=tools,
+            max_steps=max_steps,
+            file_auth=self._file_auth,
+            progress_callback=progress_callback,
+            working_dir=working_dir,
+            on_subagent_paused=on_subagent_paused,
+            cancel_check=cancel_check,
+            before_turn_hooks=hooks.before_turn,
+            before_model_call_hooks=hooks.before_model_call,
+            before_tool_execution_hooks=hooks.before_tool_execution,
+            after_tool_execution_hooks=hooks.after_tool_execution,
+            force_web_first_step=force_web_first_step,
+            explicit_working_dir=explicit_working_dir,
+            compaction_max_tokens=compaction_max_tokens,
+            compaction_keep_tail=compaction_keep_tail,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            strict_tools=strict_tools,
+            require_confirm=require_confirm,
+            max_tool_output_chars=max_tool_output_chars,
+        )
+
     def run_agent_turn(
         self,
         llm_config: LlmConfig,
@@ -126,29 +203,51 @@ class TurnRunner:
                 )
             )
         try:
-            hooks = self._resolve_hooks(plan.tools)
-            loop = AgentLoop(
-                llm_config,
-                tools=plan.tools,
-                max_steps=plan.max_steps,
-                file_auth=self._file_auth,
-                progress_callback=wrapped,
-                working_dir=working_dir,
-                on_subagent_paused=on_subagent_paused,
-                cancel_check=cancel_check,
-                before_turn_hooks=hooks.before_turn,
-                before_model_call_hooks=hooks.before_model_call,
-                before_tool_execution_hooks=hooks.before_tool_execution,
-                after_tool_execution_hooks=hooks.after_tool_execution,
-                force_web_first_step=plan.force_web_first_step,
-                explicit_working_dir=plan.explicit_working_dir,
-                compaction_max_tokens=plan.compaction_max_tokens,
-                compaction_keep_tail=plan.compaction_keep_tail,
-                thinking=plan.thinking,
-                reasoning_effort=plan.reasoning_effort,
-                strict_tools=plan.strict_tools,
-            )
-            result = loop.run(plan.messages, temperature=temperature)
+            from secretary.agent.fs_jail import full_fs_access_scope
+
+            with full_fs_access_scope(plan.full_fs_access):
+                cwd = working_dir or Path.home()
+                if plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
+                    from secretary.agent.aisuite_runtime import run_with_aisuite
+
+                    result = run_with_aisuite(
+                        llm_config=llm_config,
+                        messages=list(plan.messages),
+                        tools=plan.tools,
+                        working_dir=cwd,
+                        max_turns=plan.max_steps,
+                        temperature=temperature,
+                        thinking=plan.thinking,
+                        reasoning_effort=plan.reasoning_effort,
+                        file_auth=self._file_auth,
+                        progress_callback=wrapped,
+                        cancel_check=cancel_check,
+                        on_subagent_paused=on_subagent_paused,
+                        explicit_working_dir=plan.explicit_working_dir,
+                        require_confirm=plan.require_confirm,
+                        compaction_max_tokens=plan.compaction_max_tokens,
+                        compaction_keep_tail=plan.compaction_keep_tail,
+                    )
+                else:
+                    loop = self._build_agent_loop(
+                        llm_config,
+                        tools=plan.tools,
+                        max_steps=plan.max_steps,
+                        working_dir=working_dir,
+                        progress_callback=wrapped,
+                        on_subagent_paused=on_subagent_paused,
+                        cancel_check=cancel_check,
+                        force_web_first_step=plan.force_web_first_step,
+                        explicit_working_dir=plan.explicit_working_dir,
+                        compaction_max_tokens=plan.compaction_max_tokens,
+                        compaction_keep_tail=plan.compaction_keep_tail,
+                        thinking=plan.thinking,
+                        reasoning_effort=plan.reasoning_effort,
+                        strict_tools=plan.strict_tools,
+                        require_confirm=plan.require_confirm,
+                        max_tool_output_chars=plan.max_tool_output_chars,
+                    )
+                    result = loop.run(plan.messages, temperature=temperature)
             if wrapped is not None and turn is not None:
                 if result.pending_confirmation:
                     wrapped(
@@ -193,23 +292,59 @@ class TurnRunner:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         turn: TurnContext | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        runtime_backend: RuntimeBackend = "aisuite",
+        max_steps: int = 20,
+        thinking: str = "enabled",
+        reasoning_effort: str | None = "high",
+        full_fs_access: bool = False,
+        strict_tools: bool = False,
+        compaction_max_tokens: int | None = None,
+        compaction_keep_tail: int | None = None,
+        max_tool_output_chars: int | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
-        hooks = self._resolve_hooks(tools)
-        loop = AgentLoop(
-            llm_config,
-            tools=tools,
-            max_steps=20,
-            file_auth=self._file_auth,
-            progress_callback=wrapped,
-            working_dir=working_dir,
-            cancel_check=cancel_check,
-            before_turn_hooks=hooks.before_turn,
-            before_model_call_hooks=hooks.before_model_call,
-            before_tool_execution_hooks=hooks.before_tool_execution,
-            after_tool_execution_hooks=hooks.after_tool_execution,
+        cwd = working_dir or Path.home()
+        tool_names = {getattr(tool, "name", "") for tool in tools}
+        use_aisuite = (
+            runtime_backend == "aisuite"
+            and "spawn_subagent" not in tool_names
+            and not strict_tools
         )
-        return loop.resume_after_confirmation(pending, messages, temperature=temperature)
+        from secretary.agent.fs_jail import full_fs_access_scope
+
+        with full_fs_access_scope(full_fs_access):
+            if use_aisuite:
+                from secretary.agent.aisuite_runtime import resume_with_aisuite
+
+                return resume_with_aisuite(
+                    llm_config=llm_config,
+                    pending=pending,
+                    messages=list(messages),
+                    tools=tools,
+                    working_dir=cwd,
+                    max_turns=max_steps,
+                    temperature=temperature,
+                    thinking=thinking,
+                    reasoning_effort=reasoning_effort,
+                    file_auth=self._file_auth,
+                    progress_callback=wrapped,
+                    cancel_check=cancel_check,
+                    compaction_max_tokens=compaction_max_tokens,
+                    compaction_keep_tail=compaction_keep_tail,
+                )
+            loop = self._build_agent_loop(
+                llm_config,
+                tools=tools,
+                max_steps=max_steps,
+                working_dir=working_dir,
+                progress_callback=wrapped,
+                cancel_check=cancel_check,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                strict_tools=strict_tools,
+                max_tool_output_chars=max_tool_output_chars,
+            )
+            return loop.resume_after_confirmation(pending, messages, temperature=temperature)
 
     def resume_after_subagent(
         self,
@@ -242,20 +377,14 @@ class TurnRunner:
                 used_tools=["spawn_subagent"],
                 total_steps=1,
             )
-        hooks = self._resolve_hooks(list(resume.tools))
-        loop = AgentLoop(
+        loop = self._build_agent_loop(
             llm_config,
-            tools=resume.tools,
+            tools=list(resume.tools),
             max_steps=resume.max_steps,
-            file_auth=self._file_auth,
-            progress_callback=wrapped,
             working_dir=working_dir,
+            progress_callback=wrapped,
             on_subagent_paused=on_subagent_paused,
             cancel_check=cancel_check,
-            before_turn_hooks=hooks.before_turn,
-            before_model_call_hooks=hooks.before_model_call,
-            before_tool_execution_hooks=hooks.before_tool_execution,
-            after_tool_execution_hooks=hooks.after_tool_execution,
         )
         return loop.resume_after_subagent_tool(
             resume.messages_snapshot,

@@ -1,7 +1,8 @@
 # Lumina Harness Design · 自研 Runtime 设计原则
 
 > 产品定位：本地优先的**通用 Agent 生产力工具**（非个人 AI 秘书）。  
-> 参考 Claude Code、OpenCode、Hermes Agent、Pi 的**设计思路**（薄 prompt / 权限过滤等），**不 fork、不嵌入**它们的 runtime。  
+> 参考 Claude Code、OpenCode、Hermes Agent、Pi 的**设计思路**（薄 prompt / 权限过滤等），**不 fork、不嵌入**它们的产品 runtime。  
+> **库基座例外（2026-08）：** vendor fork **aisuite**（Completions + Agents Runner）作为 LLM/agent loop 底座；产品 harness 仍在 Lumina。规格：[superpowers/specs/2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md)。  
 > 子 Agent：**depth=1**（不可再 spawn）；多路 explore 由主 Agent 汇总；**不做**多 Agent 辩论。  
 > 抽象对比见 [4-harness-comparison.md](4-harness-comparison.md)、[subagent-loop-comparison.md](subagent-loop-comparison.md)。  
 > 产品需求与集成原则见 [PRD.md](PRD.md)（v0.3.1）。  
@@ -16,11 +17,12 @@ Harness（灵犀专有）
   ├── 路由 PromptGate · grounding · Electron SSE · 确认流
   ├── 思考链 / 运行轨迹（可记录 · 可追溯 · 可分析）
   ├── 可定制参数面（确认 · 委派 · compaction · 轮次 · 超时 · 路由 · 轨迹保留）
-  └── AgentLoop（while: LLM → tool → history）
-        └── spawn_subagent（子 loop，隔离 context，只回摘要）
+  └── AgentLoop facade（LoopResult / confirm API）
+        └── aisuite Client + Runner（vendor/aisuite）
+              └── spawn_subagent（子 loop，隔离 context，只回摘要；phase 2 再迁 Runner）
 ```
 
-**不复用 runtime** = 不 import Hermes `AIAgent`、不嵌 OpenCode TS worker；只复用**协议与权限模型**。
+**不复用产品 runtime** = 不 import Hermes `AIAgent`、不嵌 OpenCode TS worker / OpenWorker 壳；只复用**协议与权限模型**。LLM+Agents **库**允许 vendor fork aisuite。
 
 **为何不用 LangGraph**：PRD 非目标。灵犀已有 `PromptGate` + `TurnRunner` + `AgentLoop`，并内建 Electron 确认流、SSE 进度、子 Agent pause/resume、可选 Shibei 路由——这些是产品专有 harness 层，LangGraph 的图状态机不会替代它们，只会增加依赖与调试面。后续若需要 cron/IM 触达，优先 **MCP + 定时任务**，而非引入通用 graph runtime。
 
@@ -124,6 +126,14 @@ Harness（灵犀专有）
 ### code_exec（解题沙箱）
 
 Agent 用 `code_exec` 写短 Python 解题：进程内 soft sandbox（非 Docker）。可读当前工作区；仅临时 cwd 可写；落盘回工作区必须 `write`/`edit`（别名 `file_write`/`patch`）。计算/解析优先 `code_exec`，勿用 `shell` 的 `python -c` 替代。
+
+### 默认 cwd（会话沙箱）
+
+未选工作区且 `shell_working_dir` 为空时，工具默认 cwd 为 `{data_dir}/sandbox/{thread_id}/`。
+
+**硬写边界（默认）：** 写/改/删与含沙箱外绝对路径的 shell 必须落在当前 `working_dir` 下；读不限。Composer「完全权限」（`full_fs_access`）开启后恢复可写任意路径。硬沙箱下区内 `write`/`edit`/`code_exec` 免逐步确认；`shell`/删除仍跟 `permission_mode`。
+
+删除线程时清理对应沙箱目录。
 
 ---
 

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from secretary.agent.artifact_paths import collect_artifact_paths
 from secretary.agent.confirmation_policy import tool_requires_confirmation
 from secretary.agent.context_compaction import compact_messages_if_needed
 from secretary.agent.grounding import (
@@ -38,6 +39,7 @@ from secretary.agent.grounding import (
     should_retry_for_verification,
     verify_reply_against_evidence,
 )
+from secretary.agent.harness_config import ConfirmRequireConfig
 from secretary.agent.lifecycle_hooks import (
     AfterToolContext,
     AfterToolExecutionHook,
@@ -112,6 +114,19 @@ def _progress_detail_preview(text: str, limit: int = _PROGRESS_DETAIL_LIMIT) -> 
     return cleaned
 
 
+def _combine_thought_and_args_detail(thought: str, args_detail: str) -> str:
+    """Keep full thought text; truncate only the tool-args preview portion.
+
+    When thought is present, always use a blank-line separator so the UI can
+    peel the thought node even if args are empty.
+    """
+    thought_detail = thought.strip()
+    args_preview = _progress_detail_preview(args_detail) if args_detail.strip() else ""
+    if thought_detail:
+        return f"{thought_detail}\n\n{args_preview}"
+    return args_preview
+
+
 def _tool_action_detail(tool: Any, arguments: dict[str, Any], working_dir: Path) -> str:
     try:
         return _progress_detail_preview(tool.describe_action(arguments, working_dir))
@@ -120,6 +135,38 @@ def _tool_action_detail(tool: Any, arguments: dict[str, Any], working_dir: Path)
             return _progress_detail_preview(json.dumps(arguments, ensure_ascii=False))
         except Exception:
             return ""
+
+
+def _pending_tool_call_id(messages: list[dict[str, Any]], tool_name: str) -> str | None:
+    """Return an unanswered native tool_call id for ``tool_name`` after the last assistant."""
+    answered: set[str] = set()
+    last_assistant_idx = -1
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        if role == "assistant" and isinstance(message.get("tool_calls"), list):
+            last_assistant_idx = index
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id") or "").strip()
+            if call_id:
+                answered.add(call_id)
+    if last_assistant_idx < 0:
+        return None
+    tool_calls = messages[last_assistant_idx].get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return None
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        name = ""
+        if isinstance(function, dict):
+            name = str(function.get("name") or "")
+        elif call.get("name"):
+            name = str(call.get("name") or "")
+        call_id = str(call.get("id") or "").strip()
+        if name == tool_name and call_id and call_id not in answered:
+            return call_id
+    return None
 
 
 @dataclass
@@ -186,6 +233,8 @@ class AgentLoop:
         thinking: str = "enabled",
         reasoning_effort: str | None = "high",
         strict_tools: bool = False,
+        require_confirm: ConfirmRequireConfig | None = None,
+        max_tool_output_chars: int | None = None,
     ) -> None:
         self._llm_config = llm_config
         raw_tools = list(tools or _default_tools())
@@ -195,6 +244,7 @@ class AgentLoop:
         if not self._working_dir.is_dir():
             self._working_dir = Path.home()
         self._file_auth = file_auth
+        self._require_confirm = require_confirm
         self._stop_hooks = stop_hooks or [
             MaxIterationsStopHook(max_steps),
             ThirdPersonMetaReplyStopHook(),
@@ -216,6 +266,13 @@ class AgentLoop:
         self._thinking = thinking
         self._reasoning_effort = reasoning_effort
         self._strict_tools = strict_tools
+        # FR-52: harness.max_tool_output_chars overrides the module default;
+        # keeps hard truncation aligned with the TruncateToolOutputHook limit.
+        self._tool_output_limit = (
+            MAX_TOOL_OUTPUT_CHARS
+            if max_tool_output_chars is None
+            else max_tool_output_chars
+        )
         # Cache tool schemas once from the concrete tool list (not alias index),
         # so legacy lookup aliases do not duplicate schemas sent to the model.
         self._tool_schemas: list[dict[str, Any]] = [t.schema() for t in raw_tools]
@@ -337,57 +394,22 @@ class AgentLoop:
                 if target:
                     preflight_list_dir_used = True
                     auto_list_dir_used = True
-                    list_tool = self._tools["list_dir"]
-                    list_args = {"path": target}
-                    _preflight_start = time.perf_counter()
-                    try:
-                        if self._is_cancelled():
-                            return self._cancelled_result(steps, used_tools, step_idx)
-                        list_output = _coerce_to_tool_result(
-                            list_tool.execute(list_args, self._working_dir),
-                            tool_name="list_dir",
-                        ).to_output_string()
-                    except Exception as exc:
-                        error_type, retryable = _classify_tool_error(exc)
-                        list_output = ToolResult.failure(
-                            f"Error: {exc}",
-                            error_type=error_type,
-                            retryable=retryable,
-                        ).to_output_string()
-                    _preflight_latency = int((time.perf_counter() - _preflight_start) * 1000)
-                    list_call = ToolCall(
-                        name="list_dir",
-                        arguments=list_args,
-                        id="call_preflight_list_dir",
+                    preflight_outcome = self._run_injected_tool(
+                        tool_name="list_dir",
+                        arguments={"path": target},
+                        iteration=iteration,
+                        step_idx=step_idx,
+                        call_id="call_preflight_list_dir",
+                        thought="",
+                        steps=steps,
+                        used_tools=used_tools,
                     )
-                    steps.append(
-                        StepResult(
-                            thought="",
-                            tool_call=list_call,
-                            tool_output=list_output,
-                        )
-                    )
-                    used_tools.append("list_dir")
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_started",
-                            iteration=iteration,
-                            tool_name="list_dir",
-                            detail=_tool_action_detail(list_tool, list_args, self._working_dir),
-                        )
-                    )
-                    _list_success = not str(list_output).startswith("Error:")
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_finished",
-                            iteration=iteration,
-                            tool_name="list_dir",
-                            success=_list_success,
-                            latency_ms=_preflight_latency,
-                        )
-                    )
+                    if isinstance(preflight_outcome, LoopResult):
+                        return preflight_outcome
+                    _preflight_call, list_output = preflight_outcome
                     # Just-in-Time 检索：只注入轻量摘要（路径 + 条目数），不预载完整列表。
                     # LLM 可按需调用 list_dir/file_read 获取详细内容，避免上下文膨胀。
+                    _list_success = not str(list_output).startswith("Error:")
                     if _list_success:
                         _entry_count = list_output.count("\n") + 1
                         if self._explicit_working_dir:
@@ -516,58 +538,25 @@ class AgentLoop:
                 ):
                     retry_target = infer_list_dir_target(turn_user_message, reply)
                     if retry_target:
-                        target = retry_target
                         auto_list_dir_used = True
-                        list_tool = self._tools["list_dir"]
-                        list_args = {"path": target}
-                        try:
-                            if self._is_cancelled():
-                                return self._cancelled_result(steps, used_tools, step_idx)
-                            list_output = _coerce_to_tool_result(
-                                list_tool.execute(list_args, self._working_dir),
-                                tool_name="list_dir",
-                            ).to_output_string()
-                        except Exception as exc:
-                            error_type, retryable = _classify_tool_error(exc)
-                            list_output = ToolResult.failure(
-                                f"Error: {exc}",
-                                error_type=error_type,
-                                retryable=retryable,
-                            ).to_output_string()
-                        list_call = ToolCall(
-                            name="list_dir",
-                            arguments=list_args,
-                            id=f"call_auto_list_dir_{step_idx}",
+                        list_outcome = self._run_injected_tool(
+                            tool_name="list_dir",
+                            arguments={"path": retry_target},
+                            iteration=iteration,
+                            step_idx=step_idx,
+                            call_id=f"call_auto_list_dir_{step_idx}",
+                            thought=thought,
+                            steps=steps,
+                            used_tools=used_tools,
                         )
-                        steps.append(
-                            StepResult(
-                                thought=thought,
-                                tool_call=list_call,
-                                tool_output=list_output,
-                            )
-                        )
-                        used_tools.append("list_dir")
-                        self._emit_progress(
-                            ProgressEvent(
-                                kind="tool_started",
-                                iteration=iteration,
-                                tool_name="list_dir",
-                                detail=_tool_action_detail(list_tool, list_args, self._working_dir),
-                            )
-                        )
-                        self._emit_progress(
-                            ProgressEvent(
-                                kind="tool_finished",
-                                iteration=iteration,
-                                tool_name="list_dir",
-                                success=not str(list_output).startswith("Error:"),
-                            )
-                        )
+                        if isinstance(list_outcome, LoopResult):
+                            return list_outcome
+                        auto_call, auto_output = list_outcome
                         self._append_tool_result_messages(
                             current_messages,
-                            raw=raw or f"[auto] list_dir {target}",
-                            tool_call=list_call,
-                            tool_output=list_output,
+                            raw=raw or f"[auto] list_dir {retry_target}",
+                            tool_call=auto_call,
+                            tool_output=auto_output,
                             assistant_message=assistant_message,
                             native_used=native_used,
                             step_idx=step_idx,
@@ -587,54 +576,22 @@ class AgentLoop:
                 ):
                     web_retries += 1
                     shared_retries += 1
-                    web_tool = self._tools["web_search"]
-                    web_args = {"query": turn_user_message.strip()[:200]}
-                    try:
-                        if self._is_cancelled():
-                            return self._cancelled_result(steps, used_tools, step_idx)
-                        web_output = _coerce_to_tool_result(
-                            web_tool.execute(web_args, self._working_dir),
-                            tool_name="web_search",
-                        ).to_output_string()
-                    except Exception as exc:
-                        error_type, retryable = _classify_tool_error(exc)
-                        web_output = ToolResult.failure(
-                            f"Error: {exc}",
-                            error_type=error_type,
-                            retryable=retryable,
-                        ).to_output_string()
-                    web_call = ToolCall(
-                        name="web_search",
-                        arguments=web_args,
-                        id=f"call_auto_web_search_{step_idx}",
+                    web_outcome = self._run_injected_tool(
+                        tool_name="web_search",
+                        arguments={"query": turn_user_message.strip()[:200]},
+                        iteration=iteration,
+                        step_idx=step_idx,
+                        call_id=f"call_auto_web_search_{step_idx}",
+                        thought=thought,
+                        steps=steps,
+                        used_tools=used_tools,
                     )
-                    steps.append(
-                        StepResult(
-                            thought=thought,
-                            tool_call=web_call,
-                            tool_output=web_output,
-                        )
-                    )
-                    used_tools.append("web_search")
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_started",
-                            iteration=iteration,
-                            tool_name="web_search",
-                            detail=_tool_action_detail(web_tool, web_args, self._working_dir),
-                        )
-                    )
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_finished",
-                            iteration=iteration,
-                            tool_name="web_search",
-                            success=not str(web_output).startswith("Error:"),
-                        )
-                    )
+                    if isinstance(web_outcome, LoopResult):
+                        return web_outcome
+                    web_call, web_output = web_outcome
                     self._append_tool_result_messages(
                         current_messages,
-                        raw=raw or f"[auto] web_search {web_args['query']}",
+                        raw=raw or f"[auto] web_search {web_call.arguments['query']}",
                         tool_call=web_call,
                         tool_output=web_output,
                         assistant_message=assistant_message,
@@ -659,54 +616,22 @@ class AgentLoop:
                     )
                 ):
                     self._web_forced_used = True
-                    web_tool = self._tools["web_search"]
-                    web_args = {"query": turn_user_message.strip()[:200]}
-                    try:
-                        if self._is_cancelled():
-                            return self._cancelled_result(steps, used_tools, step_idx)
-                        web_output = _coerce_to_tool_result(
-                            web_tool.execute(web_args, self._working_dir),
-                            tool_name="web_search",
-                        ).to_output_string()
-                    except Exception as exc:
-                        error_type, retryable = _classify_tool_error(exc)
-                        web_output = ToolResult.failure(
-                            f"Error: {exc}",
-                            error_type=error_type,
-                            retryable=retryable,
-                        ).to_output_string()
-                    web_call = ToolCall(
-                        name="web_search",
-                        arguments=web_args,
-                        id=f"call_force_web_{step_idx}",
+                    web_outcome = self._run_injected_tool(
+                        tool_name="web_search",
+                        arguments={"query": turn_user_message.strip()[:200]},
+                        iteration=iteration,
+                        step_idx=step_idx,
+                        call_id=f"call_force_web_{step_idx}",
+                        thought=thought,
+                        steps=steps,
+                        used_tools=used_tools,
                     )
-                    steps.append(
-                        StepResult(
-                            thought=thought,
-                            tool_call=web_call,
-                            tool_output=web_output,
-                        )
-                    )
-                    used_tools.append("web_search")
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_started",
-                            iteration=iteration,
-                            tool_name="web_search",
-                            detail=_tool_action_detail(web_tool, web_args, self._working_dir),
-                        )
-                    )
-                    self._emit_progress(
-                        ProgressEvent(
-                            kind="tool_finished",
-                            iteration=iteration,
-                            tool_name="web_search",
-                            success=not str(web_output).startswith("Error:"),
-                        )
-                    )
+                    if isinstance(web_outcome, LoopResult):
+                        return web_outcome
+                    web_call, web_output = web_outcome
                     self._append_tool_result_messages(
                         current_messages,
-                        raw=raw or f"[force] web_search {web_args['query']}",
+                        raw=raw or f"[force] web_search {web_call.arguments['query']}",
                         tool_call=web_call,
                         tool_output=web_output,
                         assistant_message=assistant_message,
@@ -885,10 +810,11 @@ class AgentLoop:
                     tool_call.arguments,
                     self._working_dir,
                 )
+                paired_call = ensure_tool_call_id(tool_call, suffix=str(step_idx))
                 pending = PendingConfirmation(
                     action_id=action_id,
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
+                    tool_name=paired_call.name,
+                    arguments=paired_call.arguments,
                     description=desc,
                     risk_level=risk,
                     confirmation_kind=confirmation_kind,
@@ -896,11 +822,21 @@ class AgentLoop:
                 )
                 step = StepResult(
                     thought=thought,
-                    tool_call=tool_call,
+                    tool_call=paired_call,
                     tool_output=f"[Waiting for user confirmation] {desc}",
                     needs_confirmation=True,
                 )
                 steps.append(step)
+                # Keep the assistant tool-call turn in the snapshot so resume can
+                # pair a real tool result (native) or a [Tool Result] user message.
+                if native_used and assistant_message is not None:
+                    current_messages.append(
+                        assistant_message_for_tool_call(assistant_message, paired_call)
+                    )
+                else:
+                    current_messages.append(
+                        {"role": "assistant", "content": raw or thought or desc}
+                    )
                 return LoopResult(
                     reply=f"我需要你的确认才能继续：\n\n{desc}\n\n是否允许？",
                     steps=steps,
@@ -909,6 +845,8 @@ class AgentLoop:
                     pending_confirmation=pending,
                     pending_step=step,
                     messages_snapshot=list(current_messages),
+                    pause_assistant_message=assistant_message,
+                    pause_native_used=native_used,
                 )
 
             # 生命周期钩子：BeforeToolExecution（可修改参数或阻止执行）
@@ -939,11 +877,7 @@ class AgentLoop:
 
             try:
                 args_detail = _tool_action_detail(tool, tool_exec_args, self._working_dir)
-                thought_detail = _progress_detail_preview(thought) if thought.strip() else ""
-                if thought_detail and args_detail:
-                    combined_detail = f"{thought_detail}\n\n{args_detail}"
-                else:
-                    combined_detail = thought_detail or args_detail
+                combined_detail = _combine_thought_and_args_detail(thought, args_detail)
                 self._emit_progress(
                     ProgressEvent(
                         kind="tool_started",
@@ -983,6 +917,15 @@ class AgentLoop:
                         success=True,
                         detail=_progress_detail_preview(tool_output),
                         latency_ms=_tool_latency_ms,
+                        paths=tuple(
+                            collect_artifact_paths(
+                                tool_call.name,
+                                tool_exec_args,
+                                self._working_dir,
+                                output=tool_output,
+                                success=True,
+                            )
+                        ),
                     )
                 )
             except Exception as exc:
@@ -1006,8 +949,8 @@ class AgentLoop:
                     )
                 )
 
-            if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-                tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
+            if len(tool_output) > self._tool_output_limit:
+                tool_output = self._truncate_tool_output(tool_output)
 
             if tool_call.name == "spawn_subagent" and hasattr(tool, "consume_paused"):
                 paused = tool.consume_paused()
@@ -1195,8 +1138,7 @@ class AgentLoop:
             logger.warning("Tool %s failed [%s]: %s", pending.tool_name, error_type, exc)
 
         tool_output = result.to_output_string()
-        if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-            tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
+        tool_output = self._truncate_tool_output(tool_output)
 
         current_messages = list(messages)
         current_messages.append({
@@ -1283,17 +1225,29 @@ class AgentLoop:
             logger.warning("Tool %s failed [%s]: %s", pending.tool_name, error_type, exc)
 
         tool_output = tool_result.to_output_string()
-        if len(tool_output) > MAX_TOOL_OUTPUT_CHARS:
-            tool_output = truncate_chars(tool_output, MAX_TOOL_OUTPUT_CHARS)
+        tool_output = self._truncate_tool_output(tool_output)
 
         continued = list(messages)
-        continued.append({
-            "role": "user",
-            "content": (
-                f"[User confirmed: {pending.description}]\n"
-                f"[Tool Result: {pending.tool_name}]\n{tool_output}"
-            ),
-        })
+        tool_call_id = _pending_tool_call_id(continued, pending.tool_name)
+        if tool_call_id:
+            # Native tool-calling: close the open tool_call so the model can continue.
+            continued.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": tool_output,
+                }
+            )
+        else:
+            continued.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[User confirmed: {pending.description}]\n"
+                        f"[Tool Result: {pending.tool_name}]\n{tool_output}"
+                    ),
+                }
+            )
         result = self.run(continued, temperature=temperature)
         if pending.tool_name not in result.used_tools:
             result.used_tools.insert(0, pending.tool_name)
@@ -1337,6 +1291,7 @@ class AgentLoop:
             arguments,
             working_dir=self._working_dir,
             file_auth=self._file_auth,
+            require_confirm=self._require_confirm,
         )
 
     def _run_before_iteration_hooks(self, snapshot: LoopSnapshot) -> StopDecision:
@@ -1650,6 +1605,15 @@ class AgentLoop:
                             tool_name=paired_call.name,
                             success=True,
                             detail=_progress_detail_preview(output),
+                            paths=tuple(
+                                collect_artifact_paths(
+                                    paired_call.name,
+                                    paired_call.arguments,
+                                    self._working_dir,
+                                    output=output,
+                                    success=True,
+                                )
+                            ),
                         )
                     )
                 except Exception as exc:
@@ -1665,8 +1629,8 @@ class AgentLoop:
                             detail=_progress_detail_preview(output),
                         )
                     )
-            if len(output) > MAX_TOOL_OUTPUT_CHARS:
-                output = truncate_chars(output, MAX_TOOL_OUTPUT_CHARS)
+            if len(output) > self._tool_output_limit:
+                output = self._truncate_tool_output(output)
             steps.append(
                 StepResult(thought=thought if index == 0 else "", tool_call=paired_call, tool_output=output)
             )
@@ -1841,6 +1805,74 @@ class AgentLoop:
 
     def _parse_response(self, raw: str) -> tuple[str, ToolCall | None]:
         return parse_tool_call_response(raw)
+
+    def _truncate_tool_output(self, text: str) -> str:
+        if len(text) > self._tool_output_limit:
+            return truncate_chars(text, self._tool_output_limit)
+        return text
+
+    def _run_injected_tool(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        iteration: int,
+        step_idx: int,
+        call_id: str,
+        thought: str,
+        steps: list[StepResult],
+        used_tools: list[str],
+    ) -> LoopResult | tuple[ToolCall, str]:
+        """Execute an auto-injected tool (list_dir preflight / retry / forced web).
+
+        Emits tool_started/tool_finished progress events and records the
+        StepResult. Returns a LoopResult when the turn must stop (cancelled),
+        or the (call, output) pair for the caller to append to history.
+        """
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            logger.warning("Injected tool '%s' not available", tool_name)
+            call = ToolCall(name=tool_name, arguments=arguments, id=call_id)
+            return call, f"Error: unknown tool '{tool_name}'"
+        if self._is_cancelled():
+            return self._cancelled_result(steps, used_tools, step_idx)
+
+        _start = time.perf_counter()
+        try:
+            output = _coerce_to_tool_result(
+                tool.execute(arguments, self._working_dir),
+                tool_name=tool_name,
+            ).to_output_string()
+        except Exception as exc:
+            error_type, retryable = _classify_tool_error(exc)
+            output = ToolResult.failure(
+                f"Error: {exc}",
+                error_type=error_type,
+                retryable=retryable,
+            ).to_output_string()
+        latency_ms = int((time.perf_counter() - _start) * 1000)
+
+        call = ToolCall(name=tool_name, arguments=arguments, id=call_id)
+        steps.append(StepResult(thought=thought, tool_call=call, tool_output=output))
+        used_tools.append(tool_name)
+        self._emit_progress(
+            ProgressEvent(
+                kind="tool_started",
+                iteration=iteration,
+                tool_name=tool_name,
+                detail=_tool_action_detail(tool, arguments, self._working_dir),
+            )
+        )
+        self._emit_progress(
+            ProgressEvent(
+                kind="tool_finished",
+                iteration=iteration,
+                tool_name=tool_name,
+                success=not str(output).startswith("Error:"),
+                latency_ms=latency_ms,
+            )
+        )
+        return call, output
 
 
 def _index_tools(tools: list[Tool]) -> dict[str, Tool]:

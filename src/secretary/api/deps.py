@@ -12,12 +12,22 @@ from secretary.agent.llm_client import LlmUsage
 from secretary.agent.mcp_manager import McpManager
 from secretary.agent.progress_events import ProgressEvent
 from secretary.agent.progress_hub import ProgressHub
-from secretary.api.schemas import ChatResponse
+from secretary.api.schemas import ChatResponse, ContextSnapshot
 
 
 def to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> ChatResponse:
     pending = result.pending_confirmation
     usage_stats = usage or LlmUsage()
+    snapshot = result.context_snapshot
+    if isinstance(snapshot, dict) and usage is not None:
+        # Enrich with actual provider usage once the request scope closes.
+        usage_block = dict(snapshot.get("usage") or {})
+        usage_block["prompt_tokens"] = usage_stats.prompt_tokens
+        usage_block["completion_tokens"] = usage_stats.completion_tokens
+        usage_block["total_tokens"] = usage_stats.total_tokens
+        usage_block["cache_hit_tokens"] = usage_stats.prompt_cache_hit_tokens or None
+        usage_block["cache_miss_tokens"] = usage_stats.prompt_cache_miss_tokens or None
+        snapshot = {**snapshot, "usage": usage_block}
     return ChatResponse(
         reply=result.reply,
         profile_excerpt=result.profile_excerpt,
@@ -40,6 +50,7 @@ def to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> ChatR
         usage_total_tokens=usage_stats.total_tokens,
         confirmation_scope=result.confirmation_scope,
         raw_reply=result.raw_reply,
+        context_snapshot=ContextSnapshot.model_validate(snapshot) if snapshot else None,
     )
 
 

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/tokens.css?v=8" />
-    <link rel="stylesheet" href="/assets/chat.css?v=76" />
+    <link rel="stylesheet" href="/assets/chat.css?v=82" />
     <link rel="stylesheet" href="/assets/topbar-lite.css?v=12" />
     <link rel="stylesheet" href="/assets/vendor/drawflow.min.css?v=1" />
     <script src="/assets/theme.js?v=2"></script>
@@ -138,6 +138,10 @@
                   <span id="agent-progress-toggle-label" class="agent-progress-toggle-label"></span>
                 </button>
                 <div id="agent-progress-body" class="agent-progress-body" hidden>
+                  <div class="agent-progress-toolbar">
+                    <button type="button" id="btn-progress-expand-all" class="agent-progress-tool-btn">全部展开</button>
+                    <button type="button" id="btn-progress-collapse-all" class="agent-progress-tool-btn">全部折叠</button>
+                  </div>
                   <div id="idp-panel" class="idp-panel" hidden>
                     <div class="idp-panel-title">IDP · 委派协议</div>
                     <div id="idp-panel-meta" class="idp-panel-meta muted"></div>
@@ -190,6 +194,9 @@
                   </button>
                   <button type="button" class="workspace-chip-clear" id="workspace-chip-clear" title="清除工作区" aria-label="清除工作区" hidden>×</button>
                 </div>
+                <button type="button" class="fs-access-chip" id="fs-access-chip" aria-pressed="false" data-i18n-title="chat.fullFsAccess.tip" title="关闭时仅可写当前工作区/会话沙箱" aria-label="完全权限">
+                  <span class="fs-access-chip-label" data-i18n="chat.fullFsAccess">完全权限</span>
+                </button>
                 <button type="button" class="attach-btn" id="attach-btn" title="添加附件" aria-label="添加附件">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.49 8.49a1.5 1.5 0 1 1-2.12-2.12l7.78-7.78"/>
@@ -217,6 +224,38 @@
             </form>
           </footer>
         </section>
+
+        <aside id="artifact-panel" class="artifact-panel" hidden aria-label="文档侧栏">
+          <header class="artifact-panel-head">
+            <div class="artifact-panel-titles">
+              <strong id="artifact-title">文档</strong>
+              <span id="artifact-meta" class="artifact-meta"></span>
+            </div>
+            <div class="artifact-panel-actions">
+              <div class="artifact-mode-switch" role="group" aria-label="侧栏模式">
+                <button type="button" id="btn-artifact-mode-docs" class="artifact-mode-btn is-active" aria-pressed="true">文档</button>
+                <button type="button" id="btn-artifact-mode-context" class="artifact-mode-btn" aria-pressed="false">上下文</button>
+              </div>
+              <select id="artifact-root-select" class="artifact-root-select" aria-label="文件树根目录"></select>
+              <button type="button" id="btn-artifact-refresh" class="artifact-icon-btn" title="刷新" aria-label="刷新">↻</button>
+              <button type="button" id="btn-artifact-open-external" class="artifact-icon-btn" title="打开文件路径" aria-label="打开" hidden>↗</button>
+              <button type="button" id="btn-artifact-close" class="artifact-icon-btn" title="关闭侧栏" aria-label="关闭" aria-expanded="false">×</button>
+            </div>
+          </header>
+          <div class="artifact-panel-body">
+            <div id="artifact-docs-view" class="artifact-docs-view">
+              <div id="artifact-tree" class="artifact-tree" aria-label="文件树"></div>
+              <div class="artifact-preview-wrap">
+                <p id="artifact-empty" class="artifact-empty">生成 Markdown / Excel 等文档，或指定工作区后，在此预览</p>
+                <div id="artifact-preview" class="artifact-preview"></div>
+              </div>
+            </div>
+            <div id="artifact-context-view" class="artifact-context-view" hidden>
+              <p id="artifact-context-empty" class="artifact-empty">发送一条消息后可查看本轮入模上下文</p>
+              <div id="artifact-context-content" class="artifact-context-content" hidden></div>
+            </div>
+          </div>
+        </aside>
       </div>
 
       <div id="skills-backdrop" class="overlay" hidden></div>
@@ -291,16 +330,17 @@
     <script src="/assets/vendor/markdown-it.min.js?v=1"></script>
     <script src="/assets/vendor/purify.min.js?v=1"></script>
     <script src="/assets/markdown.js?v=1"></script>
-    <script src="/assets/i18n.js?v=21"></script>
+    <script src="/assets/i18n.js?v=24"></script>
     <script src="/assets/api.js?v=2"></script>
     <script src="/assets/lunar.js?v=3"></script>
     <script src="/assets/topbar.js?v=10"></script>
-    <script src="/assets/settings.js?v=23"></script>
+    <script src="/assets/settings.js?v=24"></script>
     <script src="/assets/skills.js?v=7"></script>
     <script src="/assets/vendor/drawflow.min.js?v=1"></script>
     <script src="/assets/workflow_graph.js?v=2"></script>
     <script src="/assets/workflows.js?v=4"></script>
-    <script src="/assets/chat.js?v=71"></script>
+    <script src="/assets/artifacts.js?v=4"></script>
+    <script src="/assets/chat.js?v=75"></script>
     <script src="/assets/conversation_map.js?v=11"></script>
     <!-- External bootstrap required: CSP script-src 'self' blocks inline <script>. -->
     <script src="/assets/bootstrap.js?v=1"></script>

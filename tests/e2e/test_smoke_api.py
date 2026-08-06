@@ -34,10 +34,7 @@ def mock_llm_config() -> LlmConfig:
 def test_smoke_health(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload, list)
-    assert len(payload) >= 1
-    assert payload[0]["source"] == "local_documents"
+    assert response.json() == {"status": "ok"}
 
 
 def test_smoke_shibei_config(client: TestClient) -> None:

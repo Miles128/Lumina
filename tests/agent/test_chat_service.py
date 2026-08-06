@@ -106,6 +106,31 @@ def test_chat_service_retired_connector_gates() -> None:
     assert "_handle_sync_gate" not in reply_src
 
 
+def test_chat_memory_write_auto_persists_to_memory_md(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    result = service.reply("写入记忆：偏好简洁回复，先给结论")
+    assert result.route == "memory_write"
+    assert "MEMORY.md" in result.reply
+    assert "偏好简洁回复" in service.memory.read_memory_md()
+    assert result.used_tools == ["memory"]
+
+
+def test_chat_remember_keyword_auto_writes_memory_md(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    result = service.reply("记住：周末不安排会议")
+    assert result.route == "memory_write"
+    assert "周末不安排会议" in service.memory.read_memory_md()
+
+
+def test_chat_rejects_polluted_memory_write(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    before = service.memory.read_memory_md()
+    result = service.reply("记住：Completions.create() 收到意外参数 'thinking'")
+    assert result.route == "memory_write_skipped"
+    assert "跳过" in result.reply
+    assert service.memory.read_memory_md() == before
+
+
 def test_chat_profile_gate_returns_profile_markdown(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", prompt_gate_enabled=True)
     store = MemoryStore(settings.resolved_data_dir() / "memory.db")
@@ -639,6 +664,55 @@ def test_resolve_turn_working_dir_rejects_missing_path(tmp_path: Path) -> None:
     missing = tmp_path / "gone"
     assert service._resolve_turn_working_dir(str(missing)) is None
     assert service._rejected_working_dir == str(missing)
+
+
+def test_shell_working_dir_defaults_to_thread_sandbox(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    service._active_thread_id = "t_abc"
+    cwd = service._shell_working_dir()
+    expected = (tmp_path / "data" / "sandbox" / "t_abc").resolve()
+    assert cwd == expected
+    assert expected.is_dir()
+    assert cwd != Path.home()
+
+
+def test_shell_working_dir_empty_thread_uses_default_sandbox(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    service._active_thread_id = ""
+    cwd = service._shell_working_dir()
+    assert cwd == (tmp_path / "data" / "sandbox" / "_default").resolve()
+
+
+def test_shell_working_dir_config_beats_sandbox(tmp_path: Path) -> None:
+    from secretary.services.agent_config import AgentConfigStore
+
+    service = _build_chat_service(tmp_path)
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    store = AgentConfigStore(tmp_path / "agent.json")
+    store.update({"shell_working_dir": str(configured)})
+    service._agent_config_store = store
+    service._active_thread_id = "t_abc"
+    assert service._shell_working_dir() == configured.resolve()
+
+
+def test_workspace_block_marks_session_sandbox(tmp_path: Path) -> None:
+    service = _build_chat_service(tmp_path)
+    service._active_thread_id = "t_sand"
+    block = service._build_workspace_block()
+    assert "会话沙箱" in block
+    assert str((tmp_path / "data" / "sandbox" / "t_sand").resolve()) in block
+
+
+def test_delete_thread_removes_sandbox(tmp_path: Path) -> None:
+    from secretary.agent import thread_sandbox
+
+    service = _build_chat_service(tmp_path)
+    data_dir = service._settings.resolved_data_dir()
+    path = thread_sandbox.ensure("t_del_sand", data_dir)
+    (path / "f.txt").write_text("y", encoding="utf-8")
+    service.delete_thread("t_del_sand")
+    assert not path.exists()
 
 
 def test_build_system_prompt_includes_reflections_block(tmp_path: Path) -> None:

@@ -18,6 +18,7 @@ ProgressKind = Literal[
     "iteration_started",
     "iteration_completed",
     "context_compacted",
+    "context_ready",
     "tool_started",
     "tool_finished",
     "subagent_started",
@@ -55,6 +56,10 @@ class ProgressEvent:
     error_type: str = ""
     # Optional IDP observation payload (envelope + lifecycle); JSON-serializable dict.
     idp: dict[str, object] | None = None
+    # Absolute paths for artifact sidebar auto-preview.
+    paths: tuple[str, ...] = ()
+    # Full assembled-context snapshot for harness UI (context_ready).
+    context: dict[str, object] | None = None
 
 
 def emit_progress(
@@ -135,6 +140,8 @@ def progress_event_label(event: ProgressEvent) -> str:
         if event.message.strip():
             return prefix + event.message.strip()
         return prefix + "上下文已压缩"
+    if event.kind == "context_ready":
+        return prefix + (event.message.strip() or "上下文已就绪")
     if event.kind == "tool_started":
         if event.tool_name == "spawn_subagent":
             return prefix + "正在委派子 Agent"
@@ -242,5 +249,9 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["error_type"] = event.error_type.strip()
     if event.idp is not None:
         payload["idp"] = event.idp
+    if event.paths:
+        payload["paths"] = list(event.paths)
+    if event.context is not None:
+        payload["context_snapshot"] = event.context
     return payload
 

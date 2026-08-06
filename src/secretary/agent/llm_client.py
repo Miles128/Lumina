@@ -1,9 +1,10 @@
-"""OpenAI-compatible chat completion client with httpx and retry logic."""
+"""OpenAI-compatible chat completion client via vendored aisuite (httpx stream kept)."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import time
 from collections.abc import Callable
@@ -13,6 +14,11 @@ from typing import Any, Literal
 
 import httpx
 
+from secretary.agent.aisuite_bridge import (
+    build_aisuite_client,
+    response_to_openai_dict,
+    to_aisuite_model,
+)
 from secretary.agent.llm_config import LlmConfig, deepseek_beta_base_url, model_supports_thinking
 from secretary.exceptions import AgentError
 
@@ -301,6 +307,26 @@ def schemas_to_openai_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any
     return tools
 
 
+def coerce_tool_choice_for_thinking(
+    tool_choice: str | dict[str, Any],
+    *,
+    model: str,
+    thinking: ThinkingState | None,
+) -> str | dict[str, Any]:
+    """DeepSeek V4 thinking mode rejects tool_choice=required / named function.
+
+    Keep ``auto`` / ``none``; rewrite forced choices so native tools do not 400
+    and fall back to leaking DSML/text tool markup into the chat UI.
+    """
+    if tool_choice in {"auto", "none"}:
+        return tool_choice
+    if not model_supports_thinking(model):
+        return tool_choice
+    if thinking == "disabled":
+        return tool_choice
+    return "auto"
+
+
 def chat_completion_with_tools(
     config: LlmConfig,
     messages: list[dict[str, Any]],
@@ -319,12 +345,24 @@ def chat_completion_with_tools(
         base = deepseek_beta_base_url(config.base_url).rstrip("/")
     url = f"{base}/chat/completions"
     active_tools = _with_strict_tools(tools) if strict_tools else tools
+    effective_choice = coerce_tool_choice_for_thinking(
+        tool_choice,
+        model=config.model,
+        thinking=thinking,
+    )
+    if effective_choice != tool_choice:
+        logger.info(
+            "Coerced tool_choice %r → %r for thinking-capable model %s",
+            tool_choice,
+            effective_choice,
+            config.model,
+        )
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "temperature": temperature,
         "tools": active_tools,
-        "tool_choice": tool_choice,
+        "tool_choice": effective_choice,
     }
     apply_thinking_to_payload(
         payload,
@@ -359,16 +397,19 @@ def _tools_request(
     payload: dict[str, Any],
     api_key: str,
 ) -> ChatCompletionResult:
-    response = client.post(
-        url,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    response.raise_for_status()
-    body = response.json()
+    if _use_aisuite_backend():
+        body = _completion_via_aisuite(url, payload, api_key)
+    else:
+        response = client.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        body = response.json()
     _record_usage(body.get("usage"))
     try:
         message = body["choices"][0]["message"]
@@ -527,12 +568,63 @@ def _chat_completion_once(
     raise AgentError(f"大模型请求失败（{_MAX_RETRIES} 次重试后）: {last_error or '大模型返回空内容'}")
 
 
+def _use_aisuite_backend() -> bool:
+    """LLM Completions go through vendored aisuite unless LUMINA_LLM_BACKEND=httpx."""
+    return os.environ.get("LUMINA_LLM_BACKEND", "aisuite").strip().lower() != "httpx"
+
+
+def _config_from_completion_url(url: str, api_key: str, model: str) -> LlmConfig:
+    base = url.strip()
+    suffix = "/chat/completions"
+    if base.endswith(suffix):
+        base = base[: -len(suffix)]
+    return LlmConfig(
+        api_key=api_key,
+        base_url=base or "https://api.deepseek.com/v1",
+        model=model or "deepseek-v4-flash",
+        source="request",
+    )
+
+
+def _completion_via_aisuite(
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any]:
+    model = str(payload.get("model") or "")
+    config = _config_from_completion_url(url, api_key, model)
+    client = build_aisuite_client(config)
+    kwargs = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"model", "messages", "stream"}
+    }
+    # DeepSeek (and forks): OpenAI SDK only accepts these via extra_body.
+    extra_body = dict(kwargs.pop("extra_body", None) or {})
+    for key in ("thinking", "reasoning_effort"):
+        if key in kwargs:
+            extra_body[key] = kwargs.pop(key)
+    if extra_body:
+        kwargs["extra_body"] = extra_body
+    try:
+        response = client.chat.completions.create(
+            model=to_aisuite_model(config),
+            messages=list(payload.get("messages") or []),
+            **kwargs,
+        )
+    except Exception as exc:
+        raise AgentError(f"大模型请求失败: {exc}") from exc
+    return response_to_openai_dict(response)
+
+
 def _non_stream_request(
     client: httpx.Client,
     url: str,
     payload: dict[str, Any],
     api_key: str,
 ) -> dict[str, Any]:
+    if _use_aisuite_backend():
+        return _completion_via_aisuite(url, payload, api_key)
     response = client.post(
         url,
         json=payload,

@@ -23,6 +23,7 @@ from secretary.agent.agent_profile import (
     profile_system_appendix,
 )
 from secretary.agent.chat_tool_registry import ChatToolRegistry
+from secretary.agent.context_snapshot import build_context_snapshot
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.harness_config import HarnessConfig
 from secretary.agent.identity import (
@@ -109,6 +110,7 @@ class ChatResult:
     files_read: list[str] | None = None
     confirmation_scope: str = ""
     raw_reply: str = ""
+    context_snapshot: dict[str, Any] | None = None
 
 
 # Per-request context: isolates active thread/trace/parent across concurrent
@@ -429,6 +431,51 @@ class ChatService:
                     grounding_verified=True,
                 )
 
+        from secretary.agent.grounding import (
+            DEFAULT_AUTO_MEMORY_KEYWORDS,
+            extract_memory_write_text,
+            is_polluted_memory_fact,
+            normalize_auto_memory_keywords,
+        )
+        from secretary.services.agent_config import resolve_background_config
+
+        if self._agent_config_store is not None:
+            bg = resolve_background_config(self._settings, self._agent_config_store)
+            auto_keywords = list(normalize_auto_memory_keywords(bg.auto_memory_keywords))
+        else:
+            auto_keywords = list(DEFAULT_AUTO_MEMORY_KEYWORDS)
+
+        payload = extract_memory_write_text(cleaned, keywords=auto_keywords)
+        if payload:
+            if is_polluted_memory_fact(payload):
+                return self._finish_gate_reply(
+                    cleaned,
+                    "这条内容像测试污染或工具/API 故障信息，已跳过写入 MEMORY.md。",
+                    used_llm=False,
+                    grounding_verified=True,
+                    route="memory_write_skipped",
+                )
+            result = self._memory.mutate_memory(
+                "add",
+                "memory",
+                text=payload,
+            )
+            preview = payload if len(payload) <= 200 else payload[:200] + "…"
+            if result.startswith("Already"):
+                reply = f"这条已在 MEMORY.md 中：\n\n> {preview}"
+            elif result.startswith("Added"):
+                reply = f"已写入 MEMORY.md：\n\n> {preview}"
+            else:
+                reply = result
+            return self._finish_gate_reply(
+                cleaned,
+                reply,
+                used_llm=False,
+                used_tools=["memory"],
+                grounding_verified=True,
+                route="memory_write",
+            )
+
         hits = self._store.search(cleaned, limit=5)
         memory_markdown = self._memory.read_memory_md()
         profile_excerpt = memory_markdown[:800]
@@ -613,6 +660,10 @@ class ChatService:
             )
 
         tools = self._tool_registry.build_tools()
+        harness = self._harness_config()
+        from secretary.agent.harness_config import resolve_agent_thinking
+
+        thinking, effort = resolve_agent_thinking(harness, light_mode=False)
         result = self._turn_runner.run_confirmed_action(
             llm_config,
             tools,
@@ -623,12 +674,26 @@ class ChatService:
             progress_callback=progress_callback,
             turn=self._active_turn(_active_trace_id_var.get()),
             cancel_check=cancel_check,
+            runtime_backend=harness.runtime_backend,
+            max_steps=harness.max_tool_rounds,
+            thinking=thinking,
+            reasoning_effort=effort,
+            full_fs_access=self._full_fs_access(),
+            strict_tools=harness.strict_tools,
+            compaction_max_tokens=harness.compaction_max_tokens,
+            compaction_keep_tail=harness.compaction_keep_tail,
+            max_tool_output_chars=harness.max_tool_output_chars,
         )
 
         if result.pending_confirmation:
+            pause_messages = (
+                list(result.messages_snapshot)
+                if result.messages_snapshot is not None
+                else list(messages)
+            )
             self._set_pending(
                 result.pending_confirmation,
-                messages + [{"role": "assistant", "content": result.reply}],
+                pause_messages,
                 llm_config,
             )
 
@@ -647,6 +712,30 @@ class ChatService:
         self._save_to_session("assistant", safe_reply)
 
         cui = _confirmation_ui(result.pending_confirmation)
+        confirm_snapshot_messages = (
+            list(result.messages_snapshot)
+            if result.messages_snapshot is not None
+            else list(messages)
+        )
+        confirm_context = build_context_snapshot(
+            confirm_snapshot_messages,
+            trace_id=self._active_trace_id,
+            thread_id=self._active_thread_id,
+        )
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    ProgressEvent(
+                        kind="context_ready",
+                        iteration=result.total_steps,
+                        message="上下文已就绪",
+                        thread_id=self._active_thread_id,
+                        turn_id=self._active_trace_id,
+                        context=confirm_context,
+                    )
+                )
+            except Exception:
+                logger.debug("context_ready progress emit failed", exc_info=True)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt="",
@@ -658,6 +747,7 @@ class ChatService:
             confirmation_kind=cui.confirmation_kind,
             allow_permanent_read=cui.allow_permanent_read,
             allow_session_write=cui.allow_session_write,
+            context_snapshot=confirm_context,
         )
 
     def _confirm_subagent_action(
@@ -747,6 +837,7 @@ class ChatService:
                 parent_resume.session_id,
                 parent_resume.profile_excerpt,
                 memory_hits=parent_resume.memory_hits,
+                progress_callback=progress_callback,
             )
 
         raw_reply = f"子 Agent ({state.archetype}) 已完成：\n\n{summary}"
@@ -1001,11 +1092,15 @@ class ChatService:
         messages.append({"role": "user", "content": cleaned})
 
         tools = self._pick_web_tools(cleaned)
+        harness = self._harness_config()
         agent_plan = AgentTurnPlan(
             messages=messages,
             max_steps=20,
             tools=tools,
             force_web_first_step=True,
+            runtime_backend=harness.runtime_backend,
+            require_confirm=harness.require_confirm,
+            full_fs_access=self._full_fs_access(),
         )
 
         if progress_callback is not None:
@@ -1035,6 +1130,7 @@ class ChatService:
                 session_id,
                 profile_excerpt,
                 memory_hits=memory_hits,
+                progress_callback=progress_callback,
             )
             return ChatResult(
                 reply=chat.reply,
@@ -1046,6 +1142,7 @@ class ChatService:
                 pending_confirmation=chat.pending_confirmation,
                 grounding_verified=chat.grounding_verified,
                 grounding_note=chat.grounding_note,
+                context_snapshot=chat.context_snapshot,
                 route="web_agent",
             )
         except AgentError as error:
@@ -1166,6 +1263,10 @@ class ChatService:
             thinking=thinking,
             reasoning_effort=effort,
             strict_tools=harness.strict_tools,
+            runtime_backend=harness.runtime_backend,
+            require_confirm=harness.require_confirm,
+            full_fs_access=self._full_fs_access(),
+            max_tool_output_chars=harness.max_tool_output_chars,
         )
 
         try:
@@ -1209,6 +1310,7 @@ class ChatService:
                 session_id,
                 profile_excerpt,
                 memory_hits=len(hits),
+                progress_callback=progress_callback,
             )
         except AgentError as error:
             fallback = (
@@ -1249,6 +1351,7 @@ class ChatService:
         profile_excerpt: str,
         *,
         memory_hits: int,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
         raw_reply = result.reply
         safe_reply, grounding_verified, grounding_note = self._prepare_user_reply(
@@ -1261,9 +1364,17 @@ class ChatService:
         )
 
         if result.pending_confirmation:
+            # Prefer the loop snapshot (includes prior tool turns + pending
+            # assistant tool_call) so confirmed tools like code_exec feed their
+            # output back into the continuing agent loop.
+            pause_messages = (
+                list(result.messages_snapshot)
+                if result.messages_snapshot is not None
+                else list(messages)
+            )
             self._set_pending(
                 result.pending_confirmation,
-                messages + [{"role": "assistant", "content": safe_reply}],
+                pause_messages,
                 llm_config,
             )
 
@@ -1318,6 +1429,31 @@ class ChatService:
         confirmation_scope = ""
         if result.pending_confirmation is not None and self._subagent_pending is not None:
             confirmation_scope = "subagent"
+        snapshot_messages = (
+            list(result.messages_snapshot)
+            if result.messages_snapshot is not None
+            else list(messages)
+        )
+        context_snapshot = build_context_snapshot(
+            snapshot_messages,
+            trace_id=self._active_trace_id,
+            thread_id=self._active_thread_id,
+        )
+        # Early UI refresh: push snapshot over progress SSE before HTTP returns.
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    ProgressEvent(
+                        kind="context_ready",
+                        iteration=result.total_steps,
+                        message="上下文已就绪",
+                        thread_id=self._active_thread_id,
+                        turn_id=self._active_trace_id,
+                        context=context_snapshot,
+                    )
+                )
+            except Exception:
+                logger.debug("context_ready progress emit failed", exc_info=True)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt=profile_excerpt,
@@ -1334,6 +1470,7 @@ class ChatService:
             files_read=result.files_read or None,
             confirmation_scope=confirmation_scope,
             raw_reply=raw_reply,
+            context_snapshot=context_snapshot,
         )
 
     def _maybe_trigger_reflection(
@@ -1472,6 +1609,11 @@ class ChatService:
             after_tool_execution=after,
         )
 
+    def _full_fs_access(self) -> bool:
+        if self._agent_config_store is None:
+            return False
+        return bool(self._agent_config_store.load().full_fs_access)
+
     def _resolve_turn_working_dir(self, working_dir: str | None) -> Path | None:
         self._rejected_working_dir = ""
         raw = (working_dir or "").strip()
@@ -1494,18 +1636,53 @@ class ChatService:
             path = Path(raw).expanduser()
             if path.is_dir():
                 return path.resolve()
-        return Path.home()
+        from secretary.agent import thread_sandbox
+
+        data_dir = self._settings.resolved_data_dir()
+        try:
+            return thread_sandbox.ensure(self._active_thread_id, data_dir)
+        except OSError:
+            logger.warning(
+                "Failed to create thread sandbox for %r; falling back to home",
+                self._active_thread_id,
+                exc_info=True,
+            )
+            return Path.home()
 
     def _build_workspace_block(self) -> str:
         """Expose the active workspace cwd in the system prompt."""
         cwd = self._shell_working_dir()
-        return (
-            "## 当前工作区\n"
-            f"- 路径：`{cwd}`\n"
-            "- `list_dir` / `file_read` / `shell` / 相对路径默认都相对此目录解析。\n"
-            "- 用户问「当前项目 / 工作区 / 这个目录」时，先对此路径 `list_dir`，不要猜测其它目录。\n"
-            "- 回答中引用工作区时必须使用上述绝对路径，禁止编造或替换成其它路径。\n\n"
-        )
+        from secretary.agent.thread_sandbox import sandbox_root
+
+        full_fs = self._full_fs_access()
+
+        lines = [
+            "## 当前工作区\n",
+            f"- 路径：`{cwd}`\n",
+            "- `list_dir` / `file_read` / `shell` / 相对路径默认都相对此目录解析。\n",
+            "- 用户问「当前项目 / 工作区 / 这个目录」时，先对此路径 `list_dir`，不要猜测其它目录。\n",
+            "- 回答中引用工作区时必须使用上述绝对路径，禁止编造或替换成其它路径。\n",
+        ]
+        try:
+            in_sandbox = cwd.resolve().is_relative_to(
+                sandbox_root(self._settings.resolved_data_dir()).resolve()
+            )
+        except (OSError, ValueError):
+            in_sandbox = False
+        if full_fs:
+            lines.append(
+                "- 「完全权限」已开启：可用绝对路径读写工作区外；写操作仍可能需确认。\n"
+            )
+        else:
+            lines.append(
+                "- 硬沙箱开启：写/改/删必须落在当前工作区（或相对路径）；"
+                "写出绝对路径会被拒绝。会话内 Python（code_exec）与区内写入无需逐步确认。"
+                "用户可在输入框旁开启「完全权限」解除限制。\n"
+            )
+            if in_sandbox:
+                lines.append("- 未指定工作区，当前为会话沙箱目录。\n")
+        lines.append("\n")
+        return "".join(lines)
 
     def _pick_web_tools(self, user_message: str) -> list[Tool]:
         from secretary.agent.tools.web import WebFetchTool
@@ -1542,7 +1719,11 @@ class ChatService:
         return self._thread_store.set_current(thread_id)
 
     def delete_thread(self, thread_id: str) -> dict[str, object]:
-        return self._thread_store.delete_thread(thread_id)
+        from secretary.agent import thread_sandbox
+
+        result = self._thread_store.delete_thread(thread_id)
+        thread_sandbox.remove(thread_id, self._settings.resolved_data_dir())
+        return result
 
     def save_threads(self, *, current_id: str, threads: list[dict[str, object]]) -> dict[str, object]:
         return self._thread_store.replace_all(current_id=current_id, threads=threads)
@@ -1690,8 +1871,8 @@ class ChatService:
                 "- 不要分析用户情绪，直接回应具体问题\n"
                 f"{style_rule}"
                 f"{format_rule}"
-                "- 用户在本轮明确提供的个人信息，请用 memory 工具写入 MEMORY.md（target=memory）；"
-                "后台也会整理稳定事实进 MEMORY.md\n"
+                "- 用户消息含自动写入关键词（默认「记住」）或「写入记忆：…」时，系统会立刻写入 MEMORY.md；"
+                "其他明确个人事实也可用 memory 工具写入；后台只整理稳定事实，不记 API 故障\n"
                 "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
                 "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
                 "可用 goals 数组并行最多 3 个 explore；"

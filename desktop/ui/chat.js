@@ -42,6 +42,7 @@
   const workspaceChip = document.getElementById("workspace-chip");
   const workspaceChipWrap = document.getElementById("workspace-chip-wrap");
   const workspaceChipClear = document.getElementById("workspace-chip-clear");
+  const fsAccessChip = document.getElementById("fs-access-chip");
   const attachBtn = document.getElementById("attach-btn");
   const attachInput = document.getElementById("attach-input");
   const attachmentsEl = document.getElementById("composer-attachments");
@@ -56,6 +57,7 @@
   };
   let currentAgentMode = "auto";
   let currentWorkspaceDir = "";
+  let fullFsAccess = false;
   /** @type {{ name: string, path: string, size?: number }[]} */
   let pendingAttachments = [];
   const MAX_ATTACHMENTS = 10;
@@ -184,6 +186,48 @@
       workspaceChipWrap?.classList.remove("is-active");
       if (labelEl) labelEl.textContent = "";
       if (workspaceChipClear) workspaceChipClear.hidden = true;
+    }
+    window.LuminaArtifacts?.setWorkspace?.(currentWorkspaceDir || "");
+  }
+
+  function tChat(key, fallback) {
+    return window.LuminaI18n?.t?.(key) || fallback;
+  }
+
+  function renderFsAccessChip() {
+    if (!fsAccessChip) return;
+    const on = Boolean(fullFsAccess);
+    fsAccessChip.setAttribute("aria-pressed", on ? "true" : "false");
+    fsAccessChip.classList.toggle("is-on", on);
+    const tip = tChat(
+      "chat.fullFsAccess.tip",
+      "关闭时仅可写当前工作区/会话沙箱；开启后可写任意路径（仍可能需要确认）。",
+    );
+    fsAccessChip.title = on
+      ? tChat("chat.fullFsAccess.on", "已开启完全权限（可写沙箱外）")
+      : tip;
+    fsAccessChip.setAttribute(
+      "aria-label",
+      tChat("chat.fullFsAccess", "完全权限") + (on ? "（开）" : "（关）"),
+    );
+    const label = fsAccessChip.querySelector(".fs-access-chip-label");
+    if (label) label.textContent = tChat("chat.fullFsAccess", "完全权限");
+  }
+
+  async function toggleFullFsAccess() {
+    const previous = fullFsAccess;
+    fullFsAccess = !fullFsAccess;
+    renderFsAccessChip();
+    try {
+      const saved = await window.SecretaryAPI.request("PUT", "/api/agent/config", {
+        full_fs_access: fullFsAccess,
+      });
+      fullFsAccess = Boolean(saved?.full_fs_access);
+      renderFsAccessChip();
+    } catch (error) {
+      fullFsAccess = previous;
+      renderFsAccessChip();
+      console.error("Failed to toggle full_fs_access:", error);
     }
   }
 
@@ -336,6 +380,11 @@
       void clearWorkspaceDir();
     });
   }
+  if (fsAccessChip) {
+    fsAccessChip.addEventListener("click", () => {
+      void toggleFullFsAccess();
+    });
+  }
   if (attachBtn && attachInput) {
     attachBtn.addEventListener("click", () => {
       void pickAttachments();
@@ -446,11 +495,13 @@
         currentAgentMode = profile;
       }
       currentWorkspaceDir = String(config?.shell_working_dir || "").trim();
+      fullFsAccess = Boolean(config?.full_fs_access);
     } catch (_error) {
       // Keep default "auto".
     }
     renderAgentModeLabel();
     renderWorkspaceChip();
+    renderFsAccessChip();
   }
 
   if (agentModeBtn && agentModeMenu) {
@@ -636,6 +687,12 @@
         },
       );
       showTyping(false);
+      if (response?.context_snapshot) {
+        window.LuminaArtifacts?.setContextSnapshot?.(
+          response.context_snapshot,
+          requestThreadId || currentThreadId,
+        );
+      }
 
       // After a fork, the active path changes (old branch is replaced).
       // render:true re-renders from server state so stale off-path messages
@@ -733,6 +790,12 @@
         },
       );
       showTyping(false);
+      if (response?.context_snapshot) {
+        window.LuminaArtifacts?.setContextSnapshot?.(
+          response.context_snapshot,
+          confirmThreadId || currentThreadId,
+        );
+      }
 
       if (response.needs_confirmation) {
         clearStreamingBubble();
@@ -769,19 +832,6 @@
 
   function appendMessage(role, text) {
     appendMessageInternal(role, text, true);
-  }
-
-  function usesGroundingTools(response) {
-    const tools = Array.isArray(response?.used_tools) ? response.used_tools : [];
-    return tools.some(
-      (name) =>
-        /^(list_dir|file_read|search_files|search_memory|session_search|shibei_search|shibei_list_sources)$/.test(name) ||
-        /^mcp_.*(read|list|file|directory|search)/i.test(name),
-    );
-  }
-
-  function usesFileTools(response) {
-    return usesGroundingTools(response);
   }
 
   const REPLY_PATH_PATTERNS = [
@@ -844,10 +894,9 @@
 
   function appendGroundingMeta(response) {
     if (!response) return;
-    const showUnverified = shouldShowGroundingUnverified(response);
-    const showVerified =
-      !showUnverified && usesGroundingTools(response) && response.grounding_verified !== false;
-    if (!showVerified && !showUnverified) return;
+    // Success "verified" badge removed — tool steps already show evidence.
+    // Only surface hard failures (forged shell / receipt).
+    if (!shouldShowGroundingUnverified(response)) return;
 
     const rows = messagesEl.querySelectorAll(".message.bot");
     const row = rows[rows.length - 1];
@@ -857,18 +906,11 @@
     if (!bubble) return;
 
     const meta = document.createElement("div");
-    meta.className = "message-grounding-meta";
-    if (showUnverified) {
-      meta.classList.add("is-unverified");
-      const reason = groundingUnverifiedReason(response);
-      meta.textContent = reason ? `${t("chat.grounding.unverified")} · ${reason}` : t("chat.grounding.unverified");
-    } else {
-      meta.classList.add("is-verified");
-      const count = Array.isArray(response.files_read) ? response.files_read.length : 0;
-      meta.textContent = count
-        ? `${t("chat.grounding.verified")} · ${count} files`
-        : t("chat.grounding.verified");
-    }
+    meta.className = "message-grounding-meta is-unverified";
+    const reason = groundingUnverifiedReason(response);
+    meta.textContent = reason
+      ? `${t("chat.grounding.unverified")} · ${reason}`
+      : t("chat.grounding.unverified");
     bubble.appendChild(meta);
   }
 
@@ -1050,15 +1092,27 @@
       : "";
 
     let actions = `
-      <button class="btn-confirm-primary" type="button" data-confirm="allow">执行</button>
-      <button class="btn-confirm-deny" type="button" data-confirm="deny">拒绝</button>
+      <button class="btn-confirm-icon btn-confirm-allow" type="button" data-confirm="allow" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}">
+        <span class="confirm-glyph" aria-hidden="true">✓</span>
+        <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}</span>
+      </button>
+      <button class="btn-confirm-icon btn-confirm-deny" type="button" data-confirm="deny" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}">
+        <span class="confirm-glyph" aria-hidden="true">✕</span>
+        <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}</span>
+      </button>
     `;
 
     if (kind === "write_new") {
       actions = `
-        <button class="btn-confirm-primary" type="button" data-confirm="once">仅本次执行</button>
-        <button class="btn-confirm-secondary" type="button" data-confirm="session-write">本次授权（可新建文件）</button>
-        <button class="btn-confirm-deny" type="button" data-confirm="deny">拒绝</button>
+        <button class="btn-confirm-icon btn-confirm-allow" type="button" data-confirm="once" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.once"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.once"))}">
+          <span class="confirm-glyph" aria-hidden="true">✓</span>
+          <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.once"))}</span>
+        </button>
+        <button class="btn-confirm-icon btn-confirm-deny" type="button" data-confirm="deny" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}">
+          <span class="confirm-glyph" aria-hidden="true">✕</span>
+          <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}</span>
+        </button>
+        <button class="btn-confirm-secondary" type="button" data-confirm="session-write">${LuminaUtils.escapeHtml(t("confirm.btn.sessionWrite"))}</button>
       `;
     }
 
@@ -1706,6 +1760,103 @@
     return line.length > 96 ? `${line.slice(0, 96)}…` : line;
   }
 
+  function toolFamily(toolName) {
+    const n = String(toolName || "");
+    if (/^(shell|run_command|exec|bash|cmd|code_exec)$/.test(n)) return "shell";
+    if (
+      /^(file_read|read|read_file|file_view|file_write|write|write_file|file_edit|edit|edit_file|str_replace|apply_patch|list_dir|ls|search_files|glob|glob_files|grep|find|file_delete|move|patch|read_document)$/.test(
+        n,
+      )
+    ) {
+      return "file";
+    }
+    if (n === "web_search" || n === "web_fetch" || n.startsWith("browser_")) return "network";
+    if (/^(search_memory|session_search|memory)/.test(n) || n.startsWith("shibei_")) return "memory";
+    if (n.startsWith("mcp_")) return "mcp";
+    if (n === "spawn_subagent") return "subagent";
+    return "tool";
+  }
+
+  function extractBacktickParam(text) {
+    const m = String(text || "").match(/`([^`]+)`/);
+    return m ? m[1].trim() : "";
+  }
+
+  function shortToolParam(param, toolName) {
+    const value = String(param || "").trim();
+    if (!value) return "";
+    const family = toolFamily(toolName);
+    if (family === "file" || family === "memory" || family === "mcp") {
+      const parts = value.replace(/\\/g, "/").split("/").filter(Boolean);
+      const base = parts[parts.length - 1] || value;
+      return base.length > 48 ? `${base.slice(0, 48)}…` : base;
+    }
+    if (value.length > 56) return `${value.slice(0, 56)}…`;
+    return value;
+  }
+
+  function toolVerbFromLabel(label) {
+    let s = String(label || "").trim();
+    if (!s) return "";
+    s = s.replace(/^调用\s+/, "");
+    s = s.replace(/\s+(完成|失败)$/, "");
+    s = s.replace(/^网络连接\s*·\s*/, "");
+    s = s.replace(/^正在委派子 Agent$/, "委派子任务");
+    s = s.replace(/^子 Agent 委派(完成|失败)$/, "委派子任务");
+    return s.trim();
+  }
+
+  function buildToolChipLabel(toolName, actionDetail, baseLabel) {
+    const verb = toolVerbFromLabel(baseLabel) || String(toolName || "工具");
+    const param = shortToolParam(extractBacktickParam(actionDetail), toolName);
+    if (param) return `${verb} · ${param}`;
+    return verb;
+  }
+
+  function toolDetailFingerprint(node) {
+    return `${String(node.actionDetail || "").trim()}\n---\n${String(node.resultDetail || "").trim()}\n---\n${String(node.detail || "").trim()}`;
+  }
+
+  function renderToolStepDetail(node) {
+    const family = toolFamily(node.toolName);
+    const action = String(node.actionDetail || "").trim();
+    const result = String(node.resultDetail || "").trim();
+    const fallback = String(node.detail || "").trim();
+    let html = "";
+    if (action) {
+      const rawCmd = family === "shell" ? extractBacktickParam(action) : "";
+      if (rawCmd) {
+        html +=
+          `<div class="tp-detail-block">` +
+          `<div class="tp-detail-kicker">${LuminaUtils.escapeHtml(t("chat.progress.command"))}</div>` +
+          `<pre class="tp-detail-pre">${LuminaUtils.escapeHtml(rawCmd)}</pre>` +
+          `</div>`;
+      } else {
+        html +=
+          `<div class="tp-detail-block">` +
+          `<div class="tp-detail-kicker">${LuminaUtils.escapeHtml(t("chat.progress.action"))}</div>` +
+          `<div class="tp-detail-line markdown">${renderMarkdown(action)}</div>` +
+          `</div>`;
+      }
+    }
+    if (result) {
+      html +=
+        `<div class="tp-detail-block">` +
+        `<div class="tp-detail-kicker">${LuminaUtils.escapeHtml(t("chat.progress.output"))}</div>` +
+        renderDetailLines(result) +
+        `</div>`;
+    }
+    if (!html && fallback) {
+      return renderDetailLines(fallback);
+    }
+    return html;
+  }
+
+  function renderStepDetail(node) {
+    if (node.type === "tool") return renderToolStepDetail(node);
+    return renderDetailLines(String(node.detail || "").trim());
+  }
+
   function renderDetailLines(text) {
     const raw = String(text || "").trim();
     if (!raw) return "";
@@ -1774,6 +1925,8 @@
       type: turnNodeType(working),
       label: "",
       detail: "",
+      actionDetail: "",
+      resultDetail: "",
       status: "running",
       children: [],
       order: progressSession.turnNodes.size,
@@ -1784,13 +1937,32 @@
       const thoughtText = String(working?.detail || "").trim();
       existing.label = thoughtOneLine(thoughtText) || workingLabel || t("chat.progress.thought");
       if (thoughtText) existing.detail = thoughtText;
+    } else if (workingKind === "tool_started" || workingKind === "tool_finished") {
+      existing.toolName = String(working?.tool_name || existing.toolName || "");
+      if (workingKind === "tool_started" && working?.detail) {
+        existing.actionDetail = String(working.detail);
+      }
+      if (workingKind === "tool_finished" && working?.detail) {
+        existing.resultDetail = String(working.detail);
+      }
+      // Keep legacy detail as action when present (expand fallback / older events).
+      if (workingKind === "tool_started" && working?.detail) {
+        existing.detail = String(working.detail);
+      }
+      existing.label = buildToolChipLabel(
+        existing.toolName,
+        existing.actionDetail,
+        workingLabel || existing.label,
+      );
     } else {
       existing.label = workingLabel || existing.label || workingKind;
       if (working?.detail) existing.detail = String(working.detail);
     }
     existing.toolName = String(working?.tool_name || existing.toolName || "");
     existing.status = normalizeTurnStatus(working);
-    if (working?.goal && !existing.detail) existing.detail = String(working.goal);
+    if (working?.goal && !existing.detail && existing.type !== "tool") {
+      existing.detail = String(working.goal);
+    }
     if (working?.message && existing.type === "turn" && !existing.detail) {
       existing.detail = String(working.message);
     }
@@ -1810,13 +1982,13 @@
     if (n === "web_search") return "🔍";
     if (n === "web_fetch") return "🌐";
     if (n.startsWith("browser_")) return "🧭";
-    if (/^(file_read|read_file|file_view)$/.test(n)) return "📄";
-    if (/^(file_write|write_file|file_edit|edit_file|str_replace|apply_patch|write)$/.test(n)) return "✏️";
-    if (/^(list_dir|search_files|glob|grep|find)$/.test(n)) return "📁";
+    if (/^(file_read|read|read_file|file_view|read_document)$/.test(n)) return "📄";
+    if (/^(file_write|write|write_file|file_edit|edit|edit_file|str_replace|apply_patch)$/.test(n)) return "✏️";
+    if (/^(list_dir|ls|search_files|glob|glob_files|grep|find)$/.test(n)) return "📁";
     if (/^(search_memory|session_search|shibei_search|shibei_list_sources|memory_search)$/.test(n)) return "🗂️";
     if (n.startsWith("mcp_")) return "🔌";
     if (n === "spawn_subagent") return "🧩";
-    if (/^(shell|run_command|exec|bash|cmd)$/.test(n)) return "⌨️";
+    if (/^(shell|run_command|exec|bash|cmd|code_exec)$/.test(n)) return "⌨️";
     return "🔧";
   }
 
@@ -1852,20 +2024,26 @@
   }
 
   function renderChip(node) {
-    const detailText = String(node.detail || "").trim();
+    const detailHtml = renderStepDetail(node);
     // Thoughts: label already shows one line; expand only when there is more body.
     const labelLine = String(node.label || "").trim();
+    const detailText =
+      node.type === "tool"
+        ? toolDetailFingerprint(node)
+        : String(node.detail || "").trim();
     const hasDetail =
-      Boolean(detailText) &&
+      Boolean(detailHtml) &&
       (node.type !== "thought" || detailText !== labelLine);
     const open =
       hasDetail &&
       progressSession.expandedNodeIds instanceof Set &&
       progressSession.expandedNodeIds.has(node.id);
+    const family = node.type === "tool" ? toolFamily(node.toolName) : "";
+    const familyClass = family ? ` family-${escapeAttr(family)}` : "";
     const chipClass =
       node.type === "iteration"
         ? `tp-chip is-iteration is-${escapeAttr(node.status)}`
-        : `tp-chip is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}`;
+        : `tp-chip is-${escapeAttr(node.status)} type-${escapeAttr(node.type)}${familyClass}`;
     const iconHtml =
       node.type === "iteration"
         ? `<span class="tp-chip-icon">🔁</span>`
@@ -1893,7 +2071,7 @@
       `aria-expanded="${open ? "true" : "false"}" title="${escapeAttr(node.label)}">` +
       chipInner +
       `</button>` +
-      `<div class="tp-step-detail"${open ? "" : " hidden"}>${renderDetailLines(detailText)}</div>` +
+      `<div class="tp-step-detail"${open ? "" : " hidden"}>${detailHtml}</div>` +
       `</div>`
     );
   }
@@ -1988,7 +2166,44 @@
     });
   }
 
+  function setAllProgressNodesExpanded(expanded) {
+    if (!(progressSession.expandedNodeIds instanceof Set)) {
+      progressSession.expandedNodeIds = new Set();
+    }
+    if (!expanded) {
+      progressSession.expandedNodeIds.clear();
+    } else {
+      for (const node of progressSession.turnNodes.values()) {
+        if (turnNodeHasDetail(node)) progressSession.expandedNodeIds.add(node.id);
+      }
+      // Legacy list items under #agent-progress-list
+      progressListEl?.querySelectorAll(".is-expandable").forEach((el) => {
+        const item = el.closest("li");
+        if (item) item.classList.add("is-open");
+        el.setAttribute("aria-expanded", "true");
+      });
+    }
+    if (!expanded) {
+      progressListEl?.querySelectorAll("li.is-open").forEach((item) => {
+        item.classList.remove("is-open");
+        item.querySelector("[aria-expanded]")?.setAttribute("aria-expanded", "false");
+      });
+    }
+    setProgressExpanded(true);
+    renderTurnTree();
+  }
+
+  document.getElementById("btn-progress-expand-all")?.addEventListener("click", () => {
+    setAllProgressNodesExpanded(true);
+  });
+  document.getElementById("btn-progress-collapse-all")?.addEventListener("click", () => {
+    setAllProgressNodesExpanded(false);
+  });
+
   function turnNodeHasDetail(node) {
+    if (node.type === "tool") {
+      return Boolean(renderToolStepDetail(node));
+    }
     const detailText = String(node.detail || "").trim();
     const labelLine = String(node.label || "").trim();
     return Boolean(detailText) && (node.type !== "thought" || detailText !== labelLine);
@@ -2040,6 +2255,12 @@
           "is-queued",
         );
         chip.classList.add(`is-${node.status}`);
+        if (node.type === "tool") {
+          for (const cls of [...chip.classList]) {
+            if (cls.startsWith("family-")) chip.classList.remove(cls);
+          }
+          chip.classList.add(`family-${toolFamily(node.toolName)}`);
+        }
         const dot = chip.querySelector(".tp-dot");
         if (dot) {
           dot.className = `tp-dot is-${escapeAttr(node.status)}`;
@@ -2053,11 +2274,14 @@
         mark.outerHTML = statusMark(node.status);
       }
     }
-    const detailText = String(node.detail || "").trim();
+    const detailKey = toolDetailFingerprint(node);
     const detailEl = el.querySelector(".tp-step-detail, .tp-lane-detail");
-    if (detailEl && detailEl.dataset.tpDetail !== detailText) {
-      detailEl.dataset.tpDetail = detailText;
-      detailEl.innerHTML = renderDetailLines(detailText);
+    if (detailEl && detailEl.dataset.tpDetail !== detailKey) {
+      detailEl.dataset.tpDetail = detailKey;
+      detailEl.innerHTML =
+        node.type === "tool" || el.classList.contains("tp-step")
+          ? renderStepDetail(node)
+          : renderDetailLines(String(node.detail || "").trim());
     }
     return true;
   }
@@ -2095,7 +2319,7 @@
       const el = subagentTreeEl.querySelector(`[data-tp-id="${CSS.escape(node.id)}"]`);
       const detailEl = el?.querySelector(".tp-step-detail, .tp-lane-detail");
       if (detailEl) {
-        detailEl.dataset.tpDetail = String(node.detail || "").trim();
+        detailEl.dataset.tpDetail = toolDetailFingerprint(node);
       }
     }
   }
@@ -2329,6 +2553,16 @@
 
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
+    if (kind === "context_ready" && event?.context_snapshot) {
+      window.LuminaArtifacts?.setContextSnapshot?.(
+        event.context_snapshot,
+        currentThreadId,
+      );
+      return;
+    }
+    if (kind === "tool_started" || kind === "tool_finished") {
+      window.LuminaArtifacts?.noteToolEvent?.(event);
+    }
     emitMapLiveOverlay(event);
     if (kind === "idp_update" && event?.idp) {
       applyIdpProtocolMeta(event.idp);
@@ -2773,6 +3007,7 @@
       ? remoteCurrent
       : (threads[0]?.id || "");
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     if (render) {
       renderThreadList();
       renderCurrentThreadMessages();
@@ -2850,6 +3085,7 @@
     threads.unshift(thread);
     currentThreadId = thread.id;
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();
@@ -2901,6 +3137,7 @@
     if (!threadId || threadId === currentThreadId) return;
     currentThreadId = threadId;
     saveThreadsLocal();
+    window.LuminaArtifacts?.setThread?.(currentThreadId);
     renderThreadList();
     renderCurrentThreadMessages();
     scrollActiveThreadIntoView();

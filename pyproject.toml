@@ -14,7 +14,12 @@ dependencies = [
     "openpyxl>=3.1.0",
     "pypdf>=5.0.0",
     "python-docx>=1.1.0",
+    "aisuite",
+    "openai>=1.107.0",
 ]
+
+[tool.uv.sources]
+aisuite = { path = "vendor/aisuite", editable = true }
 
 [project.optional-dependencies]
 dev = [
@@ -88,4 +93,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tiktoken"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "aisuite.*"
 ignore_missing_imports = true

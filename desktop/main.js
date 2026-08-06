@@ -47,12 +47,40 @@ function killPortHolder(port) {
   });
 }
 
+function resolveBackendPython() {
+  // Always prefer `uv run` so Electron matches CLI/pytest (project .venv + path deps).
+  // Bare `python3` is wrong: PATH may point at unrelated envs (e.g. browser-use).
+  try {
+    const { execFileSync } = require("child_process");
+    execFileSync("uv", ["--version"], { stdio: "ignore" });
+    return { command: "uv", argsPrefix: ["run", "python"] };
+  } catch (_err) {
+    const venvPython = path.join(projectRoot(), ".venv", "bin", "python");
+    if (fs.existsSync(venvPython)) {
+      return { command: venvPython, argsPrefix: [] };
+    }
+    throw new Error(
+      "Cannot start backend: install uv, or create .venv (uv sync). " +
+        "Do not use system python3.",
+    );
+  }
+}
+
 function startBackend() {
   if (backendProcess) return;
+  const { command, argsPrefix } = resolveBackendPython();
   const env = { ...process.env, PYTHONPATH: path.join(projectRoot(), "src") };
   backendProcess = spawn(
-    "python3",
-    ["-m", "secretary.main", "--host", BACKEND_HOST, "--port", String(BACKEND_PORT)],
+    command,
+    [
+      ...argsPrefix,
+      "-m",
+      "secretary.main",
+      "--host",
+      BACKEND_HOST,
+      "--port",
+      String(BACKEND_PORT),
+    ],
     { cwd: projectRoot(), env, stdio: ["ignore", "pipe", "pipe"] },
   );
   backendProcess.stdout.on("data", (data) => {

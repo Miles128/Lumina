@@ -120,27 +120,50 @@ _FUNCTION_CALLS_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 _TOOL_CALL_FENCE_RE = re.compile(r"```tool-call\s*\n.*?```", re.DOTALL | re.IGNORECASE)
+# DeepSeek / Cursor-style DSML tool markup (ASCII | or fullwidth ｜).
+_DSML_MARK = r"[|｜]{1,2}\s*DSML\s*[|｜]{1,2}"
+_DSML_TOOL_CALLS_BLOCK_RE = re.compile(
+    rf"<\s*{_DSML_MARK}\s*tool_calls\s*>[\s\S]*?(?:<\s*/\s*{_DSML_MARK}\s*tool_calls\s*>|$)",
+    re.IGNORECASE,
+)
+_DSML_INVOKE_RE = re.compile(
+    rf"<\s*{_DSML_MARK}\s*invoke\s+name=\"([^\"]+)\"\s*>(.*?)(?:<\s*/\s*{_DSML_MARK}\s*invoke\s*>|$)",
+    re.DOTALL | re.IGNORECASE,
+)
+_DSML_PARAM_RE = re.compile(
+    rf"<\s*{_DSML_MARK}\s*parameter\s+name=\"([^\"]+)\"[^>]*>(.*?)<\s*/\s*{_DSML_MARK}\s*parameter\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_DSML_ANY_TAG_RE = re.compile(rf"<\s*/?\s*{_DSML_MARK}[^>]*>", re.IGNORECASE)
 
 
 def reply_contains_tool_call_markup(text: str) -> bool:
     """True when the model leaked tool-call XML/fences into the answer body."""
     if not text:
         return False
-    if "<function_calls>" in text.lower() or "</function_calls>" in text.lower():
+    lowered = text.lower()
+    if "<function_calls>" in lowered or "</function_calls>" in lowered:
         return True
-    if "```tool-call" in text.lower():
+    if "```tool-call" in lowered:
+        return True
+    if "dsml" in lowered and ("tool_calls" in lowered or "invoke" in lowered):
+        return True
+    if _DSML_ANY_TAG_RE.search(text) or _DSML_INVOKE_RE.search(text):
         return True
     return bool(_INVOKE_RE.search(text))
 
 
 def strip_tool_call_markup(text: str) -> str:
-    """Remove leaked tool-call XML / fences from user-facing text."""
+    """Remove leaked tool-call XML / fences / DSML from user-facing text."""
     if not text:
         return ""
     cleaned = _FUNCTION_CALLS_BLOCK_RE.sub("", text)
+    cleaned = _DSML_TOOL_CALLS_BLOCK_RE.sub("", cleaned)
     cleaned = _TOOL_CALL_FENCE_RE.sub("", cleaned)
     # Orphan invoke blocks (no outer function_calls wrapper).
     cleaned = _INVOKE_RE.sub("", cleaned)
+    cleaned = _DSML_INVOKE_RE.sub("", cleaned)
+    cleaned = _DSML_ANY_TAG_RE.sub("", cleaned)
     return cleaned.strip()
 
 
@@ -174,12 +197,32 @@ def parse_tool_call_response(raw: str) -> tuple[str, ToolCall | None]:
                 thought = f"Calling tool: {tool_call.name}"
 
     if tool_call is None:
+        dsml_calls = _parse_dsml_tool_calls(raw)
+        if dsml_calls:
+            tool_call = dsml_calls[0]
+            thought = strip_tool_call_markup(raw) or f"Calling tool: {tool_call.name}"
+
+    if tool_call is None:
         inferred = _infer_shell_call_from_text(raw)
         if inferred is not None:
             tool_call = inferred
             thought = "我先执行命令，再给你结果。"
 
     return thought, tool_call
+
+
+def _parse_dsml_tool_calls(raw: str) -> list[ToolCall]:
+    """Parse DSML-wrapped tool invokes leaked into assistant content."""
+    calls: list[ToolCall] = []
+    for match in _DSML_INVOKE_RE.finditer(raw):
+        name = match.group(1).strip()
+        body = match.group(2)
+        arguments: dict[str, Any] = {}
+        for param in _DSML_PARAM_RE.finditer(body):
+            arguments[param.group(1).strip()] = param.group(2).strip()
+        if name:
+            calls.append(ToolCall(name=name, arguments=arguments))
+    return calls
 
 
 def _parse_function_calls_xml(raw: str) -> list[ToolCall]:

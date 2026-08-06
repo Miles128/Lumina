@@ -1,18 +1,18 @@
 """API tests."""
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from secretary.api.app import app
+from secretary.memory.lumina_memory import LuminaMemory
 
 
 def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/health")
     assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload, list)
-    assert len(payload) >= 1
-    assert payload[0]["source"] == "local_documents"
+    assert response.json() == {"status": "ok"}
 
 
 def test_profile_endpoint_gone() -> None:
@@ -27,23 +27,23 @@ def test_background_endpoint_defaults_and_put() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert "think_enabled" in payload
-    assert "memory_summary_enabled" in payload
+    assert "memory_summary_enabled" not in payload
+    assert "auto_memory_keywords" in payload
+    assert "记住" in payload["auto_memory_keywords"]
 
     updated = client.put(
         "/api/agent/background",
         json={
             "think_enabled": True,
             "think_interval_hours": 12,
-            "memory_summary_enabled": False,
-            "memory_summary_hour": 22,
+            "auto_memory_keywords": ["记住", "记一下"],
         },
     )
     assert updated.status_code == 200
     body = updated.json()
     assert body["think_enabled"] is True
     assert body["think_interval_hours"] == 12
-    assert body["memory_summary_enabled"] is False
-    assert body["memory_summary_hour"] == 22
+    assert body["auto_memory_keywords"] == ["记住", "记一下"]
 
 
 def test_chat_endpoint() -> None:
@@ -73,23 +73,32 @@ def test_chat_thread_endpoints() -> None:
     assert all(item["id"] != thread_id for item in deleted.json()["threads"])
 
 
-def test_durable_memory_endpoint() -> None:
+def test_durable_memory_endpoint(tmp_path: Path) -> None:
+    """Isolate writes so tests never clobber ~/.lumina/memories/MEMORY.md."""
     client = TestClient(app)
-    response = client.get("/api/memory/durable")
-    assert response.status_code == 200
-    payload = response.json()
-    assert "memory_md" in payload
-    # USER.md 已退役，不再返回
-    assert "user_md" not in payload
+    isolated = LuminaMemory(tmp_path / "data")
+    isolated.write_memory_md("seed")
+    original = app.state.chat_service.memory
+    app.state.chat_service._memory = isolated
+    try:
+        response = client.get("/api/memory/durable")
+        assert response.status_code == 200
+        payload = response.json()
+        assert "memory_md" in payload
+        # USER.md 已退役，不再返回
+        assert "user_md" not in payload
 
-    put_response = client.put(
-        "/api/memory/durable",
-        json={"memory_md": "Test env fact"},
-    )
-    assert put_response.status_code == 200
-    updated = put_response.json()
-    assert updated["memory_md"] == "Test env fact"
-    assert "user_md" not in updated
+        put_response = client.put(
+            "/api/memory/durable",
+            json={"memory_md": "Test env fact"},
+        )
+        assert put_response.status_code == 200
+        updated = put_response.json()
+        assert updated["memory_md"] == "Test env fact"
+        assert isolated.read_memory_md() == "Test env fact"
+        assert "user_md" not in updated
+    finally:
+        app.state.chat_service._memory = original
 
 
 def test_platform_settings_endpoint() -> None:

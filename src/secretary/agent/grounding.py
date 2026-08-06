@@ -65,6 +65,7 @@ _MEMORY_QUERY_MARKERS = (
     "记忆里",
 )
 
+# Always-on phrases (in addition to user-configured auto_memory_keywords).
 _MEMORY_WRITE_MARKERS = (
     "写入记忆",
     "写到记忆",
@@ -76,13 +77,23 @@ _MEMORY_WRITE_MARKERS = (
     "写入 memory",
     "写入 MEMORY",
     "更新 MEMORY",
-    "写入 USER",
-    "更新 USER",
     "帮我记住",
     "请记住",
     "记一下",
     "记下：",
     "记下:",
+)
+
+DEFAULT_AUTO_MEMORY_KEYWORDS: tuple[str, ...] = ("记住",)
+
+_MEMORY_POLLUTION_MARKERS = (
+    "test env fact",
+    "completions.create",
+    "unexpected keyword argument",
+    "example domain",
+    "收到意外参数",
+    "thinking'",
+    "'thinking'",
 )
 
 _CHAT_HISTORY_EVIDENCE_MARKERS = (
@@ -442,24 +453,109 @@ def mentions_local_files(text: str) -> bool:
     return any(marker in cleaned for marker in file_talk)
 
 
-def is_memory_write_request(message: str) -> bool:
-    """User wants to persist facts via the memory tool — not query synced sources."""
+def normalize_auto_memory_keywords(keywords: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Normalize user keywords; empty input falls back to default ``记住``."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in keywords or ():
+        token = str(item).strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(token)
+        if len(cleaned) >= 12:
+            break
+    return tuple(cleaned) if cleaned else DEFAULT_AUTO_MEMORY_KEYWORDS
+
+
+def _memory_trigger_markers(keywords: list[str] | tuple[str, ...] | None = None) -> tuple[str, ...]:
+    user_keywords = normalize_auto_memory_keywords(keywords)
+    # User keywords first so "记住：…" wins over longer always-on phrases when tied.
+    merged: list[str] = []
+    seen: set[str] = set()
+    for marker in (*user_keywords, *_MEMORY_WRITE_MARKERS):
+        key = marker.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(marker)
+    return tuple(merged)
+
+
+def _is_memory_write_question_tail(rest: str) -> bool:
+    """True for tails like 了吗 / 吗 / ？ after a keyword (query, not write)."""
+    stripped = rest.lstrip(" \t")
+    if not stripped:
+        return False
+    if stripped[0] in "吗？?":
+        return True
+    return stripped.startswith(("了吗", "了？", "了?", "了么"))
+
+
+def is_memory_write_request(
+    message: str,
+    *,
+    keywords: list[str] | tuple[str, ...] | None = None,
+) -> bool:
+    """User wants to persist facts into MEMORY.md — not query synced sources."""
+    return extract_memory_write_text(message, keywords=keywords) is not None
+
+
+def extract_memory_write_text(
+    message: str,
+    *,
+    keywords: list[str] | tuple[str, ...] | None = None,
+) -> str | None:
+    """Pull the fact payload after a memory-write keyword/marker, if present."""
     text = message.strip()
     if not text:
-        return False
+        return None
+
     lowered = text.lower()
-    if any(marker in text or marker in lowered for marker in _MEMORY_WRITE_MARKERS):
-        return True
-    if text.startswith("记住") and not any(q in text for q in ("吗", "?", "？")):
-        return True
-    return False
+    best_idx: int | None = None
+    best_len = 0
+    for marker in _memory_trigger_markers(keywords):
+        idx = text.find(marker)
+        marker_len = len(marker)
+        if idx < 0:
+            idx = lowered.find(marker.lower())
+        if idx < 0:
+            continue
+        rest = text[idx + marker_len :]
+        if _is_memory_write_question_tail(rest):
+            continue
+        payload = rest.lstrip(" \t：:，,-\n")
+        if not payload:
+            continue
+        if best_idx is None or idx < best_idx:
+            best_idx = idx
+            best_len = marker_len
+    if best_idx is None:
+        return None
+    payload = text[best_idx + best_len :].lstrip(" \t：:，,-\n")
+    return payload.strip() or None
 
 
-def is_personal_memory_question(message: str) -> bool:
+def is_polluted_memory_fact(text: str) -> bool:
+    """Reject test pollution and tooling/API error noise as durable facts."""
+    lowered = text.strip().lower()
+    if not lowered:
+        return True
+    return any(marker in lowered for marker in _MEMORY_POLLUTION_MARKERS)
+
+
+def is_personal_memory_question(
+    message: str,
+    *,
+    keywords: list[str] | tuple[str, ...] | None = None,
+) -> bool:
     text = message.strip()
     if not text:
         return False
-    if is_memory_write_request(text):
+    if is_memory_write_request(text, keywords=keywords):
         return False
     lowered = text.lower()
     if any(marker in text or marker in lowered for marker in _PERSONAL_MEMORY_MARKERS):

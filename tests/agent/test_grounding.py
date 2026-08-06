@@ -356,6 +356,25 @@ def test_is_personal_memory_question_and_enforce_memory() -> None:
     assert is_memory_write_request("记住我喜欢深色模式")
     assert not is_personal_memory_question("写入记忆：我喜欢 Python")
     assert not is_personal_memory_question("你记住了吗")
+
+    from secretary.agent.grounding import (
+        extract_memory_write_text,
+        is_polluted_memory_fact,
+        normalize_auto_memory_keywords,
+    )
+
+    assert extract_memory_write_text("写入记忆：我喜欢 Python") == "我喜欢 Python"
+    assert extract_memory_write_text("记住我喜欢深色模式") == "我喜欢深色模式"
+    assert extract_memory_write_text("写入记忆") is None
+    assert extract_memory_write_text("你记住了吗") is None
+    assert extract_memory_write_text(
+        "备忘：喜欢早起",
+        keywords=["备忘"],
+    ) == "喜欢早起"
+    assert normalize_auto_memory_keywords([]) == ("记住",)
+    assert is_polluted_memory_fact("Test env fact")
+    assert is_polluted_memory_fact("Completions.create() 收到意外参数 'thinking'")
+    assert not is_polluted_memory_fact("用户偏好简洁回复")
     reply = (
         "翻了对话历史，你提到的书就这两本：\n"
         "1. **《启示录》**\n"
