@@ -56,7 +56,14 @@ def to_chat_response(result: ChatResult, usage: LlmUsage | None = None) -> ChatR
 
 
 def svc(request: Request) -> Any:
-    return request.app.state
+    state = request.app.state
+    if not hasattr(state, "store"):
+        # Lazy bootstrap: TestClient without a lifespan may not have run
+        # _ensure_services yet; initialize on first access (idempotent).
+        from secretary.api.app import _ensure_services
+
+        _ensure_services(request.app)
+    return state
 
 
 def build_progress_callback(

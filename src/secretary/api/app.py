@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -182,9 +183,7 @@ def _init_services() -> dict[str, object]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    if not hasattr(app.state, "store"):
-        for key, value in _init_services().items():
-            setattr(app.state, key, value)
+    _ensure_services(app)
     app.state.profile_service.persist_after_sync()
     try:
         app.state.chat_service.memory.migrate_user_profile_if_needed(
@@ -235,11 +234,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Lumina", version="0.1.0", lifespan=lifespan)
 
-# Ensure app.state is populated at import time (TestClient without context manager
-# may not trigger lifespan). The lifespan guard (hasattr check) prevents double init.
-if not hasattr(app.state, "store"):
-    for key, value in _init_services().items():
-        setattr(app.state, key, value)
+# Services initialize lazily: first request via deps.svc, or at lifespan start.
+# No import-time side effects (no disk/config reads when the module is loaded).
+_services_lock = threading.Lock()
+
+
+def _ensure_services(target: FastAPI) -> None:
+    """Initialize services exactly once (import-lazy; thread-safe)."""
+    if hasattr(target.state, "store"):
+        return
+    with _services_lock:
+        if hasattr(target.state, "store"):
+            return
+        for key, value in _init_services().items():
+            setattr(target.state, key, value)
 
 app.add_middleware(
     CORSMiddleware,
