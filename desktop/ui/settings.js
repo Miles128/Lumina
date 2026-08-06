@@ -268,7 +268,6 @@
       <div class="platform-actions">
         ${platform.fields.length > 0 ? '<button class="btn-text save-btn" type="button" data-action="save">保存</button>' : ""}
         <button class="btn-text test-btn" type="button" data-action="test">测试连接</button>
-        <button class="btn-text" type="button" data-action="sync">立即同步此源</button>
       </div>
       <div class="platform-feedback" hidden></div>
     `;
@@ -278,29 +277,8 @@
       saveBtn.addEventListener("click", () => savePlatform(platform.source, pane));
     }
     pane.querySelector('[data-action="test"]').addEventListener("click", () => testPlatform(platform.source, pane));
-    pane.querySelector('[data-action="sync"]').addEventListener("click", () => syncPlatform(platform.source, pane));
     contentEl.innerHTML = "";
     contentEl.appendChild(pane);
-  }
-
-  async function syncPlatform(source, pane) {
-    const feedback = pane.querySelector(".platform-feedback");
-    showFeedback(feedback, "info", `正在同步 ${source}…`);
-    try {
-      const result = await window.SecretaryAPI.request("POST", `/api/sync/${source}`, null, {
-        timeoutMs: 90_000,
-      });
-      const inserted = Number(result?.inserted || 0);
-      showFeedback(feedback, "success", `${result?.message || "同步完成"}（写入 ${inserted} 条）`);
-      const updated = await window.SecretaryAPI.request("GET", "/api/settings/platforms");
-      platforms = updated;
-      const platform = platforms.find((item) => item.source === source);
-      if (platform) {
-        updatePaneStatus(pane, source, platform.status, platform.status_message);
-      }
-    } catch (error) {
-      showFeedback(feedback, "error", `同步失败：${error.message}`);
-    }
   }
 
   function renderField(source, field) {
@@ -791,6 +769,7 @@
         thinking_mode: document.getElementById("harness-thinking-mode")?.value || "auto",
         reasoning_effort: document.getElementById("harness-reasoning-effort")?.value || "high",
         strict_tools: Boolean(document.getElementById("harness-strict-tools")?.checked),
+        runtime_backend: document.getElementById("harness-runtime-backend")?.value || "aisuite",
       },
     };
   }
@@ -818,6 +797,7 @@
       return;
     }
     const h = agentConfig?.harness || {};
+    const runtimeBackend = h.runtime_backend === "legacy" ? "legacy" : "aisuite";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -825,6 +805,7 @@
           <p>${escapeHtml(t("settings.harness.desc"))}</p>
         </header>
         <section class="settings-fields">
+          <h4 class="settings-group-title">${escapeHtml(t("settings.harness.group.loop"))}</h4>
           <label class="settings-field">
             <span>${escapeHtml(t("settings.harness.max_tool_rounds"))}</span>
             <input id="harness-max-rounds" type="number" min="1" max="64" value="${escapeHtml(String(h.max_tool_rounds ?? 20))}" />
@@ -842,21 +823,10 @@
             <input id="harness-keep-tail" type="number" min="2" max="64" value="${escapeHtml(String(h.compaction_keep_tail ?? 8))}" />
           </label>
           <label class="settings-field">
-            <span>${escapeHtml(t("settings.harness.trace_retention"))}</span>
-            <select id="harness-trace-retention">
-              <option value="full" ${h.trace_retention === "full" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.full"))}</option>
-              <option value="summary" ${h.trace_retention === "summary" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.summary"))}</option>
-              <option value="off" ${h.trace_retention === "off" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.off"))}</option>
-            </select>
-          </label>
-          <label class="settings-field">
-            <span>${escapeHtml(t("settings.harness.trace_retain_days"))}</span>
-            <input id="harness-trace-days" type="number" min="0" max="365" value="${escapeHtml(String(h.trace_retain_days ?? 30))}" />
-          </label>
-          <label class="settings-field">
             <span>${escapeHtml(t("settings.harness.max_tool_output_chars"))}</span>
             <input id="harness-tool-output" type="number" min="500" max="100000" value="${escapeHtml(String(h.max_tool_output_chars ?? 12000))}" />
           </label>
+          <h4 class="settings-group-title">${escapeHtml(t("settings.harness.group.thinking"))}</h4>
           <label class="settings-field">
             <span>${escapeHtml(t("settings.harness.thinking_mode"))}</span>
             <select id="harness-thinking-mode">
@@ -877,6 +847,28 @@
             <span>${escapeHtml(t("settings.harness.strict_tools"))}</span>
             <input id="harness-strict-tools" type="checkbox" ${h.strict_tools ? "checked" : ""} />
           </label>
+          <h4 class="settings-group-title">${escapeHtml(t("settings.harness.group.runtime"))}</h4>
+          <label class="settings-field">
+            <span>${escapeHtml(t("settings.harness.runtime_backend"))}</span>
+            <select id="harness-runtime-backend">
+              <option value="aisuite" ${runtimeBackend === "aisuite" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.aisuite"))}</option>
+              <option value="legacy" ${runtimeBackend === "legacy" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.legacy"))}</option>
+            </select>
+          </label>
+          <h4 class="settings-group-title">${escapeHtml(t("settings.harness.group.observability"))}</h4>
+          <label class="settings-field">
+            <span>${escapeHtml(t("settings.harness.trace_retention"))}</span>
+            <select id="harness-trace-retention">
+              <option value="full" ${h.trace_retention === "full" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.full"))}</option>
+              <option value="summary" ${h.trace_retention === "summary" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.summary"))}</option>
+              <option value="off" ${h.trace_retention === "off" ? "selected" : ""}>${escapeHtml(t("settings.harness.trace_retention.off"))}</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span>${escapeHtml(t("settings.harness.trace_retain_days"))}</span>
+            <input id="harness-trace-days" type="number" min="0" max="365" value="${escapeHtml(String(h.trace_retain_days ?? 30))}" />
+          </label>
+          <p class="muted settings-crosslink">${escapeHtml(t("settings.harness.crosslinks"))}</p>
         </section>
         <div class="platform-actions">
           <button type="button" class="primary" id="harness-save">${escapeHtml(t("action.save"))}</button>

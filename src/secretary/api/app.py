@@ -38,7 +38,6 @@ from secretary.api.schemas import (
     BackgroundTasksUpdateRequest,
     BriefingResponse,
     HarnessConfigSchema,
-    HealthResponse,
     MemorySearchResponse,
     PlatformCardResponse,
     PlatformFieldResponse,
@@ -56,7 +55,6 @@ from secretary.api.schemas import (
     SkillUninstallRequest,
     SoulResponse,
     SoulUpdateRequest,
-    SyncResponse,
     WebSearchResponse,
 )
 from secretary.config import settings
@@ -299,45 +297,9 @@ def update_agent_background(
 
 
 @app.get("/api/health")
-def get_health(request: Request) -> list[HealthResponse]:
-    sync_service: SyncService = svc(request).sync_service
-    return [
-        HealthResponse(
-            source=item.source.value,
-            status=item.status.value,
-            message=format_connector_message(item.message),
-            last_sync_at=item.last_sync_at,
-            item_count=item.item_count,
-        )
-        for item in sync_service.get_stored_health()
-    ]
-
-
-@app.post("/api/sync")
-async def sync_all(request: Request) -> list[SyncResponse]:
-    sync_service: SyncService = svc(request).sync_service
-    results = await asyncio.to_thread(sync_service.sync_all, include_browser_sources=True)
-    return [
-        SyncResponse(
-            source=result.source.value,
-            inserted=result.inserted,
-            status=result.health.status.value,
-            message=result.health.message,
-        )
-        for result in results
-    ]
-
-
-@app.post("/api/sync/{source}")
-async def sync_one(source: SourceKind, request: Request) -> SyncResponse:
-    sync_service: SyncService = svc(request).sync_service
-    result = await asyncio.to_thread(sync_service.sync_source, source)
-    return SyncResponse(
-        source=result.source.value,
-        inserted=result.inserted,
-        status=result.health.status.value,
-        message=result.health.message,
-    )
+def get_health() -> dict[str, str]:
+    """Liveness probe for the Electron shell / e2e waiters."""
+    return {"status": "ok"}
 
 
 @app.get("/api/profile")

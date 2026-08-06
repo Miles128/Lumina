@@ -23,6 +23,7 @@ from secretary.agent.agent_profile import (
     profile_system_appendix,
 )
 from secretary.agent.chat_tool_registry import ChatToolRegistry
+from secretary.agent.context_snapshot import build_context_snapshot
 from secretary.agent.executable_skill import ExecutableSkillManager
 from secretary.agent.harness_config import HarnessConfig
 from secretary.agent.identity import (
@@ -109,6 +110,7 @@ class ChatResult:
     files_read: list[str] | None = None
     confirmation_scope: str = ""
     raw_reply: str = ""
+    context_snapshot: dict[str, Any] | None = None
 
 
 # Per-request context: isolates active thread/trace/parent across concurrent
@@ -677,6 +679,10 @@ class ChatService:
             thinking=thinking,
             reasoning_effort=effort,
             full_fs_access=self._full_fs_access(),
+            strict_tools=harness.strict_tools,
+            compaction_max_tokens=harness.compaction_max_tokens,
+            compaction_keep_tail=harness.compaction_keep_tail,
+            max_tool_output_chars=harness.max_tool_output_chars,
         )
 
         if result.pending_confirmation:
@@ -706,6 +712,30 @@ class ChatService:
         self._save_to_session("assistant", safe_reply)
 
         cui = _confirmation_ui(result.pending_confirmation)
+        confirm_snapshot_messages = (
+            list(result.messages_snapshot)
+            if result.messages_snapshot is not None
+            else list(messages)
+        )
+        confirm_context = build_context_snapshot(
+            confirm_snapshot_messages,
+            trace_id=self._active_trace_id,
+            thread_id=self._active_thread_id,
+        )
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    ProgressEvent(
+                        kind="context_ready",
+                        iteration=result.total_steps,
+                        message="上下文已就绪",
+                        thread_id=self._active_thread_id,
+                        turn_id=self._active_trace_id,
+                        context=confirm_context,
+                    )
+                )
+            except Exception:
+                logger.debug("context_ready progress emit failed", exc_info=True)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt="",
@@ -717,6 +747,7 @@ class ChatService:
             confirmation_kind=cui.confirmation_kind,
             allow_permanent_read=cui.allow_permanent_read,
             allow_session_write=cui.allow_session_write,
+            context_snapshot=confirm_context,
         )
 
     def _confirm_subagent_action(
@@ -806,6 +837,7 @@ class ChatService:
                 parent_resume.session_id,
                 parent_resume.profile_excerpt,
                 memory_hits=parent_resume.memory_hits,
+                progress_callback=progress_callback,
             )
 
         raw_reply = f"子 Agent ({state.archetype}) 已完成：\n\n{summary}"
@@ -1098,6 +1130,7 @@ class ChatService:
                 session_id,
                 profile_excerpt,
                 memory_hits=memory_hits,
+                progress_callback=progress_callback,
             )
             return ChatResult(
                 reply=chat.reply,
@@ -1109,6 +1142,7 @@ class ChatService:
                 pending_confirmation=chat.pending_confirmation,
                 grounding_verified=chat.grounding_verified,
                 grounding_note=chat.grounding_note,
+                context_snapshot=chat.context_snapshot,
                 route="web_agent",
             )
         except AgentError as error:
@@ -1232,6 +1266,7 @@ class ChatService:
             runtime_backend=harness.runtime_backend,
             require_confirm=harness.require_confirm,
             full_fs_access=self._full_fs_access(),
+            max_tool_output_chars=harness.max_tool_output_chars,
         )
 
         try:
@@ -1275,6 +1310,7 @@ class ChatService:
                 session_id,
                 profile_excerpt,
                 memory_hits=len(hits),
+                progress_callback=progress_callback,
             )
         except AgentError as error:
             fallback = (
@@ -1315,6 +1351,7 @@ class ChatService:
         profile_excerpt: str,
         *,
         memory_hits: int,
+        progress_callback: Callable[[ProgressEvent], None] | None = None,
     ) -> ChatResult:
         raw_reply = result.reply
         safe_reply, grounding_verified, grounding_note = self._prepare_user_reply(
@@ -1392,6 +1429,31 @@ class ChatService:
         confirmation_scope = ""
         if result.pending_confirmation is not None and self._subagent_pending is not None:
             confirmation_scope = "subagent"
+        snapshot_messages = (
+            list(result.messages_snapshot)
+            if result.messages_snapshot is not None
+            else list(messages)
+        )
+        context_snapshot = build_context_snapshot(
+            snapshot_messages,
+            trace_id=self._active_trace_id,
+            thread_id=self._active_thread_id,
+        )
+        # Early UI refresh: push snapshot over progress SSE before HTTP returns.
+        if progress_callback is not None:
+            try:
+                progress_callback(
+                    ProgressEvent(
+                        kind="context_ready",
+                        iteration=result.total_steps,
+                        message="上下文已就绪",
+                        thread_id=self._active_thread_id,
+                        turn_id=self._active_trace_id,
+                        context=context_snapshot,
+                    )
+                )
+            except Exception:
+                logger.debug("context_ready progress emit failed", exc_info=True)
         return ChatResult(
             reply=safe_reply,
             profile_excerpt=profile_excerpt,
@@ -1408,6 +1470,7 @@ class ChatService:
             files_read=result.files_read or None,
             confirmation_scope=confirmation_scope,
             raw_reply=raw_reply,
+            context_snapshot=context_snapshot,
         )
 
     def _maybe_trigger_reflection(

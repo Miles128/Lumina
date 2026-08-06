@@ -12,10 +12,7 @@ def test_health_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/api/health")
     assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload, list)
-    assert len(payload) >= 1
-    assert payload[0]["source"] == "local_documents"
+    assert response.json() == {"status": "ok"}
 
 
 def test_profile_endpoint_gone() -> None:

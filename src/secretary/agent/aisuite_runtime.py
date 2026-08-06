@@ -322,6 +322,8 @@ def run_with_aisuite(
     on_subagent_paused: Callable[[Any], None] | None = None,
     explicit_working_dir: bool = False,
     require_confirm: ConfirmRequireConfig | None = None,
+    compaction_max_tokens: int | None = None,
+    compaction_keep_tail: int | None = None,
 ) -> LoopResult:
     """Run one aisuite Agent turn and map to LoopResult (confirm + grounding)."""
     tools_by_name = {t.name: t for t in tools if getattr(t, "name", "")}
@@ -347,6 +349,37 @@ def run_with_aisuite(
                 )
             except Exception as exc:
                 logger.warning("aisuite workspace preflight list_dir failed: %s", exc)
+
+    # FR-52: honor harness compaction budget in the aisuite backend. The legacy
+    # loop compacts per-iteration; here we compact the incoming history once
+    # before the Runner consumes it (Runner turns grow in-process afterwards).
+    compaction_kwargs: dict[str, Any] = {}
+    if compaction_max_tokens is not None:
+        compaction_kwargs["max_tokens"] = compaction_max_tokens
+    if compaction_keep_tail is not None:
+        compaction_kwargs["keep_tail"] = compaction_keep_tail
+    if compaction_kwargs:
+        from secretary.agent.context_compaction import compact_messages_if_needed
+
+        compaction = compact_messages_if_needed(
+            run_messages, llm_config, **compaction_kwargs
+        )
+        if compaction.triggered:
+            run_messages = compaction.messages
+            if progress_callback is not None:
+                progress_callback(
+                    ProgressEvent(
+                        kind="context_compacted",
+                        iteration=0,
+                        message=(
+                            f"上下文已压缩：{compaction.before_tokens}→"
+                            f"{compaction.after_tokens} tokens ({compaction.mode})"
+                        ),
+                        detail=compaction.to_detail(),
+                        prompt_tokens=compaction.before_tokens,
+                        completion_tokens=compaction.after_tokens,
+                    )
+                )
 
     def _needs_confirm(tool_name: str, arguments: dict[str, Any]) -> bool:
         tool = tools_by_name.get(tool_name)
@@ -449,6 +482,8 @@ def resume_with_aisuite(
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     on_subagent_paused: Callable[[Any], None] | None = None,
+    compaction_max_tokens: int | None = None,
+    compaction_keep_tail: int | None = None,
 ) -> LoopResult:
     """Execute a confirmed tool, append the result, continue via aisuite Runner."""
     tools_by_name = {t.name: t for t in tools if getattr(t, "name", "")}
@@ -515,6 +550,8 @@ def resume_with_aisuite(
         progress_callback=progress_callback,
         cancel_check=cancel_check,
         on_subagent_paused=on_subagent_paused,
+        compaction_max_tokens=compaction_max_tokens,
+        compaction_keep_tail=compaction_keep_tail,
     )
     if pending.tool_name not in result.used_tools:
         result.used_tools.insert(0, pending.tool_name)

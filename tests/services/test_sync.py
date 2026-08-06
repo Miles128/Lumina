@@ -27,7 +27,7 @@ def test_sync_source_platform_connectors_retired(sync_service: SyncService) -> N
 
 
 def test_sync_all_only_local_documents(sync_service: SyncService) -> None:
-    results = sync_service.sync_all(include_browser_sources=True)
+    results = sync_service.sync_all()
     assert len(results) == 1
     assert results[0].source is SourceKind.LOCAL_DOCUMENTS
 

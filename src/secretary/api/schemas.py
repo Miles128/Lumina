@@ -7,21 +7,6 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class HealthResponse(BaseModel):
-    source: str
-    status: str
-    message: str
-    last_sync_at: datetime | None = None
-    item_count: int = 0
-
-
-class SyncResponse(BaseModel):
-    source: str
-    inserted: int
-    status: str
-    message: str
-
-
 class ProfileResponse(BaseModel):
     generated_at: datetime
     markdown: str
@@ -84,6 +69,40 @@ class ChatThreadCurrentRequest(BaseModel):
     thread_id: str = Field(min_length=1, max_length=64)
 
 
+class ContextSnapshotMessage(BaseModel):
+    index: int = 0
+    role: str = ""
+    content: str = ""
+    approx_tokens: int = 0
+
+
+class ContextSnapshotUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    estimated_prompt_tokens: int = 0
+
+
+class ContextSnapshotCompaction(BaseModel):
+    before_tokens: int | None = None
+    after_tokens: int | None = None
+
+
+class ContextSnapshot(BaseModel):
+    """Assembled LLM context for the desktop harness context panel."""
+
+    trace_id: str = ""
+    thread_id: str = ""
+    captured_at: str = ""
+    usage: ContextSnapshotUsage = Field(default_factory=ContextSnapshotUsage)
+    compaction: ContextSnapshotCompaction = Field(default_factory=ContextSnapshotCompaction)
+    messages: list[ContextSnapshotMessage] = Field(default_factory=list)
+    message_count: int = 0
+    approx_total_tokens: int = 0
+
+
 class ChatResponse(BaseModel):
     reply: str
     profile_excerpt: str
@@ -106,6 +125,7 @@ class ChatResponse(BaseModel):
     usage_total_tokens: int = 0
     confirmation_scope: str = ""
     raw_reply: str = ""
+    context_snapshot: ContextSnapshot | None = None
 
 
 class ConfirmActionRequest(BaseModel):

@@ -73,24 +73,10 @@ def test_ui_settings_shibei_pane(page: Page) -> None:
     expect(page.locator("#shibei-enabled")).to_be_visible()
 
 
-def test_ui_local_documents_sync_button_triggers_api(page: Page) -> None:
-    sync_hits: list[str] = []
-
-    def track_sync(route, request) -> None:
-        if request.method == "POST" and "/api/sync/" in request.url:
-            sync_hits.append(request.url)
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body='{"inserted": 0, "message": "ok", "source": "local_documents", "status": "ready"}',
-        )
-
-    page.route("**/api/sync/**", track_sync)
+def test_ui_local_documents_pane_renders(page: Page) -> None:
     page.goto("/")
     _open_settings(page)
     page.locator('#settings-nav [data-key="local_documents"]').click()
-    sync_btn = page.locator('[data-action="sync"]')
-    expect(sync_btn).to_be_visible(timeout=10_000)
-    sync_btn.click()
-    page.wait_for_timeout(800)
-    assert sync_hits, "expected POST /api/sync/local_documents from knowledge pane"
+    expect(page.locator('[data-action="test"]')).to_be_visible(timeout=10_000)
+    # Retired /api/sync surface must not offer a per-source sync action.
+    expect(page.locator('[data-action="sync"]')).to_have_count(0)

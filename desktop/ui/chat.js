@@ -687,6 +687,12 @@
         },
       );
       showTyping(false);
+      if (response?.context_snapshot) {
+        window.LuminaArtifacts?.setContextSnapshot?.(
+          response.context_snapshot,
+          requestThreadId || currentThreadId,
+        );
+      }
 
       // After a fork, the active path changes (old branch is replaced).
       // render:true re-renders from server state so stale off-path messages
@@ -784,6 +790,12 @@
         },
       );
       showTyping(false);
+      if (response?.context_snapshot) {
+        window.LuminaArtifacts?.setContextSnapshot?.(
+          response.context_snapshot,
+          confirmThreadId || currentThreadId,
+        );
+      }
 
       if (response.needs_confirmation) {
         clearStreamingBubble();
@@ -1080,15 +1092,27 @@
       : "";
 
     let actions = `
-      <button class="btn-confirm-primary" type="button" data-confirm="allow">执行</button>
-      <button class="btn-confirm-deny" type="button" data-confirm="deny">拒绝</button>
+      <button class="btn-confirm-icon btn-confirm-allow" type="button" data-confirm="allow" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}">
+        <span class="confirm-glyph" aria-hidden="true">✓</span>
+        <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.allow"))}</span>
+      </button>
+      <button class="btn-confirm-icon btn-confirm-deny" type="button" data-confirm="deny" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}">
+        <span class="confirm-glyph" aria-hidden="true">✕</span>
+        <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}</span>
+      </button>
     `;
 
     if (kind === "write_new") {
       actions = `
-        <button class="btn-confirm-primary" type="button" data-confirm="once">仅本次执行</button>
-        <button class="btn-confirm-secondary" type="button" data-confirm="session-write">本次授权（可新建文件）</button>
-        <button class="btn-confirm-deny" type="button" data-confirm="deny">拒绝</button>
+        <button class="btn-confirm-icon btn-confirm-allow" type="button" data-confirm="once" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.once"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.once"))}">
+          <span class="confirm-glyph" aria-hidden="true">✓</span>
+          <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.once"))}</span>
+        </button>
+        <button class="btn-confirm-icon btn-confirm-deny" type="button" data-confirm="deny" aria-label="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}" title="${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}">
+          <span class="confirm-glyph" aria-hidden="true">✕</span>
+          <span class="confirm-glyph-label">${LuminaUtils.escapeHtml(t("confirm.btn.deny"))}</span>
+        </button>
+        <button class="btn-confirm-secondary" type="button" data-confirm="session-write">${LuminaUtils.escapeHtml(t("confirm.btn.sessionWrite"))}</button>
       `;
     }
 
@@ -2142,6 +2166,40 @@
     });
   }
 
+  function setAllProgressNodesExpanded(expanded) {
+    if (!(progressSession.expandedNodeIds instanceof Set)) {
+      progressSession.expandedNodeIds = new Set();
+    }
+    if (!expanded) {
+      progressSession.expandedNodeIds.clear();
+    } else {
+      for (const node of progressSession.turnNodes.values()) {
+        if (turnNodeHasDetail(node)) progressSession.expandedNodeIds.add(node.id);
+      }
+      // Legacy list items under #agent-progress-list
+      progressListEl?.querySelectorAll(".is-expandable").forEach((el) => {
+        const item = el.closest("li");
+        if (item) item.classList.add("is-open");
+        el.setAttribute("aria-expanded", "true");
+      });
+    }
+    if (!expanded) {
+      progressListEl?.querySelectorAll("li.is-open").forEach((item) => {
+        item.classList.remove("is-open");
+        item.querySelector("[aria-expanded]")?.setAttribute("aria-expanded", "false");
+      });
+    }
+    setProgressExpanded(true);
+    renderTurnTree();
+  }
+
+  document.getElementById("btn-progress-expand-all")?.addEventListener("click", () => {
+    setAllProgressNodesExpanded(true);
+  });
+  document.getElementById("btn-progress-collapse-all")?.addEventListener("click", () => {
+    setAllProgressNodesExpanded(false);
+  });
+
   function turnNodeHasDetail(node) {
     if (node.type === "tool") {
       return Boolean(renderToolStepDetail(node));
@@ -2495,6 +2553,13 @@
 
   function handleProgressEvent(event) {
     const kind = String(event?.kind || "");
+    if (kind === "context_ready" && event?.context_snapshot) {
+      window.LuminaArtifacts?.setContextSnapshot?.(
+        event.context_snapshot,
+        currentThreadId,
+      );
+      return;
+    }
     if (kind === "tool_started" || kind === "tool_finished") {
       window.LuminaArtifacts?.noteToolEvent?.(event);
     }

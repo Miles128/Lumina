@@ -9,10 +9,9 @@ from typing import Any
 from secretary.config import Settings
 from secretary.connectors.base import BaseConnector
 from secretary.connectors.registry import build_connectors
-from secretary.core.types import ConnectorHealth, ConnectorStatus, MemoryChunk, SourceKind
+from secretary.core.types import ConnectorHealth, ConnectorStatus, SourceKind
 from secretary.exceptions import ConnectorError
 from secretary.memory.db import MemoryStore
-from secretary.memory.kb import KnowledgeWorkspace
 from secretary.services.local_documents_profiler import (
     LocalDocumentsPlatform,
     LocalDocumentsProfiler,
@@ -60,8 +59,7 @@ class SyncService:
         self._local_docs = LocalDocumentsPlatform(self._settings)
         self._local_profiler = LocalDocumentsProfiler(self._settings)
 
-    def sync_all(self, *, include_browser_sources: bool = False) -> list[SyncResult]:
-        del include_browser_sources  # platform connectors retired
+    def sync_all(self) -> list[SyncResult]:
         results = [self.sync_source(SourceKind.LOCAL_DOCUMENTS)]
         self._persist_profile()
         self._maybe_import_shibei()
@@ -77,9 +75,6 @@ class SyncService:
         )
         self._store.update_sync_state(health)
         return SyncResult(source=source, inserted=0, health=health)
-
-    def get_health(self) -> list[ConnectorHealth]:
-        return self.get_stored_health()
 
     def get_stored_health(self) -> list[ConnectorHealth]:
         """Read persisted status for local documents only."""
@@ -136,14 +131,6 @@ class SyncService:
             UserProfileStore(self._settings.resolved_data_dir() / "user_profile.md"),
         )
         service.persist_after_sync()
-
-    def export_kb_from_memory(self) -> int:
-        """Legacy manual export from Lumina SQLite chunks to the old workspace."""
-        workspace = KnowledgeWorkspace(self._settings.resolved_data_dir() / "workspace")
-        chunks: list[MemoryChunk] = []
-        for source in SourceKind:
-            chunks.extend(self._store.list_by_source(source, limit=200))
-        return workspace.export_chunks(chunks)
 
     def _maybe_import_shibei(self) -> None:
         service = self._shibei_service

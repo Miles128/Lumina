@@ -260,6 +260,38 @@
       en: "Strict tools (DeepSeek beta)",
       zh: "严格工具调用（DeepSeek beta）",
     },
+    "settings.harness.group.loop": {
+      en: "Loop & compaction",
+      zh: "循环与压缩",
+    },
+    "settings.harness.group.thinking": {
+      en: "Thinking",
+      zh: "思考",
+    },
+    "settings.harness.group.runtime": {
+      en: "Runtime",
+      zh: "运行时",
+    },
+    "settings.harness.group.observability": {
+      en: "Observability",
+      zh: "可观测",
+    },
+    "settings.harness.runtime_backend": {
+      en: "Agent runtime backend",
+      zh: "Agent 运行时后端",
+    },
+    "settings.harness.runtime_backend.aisuite": {
+      en: "aisuite (default)",
+      zh: "aisuite（默认）",
+    },
+    "settings.harness.runtime_backend.legacy": {
+      en: "legacy AgentLoop",
+      zh: "legacy AgentLoop",
+    },
+    "settings.harness.crosslinks": {
+      en: "History turns: Settings → LLM. Permission mode: Settings → Delegation.",
+      zh: "历史轮数见「LLM」；权限模式见「委派与确认」。",
+    },
     "settings.harness.footer": {
       en: "Sub-agent depth hard-limit is depth=1 and cannot be bypassed. See Delegation & confirm.",
       zh: "子 Agent 深度硬限 depth=1 不可配置绕过。委派说明见「委派与确认」。",
@@ -333,6 +365,10 @@
 
     "confirm.allow": { en: "Allowed", zh: "已允许" },
     "confirm.deny": { en: "Denied", zh: "已拒绝" },
+    "confirm.btn.allow": { en: "Allow", zh: "允许" },
+    "confirm.btn.deny": { en: "Deny", zh: "拒绝" },
+    "confirm.btn.once": { en: "Allow once", zh: "仅本次" },
+    "confirm.btn.sessionWrite": { en: "Allow new files this session", zh: "本次可新建文件" },
 
     "map.title": { en: "Conversation map", zh: "对话地图" },
     "map.hint": { en: "Click a node to switch branch", zh: "点击节点切换分支" },

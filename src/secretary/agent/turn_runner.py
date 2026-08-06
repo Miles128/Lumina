@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -21,6 +22,8 @@ from secretary.agent.session_store import SessionStore
 from secretary.agent.tools.base import Tool
 from secretary.agent.turn_models import TurnContext
 from secretary.services.file_auth import FileAuthService
+
+logger = logging.getLogger(__name__)
 
 RuntimeBackend = Literal["legacy", "aisuite"]
 
@@ -46,6 +49,7 @@ class AgentTurnPlan:
     runtime_backend: RuntimeBackend = "aisuite"
     require_confirm: ConfirmRequireConfig | None = None
     full_fs_access: bool = False
+    max_tool_output_chars: int | None = None
 
 
 @dataclass
@@ -91,6 +95,12 @@ def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
     if plan.runtime_backend != "aisuite":
         return True
     if plan.force_web_first_step:
+        return True
+    # strict_tools (beta tool schema / additionalProperties) is not honored by
+    # the aisuite Runner's inspect-based tool wrapping — fall back to the loop
+    # that does honor it instead of silently dropping the user's config.
+    if plan.strict_tools:
+        logger.info("strict_tools=True not supported on aisuite Runner; using legacy AgentLoop")
         return True
     # Nested subagent pause/resume stack still lives in AgentLoop.
     tool_names = {getattr(tool, "name", "") for tool in plan.tools}
@@ -142,6 +152,7 @@ class TurnRunner:
         reasoning_effort: str | None = "high",
         strict_tools: bool = False,
         require_confirm: ConfirmRequireConfig | None = None,
+        max_tool_output_chars: int | None = None,
     ) -> AgentLoop:
         hooks = self._resolve_hooks(tools)
         return AgentLoop(
@@ -165,6 +176,7 @@ class TurnRunner:
             reasoning_effort=reasoning_effort,
             strict_tools=strict_tools,
             require_confirm=require_confirm,
+            max_tool_output_chars=max_tool_output_chars,
         )
 
     def run_agent_turn(
@@ -213,6 +225,8 @@ class TurnRunner:
                         on_subagent_paused=on_subagent_paused,
                         explicit_working_dir=plan.explicit_working_dir,
                         require_confirm=plan.require_confirm,
+                        compaction_max_tokens=plan.compaction_max_tokens,
+                        compaction_keep_tail=plan.compaction_keep_tail,
                     )
                 else:
                     loop = self._build_agent_loop(
@@ -231,6 +245,7 @@ class TurnRunner:
                         reasoning_effort=plan.reasoning_effort,
                         strict_tools=plan.strict_tools,
                         require_confirm=plan.require_confirm,
+                        max_tool_output_chars=plan.max_tool_output_chars,
                     )
                     result = loop.run(plan.messages, temperature=temperature)
             if wrapped is not None and turn is not None:
@@ -282,12 +297,18 @@ class TurnRunner:
         thinking: str = "enabled",
         reasoning_effort: str | None = "high",
         full_fs_access: bool = False,
+        strict_tools: bool = False,
+        compaction_max_tokens: int | None = None,
+        compaction_keep_tail: int | None = None,
+        max_tool_output_chars: int | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         cwd = working_dir or Path.home()
         tool_names = {getattr(tool, "name", "") for tool in tools}
         use_aisuite = (
-            runtime_backend == "aisuite" and "spawn_subagent" not in tool_names
+            runtime_backend == "aisuite"
+            and "spawn_subagent" not in tool_names
+            and not strict_tools
         )
         from secretary.agent.fs_jail import full_fs_access_scope
 
@@ -308,6 +329,8 @@ class TurnRunner:
                     file_auth=self._file_auth,
                     progress_callback=wrapped,
                     cancel_check=cancel_check,
+                    compaction_max_tokens=compaction_max_tokens,
+                    compaction_keep_tail=compaction_keep_tail,
                 )
             loop = self._build_agent_loop(
                 llm_config,
@@ -318,6 +341,8 @@ class TurnRunner:
                 cancel_check=cancel_check,
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
+                strict_tools=strict_tools,
+                max_tool_output_chars=max_tool_output_chars,
             )
             return loop.resume_after_confirmation(pending, messages, temperature=temperature)
 

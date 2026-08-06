@@ -33,16 +33,25 @@
   const btnClose = document.getElementById("btn-artifact-close");
   const btnOpenExternal = document.getElementById("btn-artifact-open-external");
   const btnRefresh = document.getElementById("btn-artifact-refresh");
+  const btnModeDocs = document.getElementById("btn-artifact-mode-docs");
+  const btnModeContext = document.getElementById("btn-artifact-mode-context");
+  const docsView = document.getElementById("artifact-docs-view");
+  const contextView = document.getElementById("artifact-context-view");
+  const contextEmptyEl = document.getElementById("artifact-context-empty");
+  const contextContentEl = document.getElementById("artifact-context-content");
   const workspace = document.querySelector(".workspace");
 
   /** @type {{ path: string, name: string, source: string }[]} */
   let sessionFiles = [];
+  /** @type {Map<string, object>} */
+  const contextByThread = new Map();
   let threadId = "";
   let workspacePath = "";
   let sandboxPath = "";
   let activeRoot = "";
   let activeFile = "";
   let open = false;
+  let panelMode = localStorage.getItem("artifactPanelMode") === "context" ? "context" : "documents";
 
   function basename(path) {
     const text = String(path || "").replace(/[/\\]+$/, "");
@@ -77,10 +86,122 @@
     workspace.classList.toggle("has-artifact-panel", open);
     panel.classList.toggle("is-open", open);
     if (btnClose) btnClose.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) applyMode();
   }
 
   function ensureOpen() {
     if (!open) setOpen(true);
+  }
+
+  function formatTokens(n) {
+    const value = Number(n) || 0;
+    if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+    return String(value);
+  }
+
+  function applyMode() {
+    const isContext = panelMode === "context";
+    if (docsView) docsView.hidden = isContext;
+    if (contextView) contextView.hidden = !isContext;
+    if (rootSelect) rootSelect.hidden = isContext;
+    if (btnRefresh) btnRefresh.hidden = isContext;
+    btnModeDocs?.classList.toggle("is-active", !isContext);
+    btnModeContext?.classList.toggle("is-active", isContext);
+    btnModeDocs?.setAttribute("aria-pressed", isContext ? "false" : "true");
+    btnModeContext?.setAttribute("aria-pressed", isContext ? "true" : "false");
+    if (isContext) {
+      if (titleEl) titleEl.textContent = "上下文";
+      renderContextView();
+    } else if (titleEl && !activeFile) {
+      titleEl.textContent = "文档";
+    }
+  }
+
+  function setMode(next) {
+    panelMode = next === "context" ? "context" : "documents";
+    try {
+      localStorage.setItem("artifactPanelMode", panelMode);
+    } catch {
+      /* ignore */
+    }
+    ensureOpen();
+    applyMode();
+    if (panelMode === "documents") void renderTree();
+  }
+
+  function setContextSnapshot(snapshot, forThreadId) {
+    const tid = String(forThreadId || threadId || "").trim() || "__default__";
+    if (!snapshot || typeof snapshot !== "object") return;
+    contextByThread.set(tid, snapshot);
+    if (tid === (threadId || "__default__") && panelMode === "context") {
+      renderContextView();
+    }
+  }
+
+  function renderContextView() {
+    if (!contextContentEl || !contextEmptyEl) return;
+    const tid = threadId || "__default__";
+    const snap = contextByThread.get(tid);
+    if (!snap || !Array.isArray(snap.messages) || !snap.messages.length) {
+      contextEmptyEl.hidden = false;
+      contextContentEl.hidden = true;
+      contextContentEl.innerHTML = "";
+      if (metaEl) metaEl.textContent = "";
+      return;
+    }
+    contextEmptyEl.hidden = true;
+    contextContentEl.hidden = false;
+    const usage = snap.usage || {};
+    const total = snap.approx_total_tokens || usage.estimated_prompt_tokens || usage.prompt_tokens || 0;
+    if (metaEl) {
+      metaEl.textContent = `${snap.message_count || snap.messages.length} 条 · ~${formatTokens(total)} tok`;
+    }
+    const cacheHit = usage.cache_hit_tokens;
+    const cacheMiss = usage.cache_miss_tokens;
+    const cacheLine =
+      cacheHit != null || cacheMiss != null
+        ? `<span>cache ${formatTokens(cacheHit || 0)} / ${formatTokens(cacheMiss || 0)}</span>`
+        : "";
+    const compaction = snap.compaction || {};
+    const compactLine =
+      compaction.before_tokens != null && compaction.after_tokens != null
+        ? `<span>压缩 ${formatTokens(compaction.before_tokens)}→${formatTokens(compaction.after_tokens)}</span>`
+        : "";
+    const msgs = snap.messages
+      .map((msg, idx) => {
+        const role = escapeHtml(msg.role || "unknown");
+        const tokens = formatTokens(msg.approx_tokens || 0);
+        const open = idx === 0 || idx >= snap.messages.length - 2 ? " open" : "";
+        return (
+          `<details class="artifact-context-msg"${open}>` +
+          `<summary><span class="artifact-context-role">${role}</span>` +
+          `<span class="artifact-context-tok">~${tokens}</span></summary>` +
+          `<pre class="artifact-context-text">${escapeHtml(msg.content || "")}</pre>` +
+          `</details>`
+        );
+      })
+      .join("");
+    contextContentEl.innerHTML =
+      `<div class="artifact-context-usage">` +
+      `<span>prompt ${formatTokens(usage.prompt_tokens || 0)}</span>` +
+      `<span>completion ${formatTokens(usage.completion_tokens || 0)}</span>` +
+      `<span>total ${formatTokens(usage.total_tokens || total)}</span>` +
+      cacheLine +
+      compactLine +
+      `</div>` +
+      `<div class="artifact-context-actions">` +
+      `<button type="button" class="artifact-context-expand-btn" data-ctx-expand="1">全部展开</button>` +
+      `<button type="button" class="artifact-context-expand-btn" data-ctx-expand="0">全部折叠</button>` +
+      `</div>` +
+      `<div class="artifact-context-list">${msgs}</div>`;
+    contextContentEl.querySelectorAll("[data-ctx-expand]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const openAll = btn.getAttribute("data-ctx-expand") === "1";
+        contextContentEl.querySelectorAll("details.artifact-context-msg").forEach((el) => {
+          el.open = openAll;
+        });
+      });
+    });
   }
 
   function noteFile(path, source) {
@@ -412,11 +533,16 @@
     sessionFiles = [];
     activeFile = "";
     if (previewEl) previewEl.innerHTML = "";
-    if (titleEl) titleEl.textContent = "文档";
+    if (titleEl) titleEl.textContent = panelMode === "context" ? "上下文" : "文档";
     if (metaEl) metaEl.textContent = "";
     if (emptyEl) emptyEl.hidden = false;
     if (btnOpenExternal) btnOpenExternal.hidden = true;
     await refreshContext();
+    if (panelMode === "context") {
+      ensureOpen();
+      applyMode();
+      return;
+    }
     if (workspacePath || sandboxPath) {
       // Keep closed until there is something to show, unless workspace is set.
       if (workspacePath) {
@@ -436,6 +562,8 @@
     activeRoot = rootSelect.value;
     void renderTree();
   });
+  btnModeDocs?.addEventListener("click", () => setMode("documents"));
+  btnModeContext?.addEventListener("click", () => setMode("context"));
   btnOpenExternal?.addEventListener("click", () => {
     const path = btnOpenExternal.dataset.path;
     if (!path) return;
@@ -443,15 +571,21 @@
     window.open(`file://${path}`, "_blank");
   });
 
+  applyMode();
+
   window.LuminaArtifacts = {
     noteToolEvent,
     noteFile,
     setWorkspace: syncFromWorkspace,
     setThread,
+    setContextSnapshot,
+    setMode,
     open: () => {
       ensureOpen();
-      void refreshContext().then(renderTree);
+      if (panelMode === "context") applyMode();
+      else void refreshContext().then(renderTree);
     },
+    openContext: () => setMode("context"),
     close: () => setOpen(false),
     isOpen: () => open,
   };
