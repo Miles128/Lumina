@@ -101,6 +101,21 @@ def collect_artifact_paths(
                 norm = _normalize(working_dir / raw)
                 if norm:
                     found.append(norm)
+        # Bare previewable filenames (report.xlsx, out.pdf, …) that actually
+        # exist under the working dir — catches "已生成 report.xlsx" style
+        # outputs without an absolute path. Existence check prevents hallucinated paths.
+        for match in re.finditer(
+            r"([\w.\-]+\.(?:xlsx|xlsm|docx|pdf|md|markdown|csv|tsv|html?|yaml|yml|json|txt|log|py|js|ts))",
+            text,
+        ):
+            raw = match.group(1)
+            if "/" in raw or "\\" in raw:
+                continue
+            candidate = working_dir / raw
+            if candidate.is_file():
+                norm = _normalize(candidate)
+                if norm:
+                    found.append(norm)
 
     # Deduplicate preserving order
     seen: set[str] = set()
