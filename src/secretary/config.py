@@ -1,11 +1,10 @@
 """Application configuration."""
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from secretary.services.platform_config import PlatformConfigStore
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PROJECT_ENV = _PROJECT_ROOT / ".env"
@@ -91,10 +90,8 @@ class Settings(BaseSettings):
             if item.strip()
         ]
 
-    def load_platform_config(self, store: PlatformConfigStore) -> None:
+    def load_platform_config(self, store: Any) -> None:
         store.apply_to_settings(self)
 
 
 settings = Settings()
-_platform_store = PlatformConfigStore(settings.resolved_data_dir() / "platforms.json")
-settings.load_platform_config(_platform_store)
