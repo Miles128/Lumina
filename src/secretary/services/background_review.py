@@ -12,6 +12,7 @@ from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError
 from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.memory_compress import MemoryCompressionService
+from secretary.utils.messages import re_search_json_fence
 
 if TYPE_CHECKING:
     from secretary.services.profile_service import ProfileService
@@ -159,10 +160,3 @@ def _parse_review_json(raw: str) -> ReviewDecision:
     )
 
 
-def re_search_json_fence(cleaned: str) -> str | None:
-    import re
-
-    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
-    if match:
-        return match.group(1).strip()
-    return None

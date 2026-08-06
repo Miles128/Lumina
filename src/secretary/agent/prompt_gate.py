@@ -278,9 +278,9 @@ def _history_looks_like_project_analysis(history: list[dict[str, str]]) -> bool:
         "file_read",
     "read",
         "package.json",
-        "StockResearch",
+        "README",
+        "pyproject.toml",
         "React",
-        "LangGraph",
         "项目结构",
         "仓库",
     )

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import re as _re
 import sqlite3
 import threading
 from datetime import datetime
@@ -244,12 +243,7 @@ class MemoryStore:
         )
 
 
-_FTS_SPECIAL = _re.compile(r'[`*"()|:]')
-
-
 def _sanitize_fts_query(query: str) -> str:
-    cleaned = _FTS_SPECIAL.sub("", query).strip()
-    if not cleaned:
-        return query
-    tokens = cleaned.split()
-    return " OR ".join(tokens)
+    from secretary.memory.fts import sanitize_fts_query
+
+    return sanitize_fts_query(query)

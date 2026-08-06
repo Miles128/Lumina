@@ -14,8 +14,8 @@ from secretary.config import Settings
 from secretary.exceptions import AgentError
 from secretary.memory.lumina_memory import LuminaMemory
 from secretary.services.agent_config import AgentConfigStore, resolve_background_config
-from secretary.services.background_review import re_search_json_fence
 from secretary.services.profile_service import ProfileService
+from secretary.utils.messages import re_search_json_fence
 
 if TYPE_CHECKING:
     from secretary.services.shibei_service import ShibeiService
