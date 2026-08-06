@@ -336,6 +336,15 @@ def clear_memory_derived(request: Request) -> dict[str, object]:
     return {"status": "ok", "removed_files": removed}
 
 
+@app.delete("/api/sandbox")
+def clear_sandbox() -> dict[str, object]:
+    """Remove every per-thread sandbox directory (keep the sandbox root)."""
+    from secretary.agent import thread_sandbox
+
+    removed = thread_sandbox.clear_all(settings.resolved_data_dir())
+    return {"status": "ok", "removed": removed}
+
+
 @app.get("/api/memory/search")
 def search_memory(request: Request, q: str, limit: int = 10) -> MemorySearchResponse:
     store: MemoryStore = svc(request).store

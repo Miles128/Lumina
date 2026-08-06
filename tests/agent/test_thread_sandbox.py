@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from secretary.agent.thread_sandbox import (
+    clear_all,
     ensure,
     remove,
     safe_thread_id,
@@ -44,6 +45,39 @@ def test_remove_deletes_thread_sandbox(tmp_path: Path) -> None:
 
 def test_remove_missing_is_noop(tmp_path: Path) -> None:
     remove("never_created", tmp_path)
+
+
+def test_clear_all_removes_every_thread_sandbox(tmp_path: Path) -> None:
+    ensure("t_a", tmp_path)
+    ensure("t_b", tmp_path)
+    (ensure("t_a", tmp_path) / "note.txt").write_text("x", encoding="utf-8")
+    removed = clear_all(tmp_path)
+    assert removed == 2
+    assert not (sandbox_root(tmp_path) / "t_a").exists()
+    assert not (sandbox_root(tmp_path) / "t_b").exists()
+    # Root itself is preserved.
+    assert sandbox_root(tmp_path).is_dir()
+
+
+def test_clear_all_missing_root_is_noop(tmp_path: Path) -> None:
+    assert clear_all(tmp_path / "absent") == 0
+
+
+def test_sandbox_clear_endpoint(tmp_path: Path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from secretary import config
+    from secretary.agent import thread_sandbox
+    from secretary.api.app import app
+
+    monkeypatch.setattr(config.settings, "data_dir", tmp_path / "data")
+    thread_sandbox.ensure("t_a", tmp_path / "data")
+    thread_sandbox.ensure("t_b", tmp_path / "data")
+    client = TestClient(app)
+    response = client.delete("/api/sandbox")
+    assert response.status_code == 200
+    assert response.json()["removed"] == 2
+    assert not (sandbox_root(tmp_path / "data") / "t_a").exists()
 
 
 def test_ensure_path_stays_inside_sandbox(tmp_path: Path) -> None:

@@ -45,3 +45,27 @@ def remove(thread_id: str, data_dir: Path) -> None:
         logger.warning("Refusing to remove sandbox path outside root: %s", path)
         return
     shutil.rmtree(path, ignore_errors=True)
+
+
+def clear_all(data_dir: Path) -> int:
+    """Remove every per-thread sandbox under {data_dir}/sandbox. Returns removed count."""
+    root = sandbox_root(data_dir).resolve()
+    removed = 0
+    if not root.exists():
+        return 0
+    for child in root.iterdir():
+        try:
+            resolved = child.resolve()
+        except OSError:
+            continue
+        if not resolved.is_relative_to(root) or resolved == root:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except OSError:
+                continue
+        removed += 1
+    return removed

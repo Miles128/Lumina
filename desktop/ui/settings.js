@@ -1220,10 +1220,43 @@
           <button class="btn-text save-btn" type="button" id="btn-save-durable-memory">保存 MEMORY.md</button>
         </div>
         <div id="durable-memory-feedback" class="platform-feedback" hidden></div>
+        <div class="settings-section-divider"></div>
+        <div class="settings-fields">
+          <label class="settings-field">
+            <span>线程沙箱</span>
+            <p class="platform-meta">未选工作区时，Agent 的默认工作目录为每个对话独立的沙箱（~/.lumina/sandbox/{thread_id}）。清理将删除全部沙箱内容。</p>
+          </label>
+        </div>
+        <div class="platform-actions">
+          <button class="btn-text danger-btn" type="button" id="btn-clear-sandbox">清理沙箱</button>
+        </div>
+        <div id="sandbox-feedback" class="platform-feedback" hidden></div>
       </div>
     `;
     document.getElementById("btn-save-durable-memory").addEventListener("click", saveDurableMemory);
     document.getElementById("btn-save-background").addEventListener("click", saveBackgroundTasks);
+    document.getElementById("btn-clear-sandbox").addEventListener("click", clearSandbox);
+  }
+
+  async function clearSandbox() {
+    const feedback = document.getElementById("sandbox-feedback");
+    if (!feedback) return;
+    const confirmed = await window.LuminaConfirm?.confirmDanger?.({
+      title: "清理沙箱",
+      message: "将删除所有对话的沙箱工作区（Agent 的默认工作目录），但不删除对话记录与上传附件。确定清理？",
+      confirmText: "清理",
+      secondMessage: "沙箱目录删除后不可恢复。确定继续？",
+    });
+    if (!confirmed) return;
+    showFeedback(feedback, "info", "正在清理…");
+    try {
+      const result = await window.SecretaryAPI.request("DELETE", "/api/sandbox", null, {
+        timeoutMs: 30_000,
+      });
+      showFeedback(feedback, "success", `沙箱已清理（删除 ${result?.removed ?? 0} 个目录）`);
+    } catch (error) {
+      showFeedback(feedback, "error", `清理失败：${error.message}`);
+    }
   }
 
   async function saveBackgroundTasks() {
