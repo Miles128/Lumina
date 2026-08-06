@@ -1,8 +1,9 @@
-"""Human-readable connector status messages."""
+"""Human-readable connector status messages + shared text helpers."""
 
 from __future__ import annotations
 
 import json
+import re
 
 
 def format_connector_message(message: str, max_len: int = 240) -> str:
@@ -39,3 +40,11 @@ def _truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 1].rstrip() + "…"
+
+
+def re_search_json_fence(cleaned: str) -> str | None:
+    """Extract text inside the first ```json ... ``` (or ``` ... ```) fence."""
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
+    if match:
+        return match.group(1).strip()
+    return None

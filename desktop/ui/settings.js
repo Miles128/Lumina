@@ -565,7 +565,7 @@
           </div>
           <p><span class="about-label">开发者</span><span>四海</span></p>
           <p><span class="about-label">邮箱</span><a href="mailto:myx28@qq.com">myx28@qq.com</a></p>
-          <p><span class="about-label">版本号</span><span>0.1.2</span></p>
+          <p><span class="about-label">版本号</span><span>0.1.0</span></p>
         </div>
       </div>
     `;

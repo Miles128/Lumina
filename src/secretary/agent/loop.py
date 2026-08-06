@@ -49,7 +49,7 @@ from secretary.agent.lifecycle_hooks import (
     HookDecision,
     ModelCallContext,
     ToolExecContext,
-    TurnContext,
+    TurnHookContext,
 )
 from secretary.agent.llm_client import (
     ChatCompletionResult,
@@ -1306,7 +1306,7 @@ class AgentLoop:
     def _run_before_turn_hooks(
         self, snapshot: LoopSnapshot, messages: list[dict[str, Any]],
     ) -> HookDecision:
-        ctx = TurnContext(snapshot=snapshot, messages=tuple(messages))
+        ctx = TurnHookContext(snapshot=snapshot, messages=tuple(messages))
         for hook in self._before_turn_hooks:
             try:
                 decision = hook.before_turn(ctx)

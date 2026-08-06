@@ -19,8 +19,8 @@ from secretary.agent.stop_hooks import LoopSnapshot
 
 
 @dataclass(frozen=True)
-class TurnContext:
-    """每轮迭代的上下文快照。"""
+class TurnHookContext:
+    """每轮迭代的 hook 上下文快照（与 turn_models.TurnContext 区分）。"""
     snapshot: LoopSnapshot
     messages: tuple[dict[str, Any], ...] = ()
 
@@ -70,7 +70,7 @@ class AfterToolDecision:
 
 class BeforeTurnHook(Protocol):
     """每轮迭代开始前调用。should_skip=True 可短路该轮。"""
-    def before_turn(self, ctx: TurnContext) -> HookDecision: ...
+    def before_turn(self, ctx: TurnHookContext) -> HookDecision: ...
 
 
 class BeforeModelCallHook(Protocol):
