@@ -4,22 +4,19 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from secretary.agent.tool_names import expand_aliases
 from secretary.agent.tools.base import Tool
 
 # Claude Code: sub-agents never receive spawn_subagent (enforced in subagent/registry).
 
-ASK_TOOL_NAMES = frozenset(
+# Canonical names only; legacy aliases (file_read/patch/…) expand automatically.
+_ASK_CANONICAL_NAMES = frozenset(
     {
         "ls",
-        "list_dir",  # alias
         "read",
-        "file_read",  # alias
         "read_document",
         "grep",
-        "search_files",  # alias
         "glob",
-        "glob_files",  # alias
-        "find",  # alias
         "search_memory",
         "session_search",
         "web_search",
@@ -38,6 +35,8 @@ ASK_TOOL_NAMES = frozenset(
         "browser_close",
     }
 )
+
+ASK_TOOL_NAMES = expand_aliases(_ASK_CANONICAL_NAMES)
 
 PLAN_TOOL_NAMES = (ASK_TOOL_NAMES - frozenset({"code_exec"})) | frozenset(
     {

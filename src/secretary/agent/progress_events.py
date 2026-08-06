@@ -82,44 +82,6 @@ _ARCHETYPE_LABELS: dict[str, str] = {
 }
 
 
-_TOOL_LABELS: dict[str, str] = {
-    "ls": "浏览目录",
-    "list_dir": "浏览目录",
-    "read": "读取文件",
-    "file_read": "读取文件",
-    "write": "写入文件",
-    "file_write": "写入文件",
-    "edit": "编辑文件",
-    "patch": "编辑文件",
-    "move": "移动文件",
-    "file_delete": "删除文件",
-    "grep": "搜索文件",
-    "search_files": "搜索文件",
-    "glob": "查找文件",
-    "glob_files": "查找文件",
-    "find": "查找文件",
-    "shell": "执行命令",
-    "search_memory": "搜索记忆",
-    "session_search": "搜索会话",
-    "web_search": "联网搜索",
-    "web_fetch": "抓取网页",
-    "browser_open": "打开网页",
-    "browser_snapshot": "浏览器快照",
-    "browser_screenshot": "浏览器截图",
-    "browser_click": "浏览器点击",
-    "browser_fill": "浏览器填写",
-    "browser_close": "关闭浏览器",
-    "shibei_search": "Shibei 检索",
-    "shibei_import": "Shibei 导入",
-    "shibei_list_sources": "Shibei 索引",
-    "memory": "更新记忆",
-    "todo": "待办",
-    "skills_list": "列出技能",
-    "skill_view": "查看技能",
-    "clarify": "澄清问题",
-    "ask_user": "询问用户",
-    "spawn_subagent": "委派子任务",
-}
 
 
 def progress_event_label(event: ProgressEvent) -> str:
@@ -198,8 +160,11 @@ def _archetype_display_name(archetype: str) -> str:
 def _tool_display_name(name: str) -> str:
     if not name:
         return "工具"
-    if name in _TOOL_LABELS:
-        return _TOOL_LABELS[name]
+    from secretary.agent.tool_names import tool_label
+
+    label = tool_label(name)
+    if label:
+        return label
     if name.startswith("mcp_"):
         parts = name.split("_", 2)
         if len(parts) == 3:

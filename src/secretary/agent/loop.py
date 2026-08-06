@@ -1879,16 +1879,10 @@ class AgentLoop:
 
 def _index_tools(tools: list[Tool]) -> dict[str, Tool]:
     """Index tools by name and map Pi↔legacy aliases for lookup."""
+    from secretary.agent.tool_names import LEGACY_TO_CANONICAL
+
     indexed = {tool.name: tool for tool in tools}
-    for legacy, canonical in (
-        ("file_read", "read"),
-        ("file_write", "write"),
-        ("patch", "edit"),
-        ("list_dir", "ls"),
-        ("search_files", "grep"),
-        ("glob_files", "glob"),
-        ("find", "glob"),
-    ):
+    for legacy, canonical in LEGACY_TO_CANONICAL.items():
         if canonical in indexed and legacy not in indexed:
             indexed[legacy] = indexed[canonical]
         if legacy in indexed and canonical not in indexed:
