@@ -7,10 +7,10 @@
   const SVG_NS = "http://www.w3.org/2000/svg";
   // Width +50% vs previous 144; taller card for up to 3 text lines.
   const NODE_W = 270;
-  const NODE_H = 80;
+  const NODE_H = 64;
   const PAD = 20;
   const LAYOUT_X_GAP = 28;
-  const LAYOUT_Y_STEP = 108;
+  const LAYOUT_Y_STEP = 92;
   const LAYOUT_Y_OFFSET = 8;
   const PREVIEW_CHARS = 42;
   const TEXT_MAX_LINES = 3;
@@ -22,10 +22,6 @@
   /** @type {{ turnId: string, status: string, archetype: string } | null} */
   let liveOverlay = null;
 
-  const ROLE_LABELS = {
-    human: "人",
-    main_agent: "主 Agent",
-  };
   const STATUS_LABELS = {
     pending: "待答",
     active: "当前",
@@ -408,24 +404,8 @@
       rect.setAttribute("rx", "6");
       g.appendChild(rect);
 
-      const qRole = ROLE_LABELS[node.role_user] || ROLE_LABELS.human;
-      const qLabel = document.createElementNS(SVG_NS, "text");
-      qLabel.setAttribute("class", "map-node-q-label role-human");
-      qLabel.setAttribute("x", "8");
-      qLabel.setAttribute("y", "14");
-      qLabel.textContent = qRole;
-      g.appendChild(qLabel);
-
       const qLines = wrapPreviewLines(node.user_preview || "(提问)", 2);
-      appendMultilineText(g, "map-node-q-text", 28, 14, qLines.length ? qLines : ["(提问)"]);
-
-      const aRole = ROLE_LABELS[node.role_assistant] || ROLE_LABELS.main_agent;
-      const aLabel = document.createElementNS(SVG_NS, "text");
-      aLabel.setAttribute("class", "map-node-a-label role-main-agent");
-      aLabel.setAttribute("x", "8");
-      aLabel.setAttribute("y", "58");
-      aLabel.textContent = aRole;
-      g.appendChild(aLabel);
+      appendMultilineText(g, "map-node-q-text", 8, 18, qLines.length ? qLines : ["(提问)"]);
 
       const aLines = wrapPreviewLines(
         node.has_assistant ? node.assistant_preview || "(灵犀)" : "（待回答）",
@@ -434,8 +414,8 @@
       appendMultilineText(
         g,
         "map-node-a-text",
+        8,
         48,
-        58,
         aLines.length ? aLines : [node.has_assistant ? "(灵犀)" : "（待回答）"],
       );
 

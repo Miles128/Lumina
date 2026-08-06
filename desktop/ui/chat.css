@@ -3557,23 +3557,6 @@ body.map-view-open .chat-column > .fork-banner {
   fill: var(--line);
 }
 
-.map-node-q-label,
-.map-node-a-label {
-  font-size: 8px;
-  font-weight: 700;
-  fill: var(--text-tertiary);
-  pointer-events: none;
-  user-select: none;
-}
-
-.map-node-q-label.role-human {
-  fill: var(--text-secondary);
-}
-
-.map-node-a-label.role-main-agent {
-  fill: var(--sig);
-}
-
 .map-node-status {
   font-size: 8px;
   font-weight: 600;

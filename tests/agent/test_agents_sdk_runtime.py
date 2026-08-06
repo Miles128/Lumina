@@ -231,3 +231,99 @@ def _fake_awaitable(value: Any) -> Any:
         return value
 
     return _wrap()
+
+
+class _FakeTool:
+    """Minimal Tool-shaped stub with a schema and execute."""
+
+    def __init__(self, name: str, *, read_only: bool = False):
+        self.name = name
+        self.read_only = read_only
+        self.risk_level = "low"
+
+    def schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": f"fake {self.name}",
+            "parameters": {
+                "type": "object",
+                "properties": {"q": {"type": "string"}},
+            },
+        }
+
+    def execute(self, arguments: dict[str, Any], working_dir: Path) -> str:
+        return f"fake-result:{self.name}"
+
+
+def test_tool_invoke_records_step_and_shell_receipt() -> None:
+    from secretary.agent import agents_sdk_runtime
+    from secretary.agent.tools.base import ToolCall
+    from secretary.agent.tools.shell import ShellTool
+
+    steps_out: list[Any] = []
+    tracked: list[str] = []
+    shell_tool = ShellTool()
+    fn = agents_sdk_runtime._tool_invoke(
+        shell_tool,
+        "shell",
+        Path("/tmp"),
+        progress_callback=None,
+        cancel_check=None,
+        tracked=tracked,
+        steps_out=steps_out,
+    )
+    ctx = SimpleNamespace(tool_call_id="call_sdk_1")
+    out = asyncio.run(fn(ctx, '{"command": "echo hi"}'))
+    assert "[receipt:call_sdk_1]" in out
+    assert tracked == ["shell"]
+    assert len(steps_out) == 1
+    step = steps_out[0]
+    assert isinstance(step.tool_call, ToolCall)
+    assert step.tool_call.id == "call_sdk_1"
+    assert step.tool_call.name == "shell"
+
+
+def test_run_with_agents_sdk_retry_ladder_injects_web_search(monkeypatch) -> None:
+    from secretary.agent import agents_sdk_runtime
+
+    calls: list[Any] = []
+
+    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+        calls.append(input_msg)
+        if len(calls) == 1:
+            # First pass: model claims search without calling tools.
+            return _fake_result(final_output="让我搜一下最新数据")
+        return _fake_result(final_output="基于搜索结果的回答")
+
+    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    tools = [_FakeTool("web_search")]
+    result = run_with_agents_sdk(
+        llm_config=_llm_config(),
+        messages=[{"role": "user", "content": "搜索最新 AI 新闻"}],
+        tools=tools,
+        working_dir=Path("/tmp"),
+        max_turns=5,
+    )
+    assert len(calls) == 2, "web_claim 应触发第二次 run"
+    assert "web_search" in result.used_tools
+    injected = [m for m in calls[1] if m.get("role") == "user"]
+    assert any("[Tool Result: web_search]" in str(m.get("content", "")) for m in injected)
+
+
+def test_run_with_agents_sdk_steps_returned(monkeypatch) -> None:
+    from secretary.agent import agents_sdk_runtime
+
+    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+        return _fake_result(final_output="ok")
+
+    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    # Tracked steps only fill when tools actually execute; verify empty-safe path.
+    result = run_with_agents_sdk(
+        llm_config=_llm_config(),
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        working_dir=Path("/tmp"),
+        max_turns=3,
+    )
+    assert result.steps == []
+    assert result.used_tools == []
