@@ -385,6 +385,20 @@
       void toggleFullFsAccess();
     });
   }
+  const artifactsBtn = document.getElementById("btn-artifacts");
+  if (artifactsBtn) {
+    artifactsBtn.addEventListener("click", () => {
+      const panel = window.LuminaArtifacts;
+      if (!panel) return;
+      if (panel.isOpen()) {
+        panel.close();
+        artifactsBtn.setAttribute("aria-pressed", "false");
+      } else {
+        panel.open();
+        artifactsBtn.setAttribute("aria-pressed", "true");
+      }
+    });
+  }
   if (attachBtn && attachInput) {
     attachBtn.addEventListener("click", () => {
       void pickAttachments();
