@@ -114,7 +114,8 @@ def test_code_exec_blocks_network_socket(tmp_path: Path) -> None:
     assert "Error" in out or "PermissionError" in out or "sandbox" in out.lower()
 
 
-def test_code_exec_session_grant_skips_confirmation(tmp_path: Path) -> None:
+def test_code_exec_never_confirms(tmp_path: Path) -> None:
+    """code_exec is a soft sandbox — confirmation is removed entirely."""
     tool = CodeExecTool()
     auth = FileAuthService(tmp_path / "file_auth.json")
     needs, kind = tool_requires_confirmation(
@@ -124,17 +125,8 @@ def test_code_exec_session_grant_skips_confirmation(tmp_path: Path) -> None:
         file_auth=auth,
         full_fs_access=True,
     )
-    assert needs is True
-    assert kind == "action"
-    auth.grant_session_code_exec()
-    needs2, kind2 = tool_requires_confirmation(
-        tool,
-        {"code": "print(1)"},
-        working_dir=tmp_path,
-        file_auth=auth,
-        full_fs_access=True,
-    )
-    assert needs2 is False
+    assert needs is False
+    assert kind == ""
     assert kind2 == ""
 
 
