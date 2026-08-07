@@ -4402,34 +4402,28 @@ body.map-view-open .chat-column > .fork-banner {
   background: color-mix(in srgb, var(--sig, #4f8cff) 12%, transparent);
 }
 
-/* Scrollbars hidden by default; appear when the pointer nears them.
-   Chromium (Electron) scrollbar pseudo-elements support :hover; the
-   `*:hover` rule surfaces the thumb when the mouse is over any scrolling
-   container (track area included). */
+/* Scrollbars hidden by default; the thumb appears when the pointer hovers
+   the scrollbar track (Chromium supports :hover on ::-webkit-scrollbar). */
 * {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 5px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  border-radius: 3px;
 }
-*:hover::-webkit-scrollbar-thumb {
+::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
   background: var(--border, #2a323b);
-  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary, #55606c);
-  background-clip: padding-box;
 }
 ::-webkit-scrollbar-corner {
   background: transparent;

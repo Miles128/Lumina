@@ -300,6 +300,19 @@
     const hint = document.createElement("span");
     hint.className = "map-hint";
     hint.textContent = "点击节点切换分支";
+    const archivedBtn = document.createElement("button");
+    archivedBtn.type = "button";
+    archivedBtn.className = "map-archived-btn";
+    archivedBtn.textContent = "归档";
+    archivedBtn.setAttribute("aria-pressed", "false");
+    archivedBtn.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("conversation:toggle-archived"));
+    });
+    window.addEventListener("conversation:archived-changed", (ev) => {
+      const on = Boolean(ev?.detail?.on);
+      archivedBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      archivedBtn.classList.toggle("is-active", on);
+    });
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "map-close";
@@ -308,6 +321,7 @@
     closeBtn.addEventListener("click", close);
     header.appendChild(title);
     header.appendChild(hint);
+    header.appendChild(archivedBtn);
     header.appendChild(closeBtn);
     mapViewEl.appendChild(header);
 

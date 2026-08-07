@@ -11,6 +11,14 @@
   const progressListEl = document.getElementById("agent-progress-list");
   const progressRawEl = document.getElementById("agent-raw-output");
   const progressRawSectionEl = document.getElementById("agent-raw-section");
+  const rawMenu = document.getElementById("btn-menu-raw");
+  if (rawMenu && progressRawSectionEl) {
+    rawMenu.addEventListener("click", () => {
+      const show = progressRawSectionEl.hidden;
+      progressRawSectionEl.hidden = !show;
+      rawMenu.textContent = show ? "模型原文 ✓" : "模型原文";
+    });
+  }
   const subagentTreeEl = document.getElementById("subagent-tree");
   const idpPanelEl = document.getElementById("idp-panel");
   const idpPanelMetaEl = document.getElementById("idp-panel-meta");
@@ -42,7 +50,7 @@
   const workspaceChip = document.getElementById("workspace-chip");
   const workspaceChipWrap = document.getElementById("workspace-chip-wrap");
   const workspaceChipClear = document.getElementById("workspace-chip-clear");
-  const fsAccessChip = document.getElementById("fs-access-chip");
+  const fsAccessMenu = document.getElementById("btn-menu-full-fs");
   const attachBtn = document.getElementById("attach-btn");
   const attachInput = document.getElementById("attach-input");
   const attachmentsEl = document.getElementById("composer-attachments");
@@ -195,23 +203,10 @@
   }
 
   function renderFsAccessChip() {
-    if (!fsAccessChip) return;
+    if (!fsAccessMenu) return;
     const on = Boolean(fullFsAccess);
-    fsAccessChip.setAttribute("aria-pressed", on ? "true" : "false");
-    fsAccessChip.classList.toggle("is-on", on);
-    const tip = tChat(
-      "chat.fullFsAccess.tip",
-      "关闭时仅可写当前工作区/会话沙箱；开启后可写任意路径（仍可能需要确认）。",
-    );
-    fsAccessChip.title = on
-      ? tChat("chat.fullFsAccess.on", "已开启完全权限（可写沙箱外）")
-      : tip;
-    fsAccessChip.setAttribute(
-      "aria-label",
-      tChat("chat.fullFsAccess", "完全权限") + (on ? "（开）" : "（关）"),
-    );
-    const label = fsAccessChip.querySelector(".fs-access-chip-label");
-    if (label) label.textContent = tChat("chat.fullFsAccess", "完全权限");
+    fsAccessMenu.textContent = tChat("chat.fullFsAccess", "完全权限") + (on ? " ✓" : "");
+    fsAccessMenu.setAttribute("aria-pressed", on ? "true" : "false");
   }
 
   async function toggleFullFsAccess() {
@@ -380,8 +375,8 @@
       void clearWorkspaceDir();
     });
   }
-  if (fsAccessChip) {
-    fsAccessChip.addEventListener("click", () => {
+  if (fsAccessMenu) {
+    fsAccessMenu.addEventListener("click", () => {
       void toggleFullFsAccess();
     });
   }
@@ -2207,12 +2202,8 @@
     renderTurnTree();
   }
 
-  document.getElementById("btn-progress-expand-all")?.addEventListener("click", () => {
-    setAllProgressNodesExpanded(true);
-  });
-  document.getElementById("btn-progress-collapse-all")?.addEventListener("click", () => {
-    setAllProgressNodesExpanded(false);
-  });
+  // 「全部展开/全部折叠」已移除（树默认展开）。
+
 
   function turnNodeHasDetail(node) {
     if (node.type === "tool") {
@@ -3628,11 +3619,7 @@
   }
 
   function syncArchivedSidebarBtn() {
-    const btn = document.getElementById("btn-show-archived");
-    if (!btn) return;
-    btn.setAttribute("aria-pressed", showArchived ? "true" : "false");
-    btn.title = showArchived ? "隐藏已归档" : "显示已归档";
-    btn.setAttribute("aria-label", btn.title);
+    // 归档开关已移入对话地图；保持函数存在以防其他调用。
   }
 
   function ensureChatToolbar() {
@@ -3656,10 +3643,11 @@
     syncArchivedSidebarBtn();
   }
 
-  document.getElementById("btn-show-archived")?.addEventListener("click", () => {
+  // 归档开关已移入对话地图头部；此处监听地图派发的事件。
+  window.addEventListener("conversation:toggle-archived", () => {
     showArchived = !showArchived;
-    syncArchivedSidebarBtn();
     renderCurrentThreadMessages();
+    window.dispatchEvent(new CustomEvent("conversation:archived-changed", { detail: { on: showArchived } }));
   });
 
   // Event delegation for message action buttons.
