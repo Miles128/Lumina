@@ -342,6 +342,22 @@ def _subagent_input_builder(options: Any) -> list[dict[str, Any]]:
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
 
+def _strip_reasoning_xml(text: str) -> str:
+    """Strip tool-call XML residue the model mimics inside reasoning.
+
+    DeepSeek's training data includes Claude-Code/OpenClaw style tool-call
+    envelopes (<antml:invoke>/<antml:parameter>/</invoke>…); the model often
+    echoes them while thinking. They are noise for the user-facing thought
+    display, so drop any <...> tags and squeeze blank lines.
+    """
+    import re as _re
+
+    cleaned = _re.sub(r"<[^>]*>", "", text)
+    cleaned = _re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = _re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 class _LuminaHooks(AgentHooks[Any]):
     """Parent-run hooks: record spawn_* as_tool calls and surface reasoning.
 
@@ -401,7 +417,7 @@ class _LuminaHooks(AgentHooks[Any]):
                     for part in text
                     if isinstance(part, dict)
                 )
-            text = str(text).strip()
+            text = _strip_reasoning_xml(str(text))
             if text:
                 thoughts.append(text)
         if thoughts:
@@ -905,7 +921,7 @@ def run_with_agents_sdk(
                 ProgressEvent(
                     kind="thought",
                     iteration=0,
-                    message="\n\n".join(turn_thoughts)[:2000],
+                    message=_strip_reasoning_xml("\n\n".join(turn_thoughts))[:2000],
                 )
             )
 
