@@ -82,6 +82,19 @@ def tool_requires_confirmation(
 
     from secretary.agent.tools.fs import EDIT_TOOL_NAMES, MOVE_TOOL_NAMES, WRITE_TOOL_NAMES
 
+    # Per-thread sandbox is an isolated disposable dir: writes/edit/moves that
+    # stay inside it never confirm, regardless of permission mode (full access
+    # only relaxes path scope, not this isolation guarantee).
+    if _is_thread_sandbox(working_dir):
+        if tool.name in WRITE_TOOL_NAMES or tool.name in EDIT_TOOL_NAMES:
+            path = _resolve_path(str(arguments.get("path", "")), working_dir)
+            if is_writable_path(path, working_dir, full_fs_access=False):
+                return False, ""
+        elif tool.name in MOVE_TOOL_NAMES:
+            dst = _resolve_path(str(arguments.get("to_path", "")), working_dir)
+            if is_writable_path(dst, working_dir, full_fs_access=False):
+                return False, ""
+
     if tool.name in WRITE_TOOL_NAMES:
         path = _resolve_path(str(arguments.get("path", "")), working_dir)
         append = bool(arguments.get("append", False))
