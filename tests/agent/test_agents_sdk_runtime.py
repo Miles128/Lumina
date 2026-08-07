@@ -456,7 +456,6 @@ def test_missing_tool_triggers_mode_upgrade(monkeypatch) -> None:
 
     def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
         calls.append(input_msg)
-        tool_names = {getattr(t, "name", "") for t in agent.tools}
         if len(calls) == 1:
             return agents_sdk_runtime._MissingToolResult(
                 "Tool write not found in agent lumina"
