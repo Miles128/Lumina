@@ -64,6 +64,9 @@ class AgentTurnPlan:
     full_fs_access: bool = False
     max_tool_output_chars: int | None = None
     web_search_backend: str = "tavily"
+    # Full Build tool set (for auto mode-upgrade when the model needs a tool
+    # outside the routed profile's set).
+    full_tools: list[Tool] | None = None
 
 
 @dataclass
@@ -243,6 +246,7 @@ class TurnRunner:
                         compaction_keep_tail=plan.compaction_keep_tail,
                         subagent_deps=_find_spawn_deps(plan.tools),
                         web_search_backend=plan.web_search_backend,
+                        full_tools=plan.full_tools,
                     )
                 elif plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
                     from secretary.agent.aisuite_runtime import run_with_aisuite
@@ -339,6 +343,9 @@ class TurnRunner:
         compaction_keep_tail: int | None = None,
         max_tool_output_chars: int | None = None,
         web_search_backend: str = "tavily",
+        # Full Build tool set (for auto mode-upgrade when the model needs a
+        # tool outside the routed profile's set).
+        full_tools: list[Tool] | None = None,
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         cwd = working_dir or Path.home()
@@ -370,6 +377,7 @@ class TurnRunner:
                     cancel_check=cancel_check,
                     subagent_deps=_find_spawn_deps(tools),
                     web_search_backend=web_search_backend,
+                    full_tools=full_tools,
                 )
             if use_aisuite:
                 from secretary.agent.aisuite_runtime import resume_with_aisuite

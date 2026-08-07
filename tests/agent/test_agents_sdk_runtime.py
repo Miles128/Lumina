@@ -444,3 +444,36 @@ def test_resume_uses_used_plus_budget_max_turns(monkeypatch) -> None:
     )
     assert captured["max_turns"] == 19, "used(9) + budget(10)"
     assert result.reply == "done"
+
+
+def test_missing_tool_triggers_mode_upgrade(monkeypatch) -> None:
+    """Model calls a tool outside the routed set → auto-upgrade to full tools."""
+    from secretary.agent import agents_sdk_runtime
+    from secretary.agent.tools.fs import FileReadTool, ListDirTool
+    from secretary.agent.tools.shell import ShellTool
+
+    calls: list[Any] = []
+
+    def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
+        calls.append(input_msg)
+        tool_names = {getattr(t, "name", "") for t in agent.tools}
+        if len(calls) == 1:
+            return agents_sdk_runtime._MissingToolResult(
+                "Tool write not found in agent lumina"
+            )
+        return _fake_result(final_output="done, wrote the file")
+
+    monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
+    tools = [FileReadTool(), ListDirTool()]  # Ask 风格（无 write）
+    full = [FileReadTool(), ListDirTool(), FileWriteTool(), ShellTool()]
+    result = agents_sdk_runtime.run_with_agents_sdk(
+        llm_config=_llm_config(),
+        messages=[{"role": "user", "content": "生成一个脚本文件"}],
+        tools=tools,
+        working_dir=Path("/tmp"),
+        max_turns=6,
+        full_tools=full,
+    )
+    assert len(calls) >= 2, "应升级后重试"
+    assert any("自动切换" in str(m.get("content", "")) for call in calls for m in call), calls
+    assert result.reply == "done, wrote the file"

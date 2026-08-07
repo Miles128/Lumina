@@ -683,6 +683,16 @@ class _MissingToolResult:
         self.error = error
 
 
+def _missing_tool_name(error: str) -> str:
+    """Extract the tool name from 'Tool X not found in agent Y' style errors."""
+    import re as _re
+
+    match = _re.search(r"Tool ([\w.]+) not found", error or "")
+    if match:
+        return match.group(1)
+    return ""
+
+
 def _run_streamed_turn(
     agent: Agent,
     input_messages: Any,
@@ -733,6 +743,7 @@ def run_with_agents_sdk(
     compaction_keep_tail: int | None = None,
     subagent_deps: Any | None = None,
     web_search_backend: str = "tavily",
+    full_tools: list[Tool] | None = None,
 ) -> LoopResult:
     """Run one Agents SDK turn and map to LoopResult (HITL + grounding)."""
     _bind_default_client(llm_config)
@@ -830,52 +841,55 @@ def run_with_agents_sdk(
             "天气、新闻、行情、网络数据时必须调用 web_search 获取真实结果，"
             "不要声称无法联网。"
         )
-    subagent_tools: list[FunctionTool] = []
-    if subagent_deps is not None:
-        subagent_tools = build_subagent_tools(
-            llm_config=llm_config,
-            tools_by_name=tools_by_name,
-            working_dir=working_dir,
-            needs_confirm=_needs_confirm,
-            progress_callback=progress_callback,
-            cancel_check=cancel_check,
-            strict_tools=strict_tools,
-            thinking=thinking,
-            reasoning_effort=reasoning_effort,
-            temperature=temperature,
-            lumina_dir=getattr(subagent_deps, "lumina_dir", None),
-            tracked=tracked,
-            steps_out=tracked_steps,
-        )
-    parent_hooks: AgentHooks[Any] | None = (
-        _LuminaHooks(tracked, progress_callback)
-    )
-    agent = _build_agent(
-        llm_config,
-        instructions=instructions,
-        hooks=parent_hooks,
-        tools=[
-            *wrap_lumina_tools(
-                parent_tools,
-                working_dir,
+
+    def _build_agent_for(tool_set: list[Tool]) -> Agent:
+        """Build the agent for a given parent tool set (rebuildable on mode upgrade)."""
+        set_by_name = {t.name: t for t in tool_set if getattr(t, "name", "")}
+        subagent_tools: list[FunctionTool] = []
+        if subagent_deps is not None:
+            subagent_tools = build_subagent_tools(
+                llm_config=llm_config,
+                tools_by_name=set_by_name,
+                working_dir=working_dir,
                 needs_confirm=_needs_confirm,
                 progress_callback=progress_callback,
                 cancel_check=cancel_check,
+                strict_tools=strict_tools,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
+                lumina_dir=getattr(subagent_deps, "lumina_dir", None),
                 tracked=tracked,
                 steps_out=tracked_steps,
+            )
+        return _build_agent(
+            llm_config,
+            instructions=instructions,
+            hooks=_LuminaHooks(tracked, progress_callback),
+            tools=[
+                *wrap_lumina_tools(
+                    tool_set,
+                    working_dir,
+                    needs_confirm=_needs_confirm,
+                    progress_callback=progress_callback,
+                    cancel_check=cancel_check,
+                    tracked=tracked,
+                    steps_out=tracked_steps,
+                    strict_tools=strict_tools,
+                ),
+                *subagent_tools,
+                *extra_tools,
+            ],
+            model_settings=_model_settings(
+                llm_config,
+                thinking=thinking,
+                reasoning_effort=reasoning_effort,
+                temperature=temperature,
                 strict_tools=strict_tools,
             ),
-            *subagent_tools,
-            *extra_tools,
-        ],
-        model_settings=_model_settings(
-            llm_config,
-            thinking=thinking,
-            reasoning_effort=reasoning_effort,
-            temperature=temperature,
-            strict_tools=strict_tools,
-        ),
-    )
+        )
+
+    agent = _build_agent_for(parent_tools)
     # Retry ladder mirroring the legacy AgentLoop (shared budget): the model
     # often *claims* it searched / verified without calling a tool; give it a
     # chance to ground the answer instead of ending the turn unverified.
@@ -942,15 +956,35 @@ def run_with_agents_sdk(
                     total_steps=len(tracked) or 1,
                 )
             shared_retries += 1
-            available = ", ".join(
-                sorted({getattr(t, "name", "") for t in parent_tools})
-            )
+            missing = _missing_tool_name(result.error)
+            upgraded = False
+            if (
+                full_tools
+                and missing
+                and missing not in {getattr(t, "name", "") for t in parent_tools}
+                and any(getattr(t, "name", "") == missing for t in full_tools)
+            ):
+                # The routed profile lacks a tool the model legitimately needs
+                # (e.g. write under ASK) — upgrade to the full Build tool set.
+                parent_tools = [
+                    t for t in full_tools if getattr(t, "name", "") != "spawn_subagent"
+                ]
+                tools_by_name = {t.name: t for t in parent_tools}
+                agent = _build_agent_for(parent_tools)
+                upgraded = True
             run_messages.append(
                 {
                     "role": "user",
                     "content": (
-                        f"你上一步调用了不可用的工具（{result.error}）。当前可用工具："
-                        f"{available}。请只用可用工具完成用户请求。"
+                        f"你上一步调用了不可用的工具（{result.error}）。"
+                        + (
+                            "已自动切换到完整工具模式，现在可用 write/edit/shell/code_exec 等全部工具，请继续完成。"
+                            if upgraded
+                            else (
+                                f"当前可用工具：{', '.join(sorted({getattr(t, 'name', '') for t in parent_tools}))}。"
+                                "请只用可用工具完成用户请求。"
+                            )
+                        )
                     ),
                 }
             )
@@ -1078,6 +1112,7 @@ def resume_with_agents_sdk(
     require_confirm: ConfirmRequireConfig | None = None,
     subagent_deps: Any | None = None,
     web_search_backend: str = "tavily",
+    full_tools: list[Tool] | None = None,
 ) -> LoopResult:
     """Approve a paused SDK interruption (RunState round-trip) and continue.
 
@@ -1210,6 +1245,14 @@ def resume_with_agents_sdk(
                 state,
                 max_turns=resume_max_turns,
                 run_config=RunConfig(tracing_disabled=True),
+            )
+        except ModelBehaviorError as exc:
+            logger.warning("agents-sdk resumed run behavior error: %s", exc)
+            return LoopResult(
+                reply="恢复执行时模型调用了当前模式下不可用的工具，已停止。请切换 Build 模式重新发起。",
+                steps=tracked_steps,
+                used_tools=tracked,
+                total_steps=len(tracked) or 1,
             )
         except MaxTurnsExceeded:
             logger.warning("agents-sdk resumed run exceeded turn budget")

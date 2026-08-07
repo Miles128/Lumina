@@ -1269,6 +1269,7 @@ class ChatService:
             full_fs_access=self._full_fs_access(),
             max_tool_output_chars=harness.max_tool_output_chars,
             web_search_backend=harness.web_search_backend,
+            full_tools=self._tool_registry.build_tools() if self._tool_registry else None,
         )
 
         try:
