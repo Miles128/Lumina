@@ -99,6 +99,16 @@ def _model_settings(
     return ModelSettings(**settings)
 
 
+def _with_cwd_guidance(instructions: str, working_dir: Path) -> str:
+    """Append cwd context so the model resolves relative tool paths correctly."""
+    cwd_line = (
+        f"\n\nWorking directory (cwd): {working_dir}\n"
+        "Relative tool paths (write/edit/shell/code_exec outputs) resolve against this "
+        "cwd. When creating files, write them under this cwd with relative paths."
+    )
+    return f"{instructions}{cwd_line}"
+
+
 def _split_system_and_input(
     messages: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -656,6 +666,7 @@ def run_with_agents_sdk(
         return needs
 
     instructions, input_messages = _split_system_and_input(run_messages)
+    instructions = _with_cwd_guidance(instructions, working_dir)
     subagent_tools: list[FunctionTool] = []
     if subagent_deps is not None:
         subagent_tools = build_subagent_tools(
@@ -894,6 +905,7 @@ def resume_with_agents_sdk(
 
     async def _resume() -> LoopResult:
         instructions, input_messages = _split_system_and_input(messages)
+        instructions = _with_cwd_guidance(instructions, working_dir)
         parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
         parent_by_name = {t.name: t for t in parent_tools}
         subagent_tools: list[FunctionTool] = []
