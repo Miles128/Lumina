@@ -79,7 +79,7 @@ def test_auto_skips_new_write_keeps_modify_and_shell(tmp_path: Path) -> None:
     )
     assert needs is False
 
-    needs, kind = tool_requires_confirmation(
+    needs, _ = tool_requires_confirmation(
         write,
         {"path": "old.txt", "content": "y"},
         working_dir=cwd,
@@ -87,8 +87,8 @@ def test_auto_skips_new_write_keeps_modify_and_shell(tmp_path: Path) -> None:
         require_confirm=require,
         full_fs_access=True,
     )
-    assert needs is True
-    assert kind == "write_modify"
+    # In-cwd writes never confirm regardless of permission mode.
+    assert needs is False
 
     needs, kind = tool_requires_confirmation(
         ShellTool(),
@@ -112,11 +112,11 @@ def test_auto_skips_new_write_keeps_modify_and_shell(tmp_path: Path) -> None:
     assert needs is True
 
 
-def test_normal_still_confirms_new_write(tmp_path: Path) -> None:
+def test_normal_confirms_escape_write(tmp_path: Path) -> None:
     require = apply_permission_mode("normal")
     needs, kind = tool_requires_confirmation(
         FileWriteTool(),
-        {"path": "a.txt", "content": "x"},
+        {"path": "/tmp/outside/escape.txt", "content": "x"},
         working_dir=tmp_path,
         file_auth=None,
         require_confirm=require,

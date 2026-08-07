@@ -43,10 +43,20 @@ def test_move_refuses_overwrite(tmp_path: Path) -> None:
     assert "exists" in out.error.lower()
 
 
-def test_move_requires_confirmation(tmp_path: Path) -> None:
+def test_move_inside_cwd_never_confirms(tmp_path: Path) -> None:
     needs, kind = tool_requires_confirmation(
         MoveTool(),
         {"from_path": "a", "to_path": "b"},
+        working_dir=tmp_path,
+        file_auth=FileAuthService(tmp_path / "auth.json"),
+    )
+    assert not needs
+
+
+def test_move_outside_cwd_confirms(tmp_path: Path) -> None:
+    needs, kind = tool_requires_confirmation(
+        MoveTool(),
+        {"from_path": "a", "to_path": "/tmp/outside/b"},
         working_dir=tmp_path,
         file_auth=FileAuthService(tmp_path / "auth.json"),
     )

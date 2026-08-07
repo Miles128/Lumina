@@ -80,7 +80,7 @@ def test_edit_accepts_legacy_old_text_args(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == "xyz"
 
 
-def test_write_and_edit_need_confirmation(tmp_path: Path) -> None:
+def test_write_inside_cwd_never_confirms(tmp_path: Path) -> None:
     auth = FileAuthService(tmp_path / "auth.json")
     path = tmp_path / "n.txt"
     needs, kind = tool_requires_confirmation(
@@ -90,8 +90,7 @@ def test_write_and_edit_need_confirmation(tmp_path: Path) -> None:
         file_auth=auth,
         full_fs_access=True,
     )
-    assert needs
-    assert kind.startswith("write")
+    assert not needs
     path.write_text("a", encoding="utf-8")
     needs2, _ = tool_requires_confirmation(
         EditTool(),
@@ -100,4 +99,17 @@ def test_write_and_edit_need_confirmation(tmp_path: Path) -> None:
         file_auth=auth,
         full_fs_access=True,
     )
-    assert needs2
+    assert not needs2
+
+
+def test_write_outside_cwd_confirms(tmp_path: Path) -> None:
+    auth = FileAuthService(tmp_path / "auth.json")
+    needs, kind = tool_requires_confirmation(
+        WriteTool(),
+        {"path": "/tmp/outside/escape.txt", "content": "x"},
+        working_dir=tmp_path,
+        file_auth=auth,
+        full_fs_access=True,
+    )
+    assert needs
+    assert kind.startswith("write")

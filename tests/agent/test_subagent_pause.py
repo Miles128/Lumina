@@ -44,7 +44,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
             LlmToolCall(
                 id="call_write",
                 name="write",
-                arguments={"path": "marker.txt", "content": "paused-subagent"},
+                arguments={"path": "/tmp/outside/marker.txt", "content": "paused-subagent"},
             ),
         ),
         assistant_message={
@@ -56,7 +56,7 @@ def test_worker_subagent_pauses_on_shell_then_resumes(tmp_path: Path) -> None:
                     "type": "function",
                     "function": {
                         "name": "write",
-                        "arguments": '{"path": "marker.txt", "content": "paused-subagent"}',
+                        "arguments": '{"path": "/tmp/outside/marker.txt", "content": "paused-subagent"}',
                     },
                 }
             ],
@@ -145,7 +145,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
             LlmToolCall(
                 id="call_write",
                 name="write",
-                arguments={"path": "marker.txt", "content": "test"},
+                arguments={"path": "/tmp/outside/marker.txt", "content": "test"},
             ),
         ),
         assistant_message={
@@ -157,7 +157,7 @@ def test_parent_loop_surfaces_subagent_pause(tmp_path: Path) -> None:
                     "type": "function",
                     "function": {
                         "name": "write",
-                        "arguments": '{"path": "marker.txt", "content": "test"}',
+                        "arguments": '{"path": "/tmp/outside/marker.txt", "content": "test"}',
                     },
                 }
             ],

@@ -126,8 +126,7 @@ def test_full_fs_restores_confirm_policy(tmp_path: Path) -> None:
             file_auth=None,
             require_confirm=require,
         )
-        assert needs is True
-        assert kind == "write_new"
+        assert needs is False
 
 
 def test_collect_artifact_paths_from_write(tmp_path: Path) -> None:
