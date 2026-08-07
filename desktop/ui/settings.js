@@ -25,7 +25,6 @@
   }
 
   document.getElementById("btn-platforms").addEventListener("click", () => openSettings());
-  document.getElementById("btn-settings-top").addEventListener("click", () => openSettings());
   document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
   backdrop.addEventListener("click", closeSettings);
 
