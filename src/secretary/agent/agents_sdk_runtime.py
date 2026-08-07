@@ -141,6 +141,7 @@ def _pick_retry(
     used_tools: list[str],
     user_message: str,
     steps: list[StepResult],
+    working_dir: Path,
 ) -> str | None:
     """Mirror the legacy AgentLoop retry ladder.
 
@@ -163,12 +164,16 @@ def _pick_retry(
         should_retry_for_office,
         should_retry_for_research_intent,
     )
+    from secretary.agent.grounding import write_claims_unverified
     from secretary.agent.web_research import (
         WEB_RETRY_USER,
         reply_claims_web_search,
         should_retry_for_web_research,
     )
 
+    write_claim = write_claims_unverified(reply, working_dir, used_tools)
+    if write_claim:
+        return write_claim
     if reply_claims_web_search(reply, used_tools):
         return "web_claim"
     if should_retry_for_grounding(user_message, reply, used_tools):
@@ -780,6 +785,7 @@ def run_with_agents_sdk(
             tracked,
             user_message,
             tracked_steps,
+            working_dir,
         )
         if retry_kind is None:
             break

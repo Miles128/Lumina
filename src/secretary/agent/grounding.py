@@ -312,7 +312,7 @@ _SIMULATED_SHELL_PROMPT = re.compile(r"^\s*\$\s+(?!ls\b)\S", re.MULTILINE)
 _SIMULATED_PYTEST = re.compile(
     r"={3,}\s*\d+\s*(?:failed|passed|error)s?[^=\n]*={3,}", re.MULTILINE
 )
-_SIMULATED_EXIT_CODE = re.compile(r"\[?exit\s*code:\s*-?\d+\]?", re.IGNORECASE)
+_SIMULATED_EXIT_CODE = re.compile(r"\[?(?:exit\s*code|EXIT)\s*[:=]?\s*-?\d+\]?", re.IGNORECASE)
 _SIMULATED_NO_OUTPUT = re.compile(r"^\(no output\)\s*$", re.MULTILINE)
 _SIMULATED_BUILD = re.compile(
     r"(?i)(?:build|compiled|tests?)\s+(?:successful|succeeded|completed|passed)"
@@ -329,6 +329,9 @@ _COMMAND_CLAIM_MARKERS = (
     "刚才pip", "刚才 pip",
     "exit code", "exit_code",
     "build passed", "tests passed", "build succeeded", "build failed",
+    # Simulated run output / summary claims — require a receipt.
+    "EXIT=", "退出码", "执行完成", "运行结果", "运行日志", "真实结果",
+    "EXIT_CODE", "exit_code",
 )
 
 # Generic claim verb + shell command name → require a receipt.
@@ -1050,6 +1053,50 @@ def collect_read_evidence(steps: list[Any]) -> ReadEvidence:
         elif name.startswith("mcp_"):
             _absorb_mcp_output(evidence, output, arguments)
     return evidence
+
+
+# Write claims ("已生成 sales.xlsx") must be backed by a real file: the target
+# must exist under the working dir, and the turn must have used a write-capable
+# tool. This is the anti-hallucination twin of the command receipt system.
+_WRITE_CLAIM_RE = re.compile(
+    r"(?:已生成|已创建|已保存|已写入|已写出|已复制|成功生成|生成成功|写入成功|保存成功|写入了|保存到|输出到)"
+    r"[：:，,\s]*"
+    r"([\w.\-]+\.(?:xlsx|xlsm|docx|pdf|md|markdown|csv|tsv|json|txt|log|png|jpg|html?|yaml|yml|py|js|ts))",
+    re.IGNORECASE,
+)
+
+_WRITE_CAPABLE_TOOLS = frozenset(
+    {"write", "file_write", "edit", "patch", "move", "shell", "code_exec"}
+)
+
+
+def write_claims_unverified(
+    reply: str,
+    working_dir: Path,
+    used_tools: list[str],
+) -> str | None:
+    """Return a retry prompt when the reply claims file creation without proof.
+
+    Two failure modes are caught:
+    1. No write-capable tool was called at all → pure hallucination.
+    2. A tool ran but the claimed file does not exist under the working dir.
+    """
+    claims = _WRITE_CLAIM_RE.findall(reply or "")
+    if not claims:
+        return None
+    used = set(used_tools)
+    if not used & _WRITE_CAPABLE_TOOLS:
+        return (
+            "你声称生成了文件（" + "、".join(claims[:3]) + "），但本轮没有调用任何"
+            "写工具。请实际调用 write/edit/code_exec/shell 生成文件，不要只声称。"
+        )
+    missing = [name for name in claims if not (working_dir / name).is_file()]
+    if missing:
+        return (
+            "你声称生成了 " + "、".join(missing[:3]) + "，但该文件在当前工作目录"
+            "（cwd）下不存在。请实际生成文件后用 ls 或 file_read 核实，再回复真实结果。"
+        )
+    return None
 
 
 def verify_reply_against_evidence(

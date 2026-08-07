@@ -642,6 +642,16 @@ class AgentLoop:
                     )
                     continue
 
+                from secretary.agent.grounding import write_claims_unverified
+
+                write_claim = write_claims_unverified(reply, self._working_dir, used_tools)
+                if write_claim is not None and shared_retries < max_shared_retries:
+                    shared_retries += 1
+                    grounding_retries += 1
+                    current_messages.append({"role": "assistant", "content": raw})
+                    current_messages.append({"role": "user", "content": write_claim})
+                    continue
+
                 if (
                     shared_retries < max_shared_retries
                     and grounding_retries < max_grounding_retries

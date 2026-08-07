@@ -102,6 +102,32 @@ def _candidate_shell_paths(command: str) -> list[str]:
     return found
 
 
+# Standard read-only tool directories: interpreters/CLI binaries referenced by
+# absolute path (e.g. /opt/homebrew/bin/python3, symlinked into Cellar) are not
+# "escaping" the jail — they are executable code paths, not data writes.
+_EXECUTABLE_DIRS: tuple[Path, ...] = tuple(
+    Path(d)
+    for d in (
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/opt/homebrew/Cellar",
+    )
+)
+
+
+def _is_safe_executable(resolved: Path) -> bool:
+    try:
+        if not resolved.is_file():
+            return False
+    except OSError:
+        return False
+    return any(resolved.is_relative_to(d) for d in _EXECUTABLE_DIRS)
+
+
 def shell_escapes_jail(
     command: str,
     working_dir: Path,
@@ -130,6 +156,8 @@ def shell_escapes_jail(
         except OSError:
             continue
         if resolved in allow_exact:
+            continue
+        if _is_safe_executable(resolved):
             continue
         if resolved.is_relative_to(root):
             continue
