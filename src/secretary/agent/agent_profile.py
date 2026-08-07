@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from secretary.agent.tool_names import expand_aliases
@@ -47,6 +48,15 @@ PLAN_TOOL_NAMES = (ASK_TOOL_NAMES - frozenset({"code_exec"})) | frozenset(
 )
 
 MCP_READ_PREFIXES = ("read_", "list_", "get_")
+
+# "做一个/生成/创建/画 + 文件类型" → 产物创建任务（Build）
+_CREATE_ARTIFACT_RE = re.compile(
+    r"(?:生成|创建|做一个|做一份|写一个|画|导出|产出一个|做份)"
+    r".{0,30}?"
+    r"(?:Excel|xlsx|表格|图表|折线图|散点图|图|图片|图像|报告|PDF|文档|脚本|文件|"
+    r"html?|csv|json|md|png|jpg)",
+    re.IGNORECASE,
+)
 
 
 class AgentProfile(StrEnum):
@@ -192,6 +202,10 @@ def resolve_auto_profile(
         return AgentProfile.PLAN
 
     if code_mutate or persist:
+        return AgentProfile.BUILD
+    # Creating a file/artifact ("做一个 Excel / 生成图表 / 导出 PDF") is a
+    # build-class task: the model needs write/code_exec tools to produce it.
+    if _CREATE_ARTIFACT_RE.search(text):
         return AgentProfile.BUILD
     if intent is TaskIntent.WRITING and is_writing_plan_request(text):
         return AgentProfile.PLAN

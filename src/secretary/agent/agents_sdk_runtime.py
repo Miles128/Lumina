@@ -26,6 +26,7 @@ from agents import (
     Agent,
     AgentHooks,
     MaxTurnsExceeded,
+    ModelBehaviorError,
     ModelSettings,
     Runner,
     RunState,
@@ -675,6 +676,13 @@ def _emit_stream_event(
             thought_buffer.append(delta)
 
 
+class _MissingToolResult:
+    """Sentinel returned when the model referenced a tool outside its set."""
+
+    def __init__(self, error: str) -> None:
+        self.error = error
+
+
 def _run_streamed_turn(
     agent: Agent,
     input_messages: Any,
@@ -685,15 +693,22 @@ def _run_streamed_turn(
     """Run one SDK turn via run_streamed, forwarding deltas as events."""
 
     async def _go() -> Any:
-        streamed = Runner.run_streamed(
-            agent,
-            cast(Any, input_messages),
-            max_turns=max_turns,
-            run_config=RunConfig(tracing_disabled=True),
-        )
-        async for ev in streamed.stream_events():
-            _emit_stream_event(ev, progress_callback, thought_buffer)
-        return streamed
+        try:
+            streamed = Runner.run_streamed(
+                agent,
+                cast(Any, input_messages),
+                max_turns=max_turns,
+                run_config=RunConfig(tracing_disabled=True),
+            )
+            async for ev in streamed.stream_events():
+                _emit_stream_event(ev, progress_callback, thought_buffer)
+            return streamed
+        except ModelBehaviorError as exc:
+            # The model called a tool that is not in its toolset (e.g. profile
+            # routing picked read-only tools but instructions hinted at write).
+            # Surface as a recoverable marker instead of killing the turn.
+            logger.warning("agents-sdk model behavior error: %s", exc)
+            return _MissingToolResult(str(exc))
 
     return asyncio.run(_go())
 
@@ -917,6 +932,29 @@ def run_with_agents_sdk(
                 pending_step=step,
                 messages_snapshot=_safe_messages(run_messages),
             )
+
+        if isinstance(result, _MissingToolResult):
+            if shared_retries >= max_shared_retries:
+                return LoopResult(
+                    reply="模型调用了当前模式下不可用的工具，多次重试后仍失败。请切换到 Build 模式重试。",
+                    steps=tracked_steps,
+                    used_tools=tracked,
+                    total_steps=len(tracked) or 1,
+                )
+            shared_retries += 1
+            available = ", ".join(
+                sorted({getattr(t, "name", "") for t in parent_tools})
+            )
+            run_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"你上一步调用了不可用的工具（{result.error}）。当前可用工具："
+                        f"{available}。请只用可用工具完成用户请求。"
+                    ),
+                }
+            )
+            continue
 
         reply = getattr(result, "final_output", None)
         final_reply = reply if isinstance(reply, str) else ("" if reply is None else str(reply))
