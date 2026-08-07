@@ -157,6 +157,7 @@ def _pick_retry(
         should_retry_for_grounding,
         should_retry_for_verification,
         verify_reply_against_evidence,
+        write_claims_unverified,
     )
     from secretary.agent.knowledge_work import (
         OFFICE_RETRY_USER,
@@ -164,7 +165,6 @@ def _pick_retry(
         should_retry_for_office,
         should_retry_for_research_intent,
     )
-    from secretary.agent.grounding import write_claims_unverified
     from secretary.agent.web_research import (
         WEB_RETRY_USER,
         reply_claims_web_search,
