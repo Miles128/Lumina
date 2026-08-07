@@ -5,11 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from secretary.agent.fs_jail import get_full_fs_access, is_writable_path
+from secretary.agent.fs_jail import get_full_fs_access, is_writable_path, shell_escapes_jail
 from secretary.agent.harness_config import ConfirmRequireConfig
 from secretary.agent.tools.base import Tool, _resolve_path
 from secretary.agent.tools.shell import _is_read_only_shell_command
 from secretary.services.file_auth import FileAuthService
+
+
+def _is_thread_sandbox(working_dir: Path) -> bool:
+    """True when the working dir is a per-thread sandbox (isolated, disposable)."""
+    parts = Path(working_dir).expanduser().resolve().parts
+    return ".lumina" in parts and "sandbox" in parts
 
 
 def _kind_require_key(kind: str) -> str:
@@ -118,6 +124,11 @@ def tool_requires_confirmation(
         if not command:
             return False, ""  # empty → skip; execute returns error
         if _is_read_only_shell_command(command):
+            return False, ""
+        # Thread-sandbox shells are free: the cwd is an isolated directory, so
+        # as long as every absolute path stays inside it (fs_jail check) the
+        # command cannot touch the outside world. Real workspaces stay gated.
+        if _is_thread_sandbox(working_dir) and shell_escapes_jail(command, working_dir) is None:
             return False, ""
         kind = "shell"
         if not kind_requires_confirm(kind, require_confirm):
