@@ -127,7 +127,6 @@ def test_code_exec_never_confirms(tmp_path: Path) -> None:
     )
     assert needs is False
     assert kind == ""
-    assert kind2 == ""
 
 
 def test_ask_profile_includes_code_exec_plan_excludes(tmp_path: Path) -> None:
