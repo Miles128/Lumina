@@ -4402,10 +4402,13 @@ body.map-view-open .chat-column > .fork-banner {
   background: color-mix(in srgb, var(--sig, #4f8cff) 12%, transparent);
 }
 
-/* Always-visible scrollbars (macOS overlay scrollbars hide by default) */
+/* Scrollbars hidden by default; appear when the pointer nears them.
+   Chromium (Electron) scrollbar pseudo-elements support :hover; the
+   `*:hover` rule surfaces the thumb when the mouse is over any scrolling
+   container (track area included). */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border, #2a323b) transparent;
+  scrollbar-color: transparent transparent;
 }
 ::-webkit-scrollbar {
   width: 9px;
@@ -4415,9 +4418,13 @@ body.map-view-open .chat-column > .fork-banner {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border, #2a323b);
+  background: transparent;
   border-radius: 5px;
   border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--border, #2a323b);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
