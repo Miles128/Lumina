@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,34 @@ from secretary.services.file_auth import FileAuthService
 _WRITE_SHELL_CMDS = frozenset(
     {"echo", "touch", "mkdir", "cp", "mv", "rm", "rmdir", "tee", "truncate", "install", "ln", "chmod", "chown"}
 )
+
+
+def _shell_runs_in_cwd_python(command: str, working_dir: Path) -> bool:
+    """True when the command runs a python script that resolves inside the cwd.
+
+    Supports chained commands (a && b / a; b) as long as the FIRST segment is
+    the python run — the model's script-execution step is what matters.
+    """
+    import shlex as _shlex
+
+    if shell_escapes_jail(command, working_dir, full_fs_access=False) is not None:
+        return False
+    first_seg = re.split(r"&&|;", command)[0].strip()
+    try:
+        argv = _shlex.split(first_seg)
+    except ValueError:
+        return False
+    if not argv:
+        return False
+    if argv[0].lower() not in _PYTHON_CMDS:
+        return False
+    if len(argv) < 2 or argv[1].startswith("-"):
+        return False
+    script = _resolve_path(argv[1], working_dir)
+    return is_writable_path(script, working_dir, full_fs_access=False)
+
+
+_PYTHON_CMDS = frozenset({"python", "python3", "pypy3"})
 
 
 def _shell_writes_inside_cwd(command: str, working_dir: Path) -> bool:
@@ -165,6 +194,11 @@ def tool_requires_confirmation(
         # as long as every absolute path stays inside it (fs_jail check) the
         # command cannot touch the outside world. Real workspaces stay gated.
         if _is_thread_sandbox(working_dir) and shell_escapes_jail(command, working_dir) is None:
+            return False, ""
+        # Executing a Python script that lives inside the working dir (written
+        # by the write tool, outputs kept in-cwd) is free — this is the
+        # write→run→produce loop the product guarantees, regardless of mode.
+        if _shell_runs_in_cwd_python(command, working_dir):
             return False, ""
         # auto mode: file-operation shells inside the working dir (touch/mkdir/
         # cp/mv/rm/echo>…, no jail escape) are free — same spirit as the

@@ -803,6 +803,12 @@ def run_with_agents_sdk(
 
     instructions, input_messages = _split_system_and_input(run_messages)
     instructions = _with_cwd_guidance(instructions, working_dir)
+    instructions += (
+        "\n\nPython 工作流：当任务需要运行 Python 生成文件（图表/Excel/文本等）时，"
+        "1) 先用 write 把脚本写入当前工作目录；2) 再用 shell/code_exec 执行它；"
+        "3) 所有产物（图片/Excel/CSV/日志等）必须保存到当前工作目录（沙箱或工作区）；"
+        "4) 回复时用绝对路径明确列出每个产物文件。不要声称生成而未实际落盘。"
+    )
     if web_search_backend == "responses":
         instructions += (
             "\n\n你有内置 web_search 工具（服务端联网搜索）。用户请求实时信息、"

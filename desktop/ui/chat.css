@@ -4438,3 +4438,15 @@ body.map-view-open .chat-column > .fork-banner {
 .topbar-right .artifact-toggle-btn {
   -webkit-app-region: no-drag;
 }
+
+/* 对话内产物路径链接 → 点击边栏预览 */
+.bubble .artifact-link {
+  color: var(--sig, #4f8cff);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.bubble .artifact-link:hover {
+  color: var(--sig-hover, #6ea4ff);
+}

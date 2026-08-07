@@ -194,11 +194,19 @@ def test_auto_workspace_shell_policy(tmp_path: Path) -> None:
         )
         assert n_touch is False
 
+        # In-cwd python script execution is free in every mode (write→run→produce loop).
         n_py, _ = tool_requires_confirmation(
             shell, {"command": "python3 gen.py"},
             working_dir=tmp_path, file_auth=None, require_confirm=require,
         )
-        assert n_py is True
+        assert n_py is False
+
+        # Arbitrary in-cwd commands (non-file-op, non-python) still confirm in auto.
+        n_ls2, _ = tool_requires_confirmation(
+            shell, {"command": "uname -a"},
+            working_dir=tmp_path, file_auth=None, require_confirm=require,
+        )
+        assert n_ls2 is True
 
         n_escape, _ = tool_requires_confirmation(
             shell, {"command": "echo x > /tmp/outside/out.txt"},

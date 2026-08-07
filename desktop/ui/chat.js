@@ -929,6 +929,33 @@
     return RUNTIME_SUMMARY_RE.test(source);
   }
 
+  const ARTIFACT_PATH_RE =
+    /(\/[^\s<>"'`]+?\.(?:xlsx|xlsm|docx|pdf|md|markdown|csv|tsv|json|txt|log|png|jpe?g|gif|html?|yaml|yml|py|js|ts))/gi;
+
+  function linkifyArtifacts(root) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      if (!node.textContent || !ARTIFACT_PATH_RE.test(node.textContent)) continue;
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      node.textContent.replace(ARTIFACT_PATH_RE, (match, path, offset) => {
+        frag.appendChild(document.createTextNode(node.textContent.slice(last, offset)));
+        const a = document.createElement("a");
+        a.className = "artifact-link";
+        a.dataset.artifactPath = path;
+        a.textContent = path;
+        frag.appendChild(a);
+        last = offset + match.length;
+        return match;
+      });
+      frag.appendChild(document.createTextNode(node.textContent.slice(last)));
+      node.parentNode?.replaceChild(frag, node);
+    }
+  }
+
   function appendMessageInternal(role, text, persist, msgMeta = null) {
     if (isRuntimeSummaryMessage(text)) {
       return;
@@ -951,6 +978,10 @@
     if (msgId) {
       // Float above the bubble; prepend so it sits at the answer's top edge.
       row.insertBefore(buildMsgActionsEl(msgId, role, archived, thread), row.firstChild);
+    }
+    if (role === "bot") {
+      const bubble = row.querySelector(".bubble.markdown");
+      if (bubble) linkifyArtifacts(bubble);
     }
     messagesEl.appendChild(row);
     scrollChatToBottom();
@@ -3648,6 +3679,14 @@
     showArchived = !showArchived;
     renderCurrentThreadMessages();
     window.dispatchEvent(new CustomEvent("conversation:archived-changed", { detail: { on: showArchived } }));
+  });
+
+  messagesEl.addEventListener("click", (event) => {
+    const link = event.target.closest?.(".artifact-link");
+    if (link?.dataset?.artifactPath) {
+      window.LuminaArtifacts?.preview?.(link.dataset.artifactPath);
+      return;
+    }
   });
 
   // Event delegation for message action buttons.

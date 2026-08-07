@@ -585,6 +585,11 @@
       if (panelMode === "context") applyMode();
       else void refreshContext().then(renderTree);
     },
+    preview: (path) => {
+      setMode("documents");
+      ensureOpen();
+      void selectFile(String(path || ""));
+    },
     openContext: () => setMode("context"),
     close: () => setOpen(false),
     isOpen: () => open,
