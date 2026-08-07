@@ -366,6 +366,20 @@ class _LuminaHooks(AgentHooks[Any]):
         tool_name = str(getattr(context, "tool_name", "") or "")
         if tool_name.startswith("spawn_") and tool_name not in self._tracked:
             self._tracked.append(tool_name)
+            return
+        # SDK built-in tools (e.g. Responses server-side web_search) bypass our
+        # wrappers; surface them as progress events for the UI.
+        if tool_name == "web_search" and tool_name not in self._tracked:
+            self._tracked.append(tool_name)
+            if self._progress_callback is not None:
+                self._progress_callback(
+                    ProgressEvent(kind="tool_started", iteration=0, tool_name=tool_name)
+                )
+                self._progress_callback(
+                    ProgressEvent(
+                        kind="tool_finished", iteration=0, tool_name=tool_name, success=True
+                    )
+                )
 
     async def on_llm_end(
         self,
@@ -624,6 +638,50 @@ def _pending_from_interruption(
     return pending, step
 
 
+def _emit_stream_event(
+    ev: Any,
+    progress_callback: Callable[[ProgressEvent], None] | None,
+    thought_buffer: list[str] | None,
+) -> None:
+    """Forward Responses stream deltas: output text → reply_delta (typewriter),
+    reasoning deltas accumulated for one thought event at turn end."""
+    data = getattr(ev, "data", None)
+    if data is None:
+        return
+    d = data if isinstance(data, dict) else getattr(data, "model_dump", lambda: {})()
+    etype = str(d.get("type", ""))
+    delta = d.get("delta")
+    if etype == "response.output_text.delta" and isinstance(delta, str) and delta:
+        if progress_callback is not None:
+            progress_callback(ProgressEvent(kind="reply_delta", iteration=0, message=delta))
+    elif etype == "response.reasoning_text.delta" and isinstance(delta, str) and delta:
+        if thought_buffer is not None:
+            thought_buffer.append(delta)
+
+
+def _run_streamed_turn(
+    agent: Agent,
+    input_messages: Any,
+    max_turns: int,
+    progress_callback: Callable[[ProgressEvent], None] | None,
+    thought_buffer: list[str],
+) -> Any:
+    """Run one SDK turn via run_streamed, forwarding deltas as events."""
+
+    async def _go() -> Any:
+        streamed = Runner.run_streamed(
+            agent,
+            cast(Any, input_messages),
+            max_turns=max_turns,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+        async for ev in streamed.stream_events():
+            _emit_stream_event(ev, progress_callback, thought_buffer)
+        return streamed
+
+    return asyncio.run(_go())
+
+
 def run_with_agents_sdk(
     *,
     llm_config: LlmConfig,
@@ -643,12 +701,23 @@ def run_with_agents_sdk(
     compaction_max_tokens: int | None = None,
     compaction_keep_tail: int | None = None,
     subagent_deps: Any | None = None,
+    web_search_backend: str = "tavily",
 ) -> LoopResult:
     """Run one Agents SDK turn and map to LoopResult (HITL + grounding)."""
     _bind_default_client(llm_config)
     # The dynamic spawn_subagent tool is replaced by per-archetype as_tools on
     # this backend (nested approvals float to the outer run).
     parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
+    # DeepSeek server-side search: swap Lumina's Tavily tool for the SDK's
+    # built-in web_search (executed by the Responses API provider).
+    extra_tools: list[Any] = []
+    if web_search_backend == "responses":
+        from agents.tool import WebSearchTool
+
+        parent_tools = [
+            t for t in parent_tools if getattr(t, "name", "") != "web_search"
+        ]
+        extra_tools.append(WebSearchTool())
     tools_by_name = {t.name: t for t in parent_tools if getattr(t, "name", "")}
     tracked: list[str] = []
     tracked_steps: list[StepResult] = []
@@ -718,6 +787,12 @@ def run_with_agents_sdk(
 
     instructions, input_messages = _split_system_and_input(run_messages)
     instructions = _with_cwd_guidance(instructions, working_dir)
+    if web_search_backend == "responses":
+        instructions += (
+            "\n\n你有内置 web_search 工具（服务端联网搜索）。用户请求实时信息、"
+            "天气、新闻、行情、网络数据时必须调用 web_search 获取真实结果，"
+            "不要声称无法联网。"
+        )
     subagent_tools: list[FunctionTool] = []
     if subagent_deps is not None:
         subagent_tools = build_subagent_tools(
@@ -754,6 +829,7 @@ def run_with_agents_sdk(
                 strict_tools=strict_tools,
             ),
             *subagent_tools,
+            *extra_tools,
         ],
         model_settings=_model_settings(
             llm_config,
@@ -773,12 +849,14 @@ def run_with_agents_sdk(
     note = ""
     while True:
         current_input = _split_system_and_input(run_messages)[1]
+        turn_thoughts: list[str] = []
         try:
-            result = Runner.run_sync(
+            result = _run_streamed_turn(
                 agent,
-                cast(Any, current_input if current_input else run_messages),
-                max_turns=max_turns,
-                run_config=RunConfig(tracing_disabled=True),
+                current_input if current_input else run_messages,
+                max_turns,
+                progress_callback,
+                turn_thoughts,
             )
         except MaxTurnsExceeded:
             logger.warning("agents-sdk run exceeded turn budget")
@@ -822,6 +900,14 @@ def run_with_agents_sdk(
         final_reply = reply if isinstance(reply, str) else ("" if reply is None else str(reply))
         safe_messages = _safe_messages(run_messages)
         user_message = resolve_turn_user_message(safe_messages)
+        if turn_thoughts and progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    kind="thought",
+                    iteration=0,
+                    message="\n\n".join(turn_thoughts)[:2000],
+                )
+            )
 
         if shared_retries >= max_shared_retries:
             break
@@ -837,36 +923,52 @@ def run_with_agents_sdk(
             break
         shared_retries += 1
         if retry_kind == "web_claim":
-            # Legacy behavior: inject an actual web_search execution.
-            web_tool = tools_by_name.get("web_search")
-            if web_tool is None:
-                break
-            try:
-                output = _coerce_to_tool_result(
-                    web_tool.execute({"query": user_message.strip()[:200]}, working_dir),
-                    tool_name="web_search",
-                ).to_output_string()
-            except Exception as exc:
-                logger.warning("agents-sdk injected web_search failed: %s", exc)
-                break
-            tracked.append("web_search")
-            tracked_steps.append(
-                StepResult(
-                    thought="",
-                    tool_call=ToolCall(
-                        name="web_search",
-                        arguments={"query": user_message.strip()[:200]},
-                        id=f"call_auto_web_search_{shared_retries}",
-                    ),
-                    tool_output=output,
+            # Guide the model to actually call web_search (the SDK built-in
+            # tool executes server-side and cannot be invoked manually).
+            if web_search_backend == "responses":
+                run_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "你上一轮声称要联网但没有实际调用 web_search 工具。"
+                            "请立即调用 web_search 搜索：「"
+                            + user_message.strip()[:120]
+                            + "」，把真实结果整理后回复用户。"
+                        ),
+                    }
                 )
-            )
-            run_messages.append(
-                {
-                    "role": "user",
-                    "content": f"[Tool Result: web_search]\n{output}",
-                }
-            )
+            else:
+                web_tool = tools_by_name.get("web_search")
+                if web_tool is None:
+                    break
+                try:
+                    output = _coerce_to_tool_result(
+                        web_tool.execute(
+                            {"query": user_message.strip()[:200]}, working_dir
+                        ),
+                        tool_name="web_search",
+                    ).to_output_string()
+                except Exception as exc:
+                    logger.warning("agents-sdk injected web_search failed: %s", exc)
+                    break
+                tracked.append("web_search")
+                tracked_steps.append(
+                    StepResult(
+                        thought="",
+                        tool_call=ToolCall(
+                            name="web_search",
+                            arguments={"query": user_message.strip()[:200]},
+                            id=f"call_auto_web_search_{shared_retries}",
+                        ),
+                        tool_output=output,
+                    )
+                )
+                run_messages.append(
+                    {
+                        "role": "user",
+                        "content": f"[Tool Result: web_search]\n{output}",
+                    }
+                )
         else:
             run_messages.append({"role": "assistant", "content": final_reply})
             run_messages.append({"role": "user", "content": retry_kind})
@@ -915,6 +1017,7 @@ def resume_with_agents_sdk(
     cancel_check: Callable[[], bool] | None = None,
     require_confirm: ConfirmRequireConfig | None = None,
     subagent_deps: Any | None = None,
+    web_search_backend: str = "tavily",
 ) -> LoopResult:
     """Approve a paused SDK interruption (RunState round-trip) and continue.
 
@@ -958,7 +1061,21 @@ def resume_with_agents_sdk(
     async def _resume() -> LoopResult:
         instructions, input_messages = _split_system_and_input(messages)
         instructions = _with_cwd_guidance(instructions, working_dir)
+        if web_search_backend == "responses":
+            instructions += (
+                "\n\n你有内置 web_search 工具（服务端联网搜索）。用户请求实时信息、"
+                "天气、新闻、行情、网络数据时必须调用 web_search 获取真实结果，"
+                "不要声称无法联网。"
+            )
         parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
+        extra_tools: list[Any] = []
+        if web_search_backend == "responses":
+            from agents.tool import WebSearchTool
+
+            parent_tools = [
+                t for t in parent_tools if getattr(t, "name", "") != "web_search"
+            ]
+            extra_tools.append(WebSearchTool())
         parent_by_name = {t.name: t for t in parent_tools}
         subagent_tools: list[FunctionTool] = []
         if subagent_deps is not None:
@@ -993,6 +1110,7 @@ def resume_with_agents_sdk(
                     strict_tools=strict_tools,
                 ),
                 *subagent_tools,
+                *extra_tools,
             ],
             model_settings=_model_settings(
                 llm_config,

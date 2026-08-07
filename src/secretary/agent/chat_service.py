@@ -683,6 +683,7 @@ class ChatService:
             compaction_max_tokens=harness.compaction_max_tokens,
             compaction_keep_tail=harness.compaction_keep_tail,
             max_tool_output_chars=harness.max_tool_output_chars,
+            web_search_backend=harness.web_search_backend,
         )
 
         if result.pending_confirmation:
@@ -1267,6 +1268,7 @@ class ChatService:
             require_confirm=harness.require_confirm,
             full_fs_access=self._full_fs_access(),
             max_tool_output_chars=harness.max_tool_output_chars,
+            web_search_backend=harness.web_search_backend,
         )
 
         try:

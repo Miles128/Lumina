@@ -10,6 +10,7 @@ TraceRetention = Literal["full", "summary", "off"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 ReasoningEffort = Literal["low", "high", "max"]
 RuntimeBackend = Literal["legacy", "aisuite", "agents_sdk"]
+WebSearchBackend = Literal["tavily", "responses"]
 PermissionMode = Literal["normal", "auto", "yolo", "custom"]
 
 CONFIRM_KIND_KEYS = (
@@ -86,6 +87,9 @@ class HarnessConfig(BaseModel):
     # All backends fall back to AgentLoop when spawn_subagent / force_web_first
     # are in play (nested pause stack not ported yet).
     runtime_backend: RuntimeBackend = "agents_sdk"
+    # tavily = Lumina's own web_search tool (Tavily/Bocha API);
+    # responses = DeepSeek server-side web_search via the Responses API.
+    web_search_backend: WebSearchBackend = "tavily"
     # Confirmation policy (FR-46 editable): presets + fine-grained kinds.
     permission_mode: PermissionMode = "normal"
     require_confirm: ConfirmRequireConfig = Field(default_factory=ConfirmRequireConfig)

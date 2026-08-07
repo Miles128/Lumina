@@ -292,6 +292,18 @@
       en: "legacy AgentLoop",
       zh: "legacy AgentLoop",
     },
+    "settings.harness.web_search_backend": {
+      en: "Web search backend",
+      zh: "联网搜索后端",
+    },
+    "settings.harness.web_search_backend.tavily": {
+      en: "Tavily / self-hosted API",
+      zh: "Tavily / 自研 API",
+    },
+    "settings.harness.web_search_backend.responses": {
+      en: "DeepSeek built-in (Responses)",
+      zh: "DeepSeek 内置（Responses）",
+    },
     "settings.harness.crosslinks": {
       en: "History turns: Settings → LLM. Permission mode: Settings → Delegation.",
       zh: "历史轮数见「LLM」；权限模式见「委派与确认」。",

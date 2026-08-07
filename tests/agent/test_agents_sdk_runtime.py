@@ -111,8 +111,8 @@ def test_run_with_agents_sdk_pauses_on_interruption(monkeypatch) -> None:
     from secretary.agent import agents_sdk_runtime
 
     monkeypatch.setattr(
-        agents_sdk_runtime.Runner,
-        "run_sync",
+        agents_sdk_runtime,
+        "_run_streamed_turn",
         lambda *a, **k: _fake_result(interruptions=[_fake_interruption()]),
     )
     result = run_with_agents_sdk(
@@ -132,8 +132,8 @@ def test_run_with_agents_sdk_completes_without_interruption(monkeypatch) -> None
     from secretary.agent import agents_sdk_runtime
 
     monkeypatch.setattr(
-        agents_sdk_runtime.Runner,
-        "run_sync",
+        agents_sdk_runtime,
+        "_run_streamed_turn",
         lambda *a, **k: _fake_result(final_output="hello"),
     )
     result = run_with_agents_sdk(
@@ -288,14 +288,14 @@ def test_run_with_agents_sdk_retry_ladder_injects_web_search(monkeypatch) -> Non
 
     calls: list[Any] = []
 
-    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+    def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
         calls.append(input_msg)
         if len(calls) == 1:
             # First pass: model claims search without calling tools.
             return _fake_result(final_output="让我搜一下最新数据")
         return _fake_result(final_output="基于搜索结果的回答")
 
-    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
     tools = [_FakeTool("web_search")]
     result = run_with_agents_sdk(
         llm_config=_llm_config(),
@@ -313,10 +313,10 @@ def test_run_with_agents_sdk_retry_ladder_injects_web_search(monkeypatch) -> Non
 def test_run_with_agents_sdk_steps_returned(monkeypatch) -> None:
     from secretary.agent import agents_sdk_runtime
 
-    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+    def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
         return _fake_result(final_output="ok")
 
-    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
     # Tracked steps only fill when tools actually execute; verify empty-safe path.
     result = run_with_agents_sdk(
         llm_config=_llm_config(),
@@ -375,11 +375,11 @@ def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
 
     captured: dict[str, Any] = {}
 
-    def _fake_run(agent, input_msg, max_turns=None, run_config=None):
+    def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
         captured["tool_names"] = sorted(getattr(t, "name", "") for t in agent.tools)
         return _fake_result(final_output="ok")
 
-    monkeypatch.setattr(agents_sdk_runtime.Runner, "run_sync", _fake_run)
+    monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
     deps = SubAgentDeps(
         llm_config=_llm_config(),
         file_auth=None,
