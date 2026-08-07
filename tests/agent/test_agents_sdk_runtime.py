@@ -399,3 +399,48 @@ def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
     assert "spawn_subagent" not in names
     assert "spawn_explore" in names
     assert "spawn_worker" in names
+
+
+def test_resume_uses_used_plus_budget_max_turns(monkeypatch) -> None:
+    """SDK counts max_turns against the full run; resume must add used turns."""
+    from secretary.agent import agents_sdk_runtime
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_run(agent, state, max_turns=None, run_config=None):
+        captured["max_turns"] = max_turns
+        return _fake_result(final_output="done")
+
+    monkeypatch.setattr(agents_sdk_runtime.Runner, "run", _fake_run)
+
+    class _FakeState:
+        _current_turn = 9
+
+        def get_interruptions(self):
+            return [_fake_interruption()]
+
+        def approve(self, item, always_approve=False):
+            pass
+
+    async def _fake_from_string(agent, s):
+        return _FakeState()
+
+    monkeypatch.setattr(agents_sdk_runtime.RunState, "from_string", _fake_from_string)
+
+    pending, _ = _pending_from_interruption(
+        _fake_interruption(),
+        tools_by_name={"write": FileWriteTool()},
+        working_dir=Path("/tmp"),
+        require_confirm=None,
+        sdk_state="STATE",
+    )
+    result = agents_sdk_runtime.resume_with_agents_sdk(
+        llm_config=_llm_config(),
+        pending=pending,
+        messages=[{"role": "user", "content": "x"}],
+        tools=[FileWriteTool()],
+        working_dir=Path("/tmp"),
+        max_turns=10,
+    )
+    assert captured["max_turns"] == 19, "used(9) + budget(10)"
+    assert result.reply == "done"

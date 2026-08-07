@@ -917,8 +917,17 @@ def resume_with_agents_sdk(
                 approved = True
         if not approved:
             raise ValueError(f"paused interruption {pending.tool_name} not found in state")
+        # The SDK counts max_turns against the FULL run (current_turn resumes
+        # from the restored state), so hand it the used turns plus the fresh
+        # per-turn budget — otherwise a turn that nearly exhausted its budget
+        # before pausing dies with MaxTurnsExceeded right after resume.
+        used_turns = int(getattr(state, "_current_turn", 0) or 0)
+        resume_max_turns = used_turns + max_turns
         result = await Runner.run(
-            agent, state, max_turns=max_turns, run_config=RunConfig(tracing_disabled=True)
+            agent,
+            state,
+            max_turns=resume_max_turns,
+            run_config=RunConfig(tracing_disabled=True),
         )
         interruptions = getattr(result, "interruptions", None) or []
         if interruptions:
