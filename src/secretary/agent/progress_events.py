@@ -30,6 +30,7 @@ ProgressKind = Literal[
     "reply_start",
     "reply_delta",
     "reply_end",
+    "thought",
 ]
 
 

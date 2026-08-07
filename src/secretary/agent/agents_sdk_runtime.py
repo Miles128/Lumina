@@ -29,7 +29,6 @@ from agents import (
     ModelSettings,
     Runner,
     RunState,
-    set_default_openai_api,
     set_default_openai_client,
 )
 from agents.run import RunConfig
@@ -70,10 +69,14 @@ def _build_async_client(llm_config: LlmConfig) -> AsyncOpenAI:
 def _bind_default_client(llm_config: LlmConfig) -> None:
     """Point the SDK's shared OpenAI provider at Lumina's LLM config.
 
+    Uses the Responses API by default — DeepSeek V4 supports it natively
+    (api-docs.deepseek.com/guides/responses_api), which keeps reasoning
+    (thought) visible, unlike the chat-completions path that strips it.
     Global but single-user: every turn overwrites with the same config.
     """
     set_default_openai_client(_build_async_client(llm_config), use_for_tracing=False)
-    set_default_openai_api("chat_completions")
+    # Deliberately NOT calling set_default_openai_api("chat_completions"):
+    # the Responses path preserves reasoning items / streaming deltas.
 
 
 def _model_settings(
@@ -84,18 +87,20 @@ def _model_settings(
     temperature: float,
     strict_tools: bool = False,
 ) -> ModelSettings:
-    """ModelSettings; DeepSeek thinking goes through extra_body."""
+    """ModelSettings; DeepSeek thinking rides the Responses reasoning field."""
+    from openai.types.shared import Reasoning
+
     settings: dict[str, Any] = {"temperature": temperature}
     if model_supports_thinking(llm_config.model):
-        extra_body: dict[str, Any] = {}
         if thinking == "disabled":
-            extra_body["thinking"] = {"type": "disabled"}
+            settings["reasoning"] = Reasoning(effort="none")
         else:
-            extra_body["thinking"] = {"type": "enabled"}
-            if reasoning_effort in {"low", "high", "max"}:
-                extra_body["reasoning_effort"] = reasoning_effort
-        if extra_body:
-            settings["extra_body"] = extra_body
+            effort: str = (
+                reasoning_effort
+                if reasoning_effort in {"low", "high", "max"}
+                else "high"
+            )
+            settings["reasoning"] = Reasoning(effort=cast(Any, effort))
     return ModelSettings(**settings)
 
 
@@ -337,11 +342,20 @@ def _subagent_input_builder(options: Any) -> list[dict[str, Any]]:
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
 
-class _ParentSpawnHooks(AgentHooks[Any]):
-    """Record spawn_* as_tool calls on the parent run into used_tools."""
+class _LuminaHooks(AgentHooks[Any]):
+    """Parent-run hooks: record spawn_* as_tool calls and surface reasoning.
 
-    def __init__(self, tracked: list[str]) -> None:
+    The Responses API keeps reasoning items in the model output, so the
+    model's thought process can be shown again (legacy had it via streaming).
+    """
+
+    def __init__(
+        self,
+        tracked: list[str],
+        progress_callback: Callable[[ProgressEvent], None] | None,
+    ) -> None:
         self._tracked = tracked
+        self._progress_callback = progress_callback
 
     async def on_tool_start(
         self,
@@ -352,6 +366,38 @@ class _ParentSpawnHooks(AgentHooks[Any]):
         tool_name = str(getattr(context, "tool_name", "") or "")
         if tool_name.startswith("spawn_") and tool_name not in self._tracked:
             self._tracked.append(tool_name)
+
+    async def on_llm_end(
+        self,
+        context: Any,
+        agent: Any,
+        response: Any,
+    ) -> None:
+        if self._progress_callback is None:
+            return
+        thoughts: list[str] = []
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", "") != "reasoning":
+                continue
+            d: dict[str, Any] = getattr(item, "model_dump", lambda: {})()
+            text = d.get("summary") or d.get("content") or ""
+            if isinstance(text, list):
+                text = "".join(
+                    str(part.get("text", ""))
+                    for part in text
+                    if isinstance(part, dict)
+                )
+            text = str(text).strip()
+            if text:
+                thoughts.append(text)
+        if thoughts:
+            self._progress_callback(
+                ProgressEvent(
+                    kind="thought",
+                    iteration=0,
+                    message="\n\n".join(thoughts)[:2000],
+                )
+            )
 
 
 class _SubagentHooks(AgentHooks[Any]):
@@ -690,7 +736,7 @@ def run_with_agents_sdk(
             steps_out=tracked_steps,
         )
     parent_hooks: AgentHooks[Any] | None = (
-        _ParentSpawnHooks(tracked) if subagent_deps is not None else None
+        _LuminaHooks(tracked, progress_callback)
     )
     agent = _build_agent(
         llm_config,
@@ -934,7 +980,7 @@ def resume_with_agents_sdk(
         agent = _build_agent(
             llm_config,
             instructions=instructions,
-            hooks=_ParentSpawnHooks(tracked) if subagent_deps is not None else None,
+            hooks=_LuminaHooks(tracked, progress_callback),
             tools=[
                 *wrap_lumina_tools(
                     parent_tools,
