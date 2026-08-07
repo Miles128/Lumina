@@ -177,3 +177,45 @@ def test_build_policy_view_includes_editable_fields(tmp_path: Path) -> None:
     assert view["permission_mode"] == "auto"
     assert view["require_confirm"]["write_new"] is False
     assert view["require_confirm"]["write_modify"] is True
+
+
+def test_auto_workspace_shell_policy(tmp_path: Path) -> None:
+    """auto: in-cwd file-op shells free; arbitrary/escaping shells confirm."""
+    from secretary.agent.confirmation_policy import tool_requires_confirmation
+    from secretary.agent.fs_jail import full_fs_access_scope
+    from secretary.agent.tools.shell import ShellTool
+
+    require = apply_permission_mode("auto")
+    shell = ShellTool()
+    with full_fs_access_scope(True):
+        n_touch, _ = tool_requires_confirmation(
+            shell, {"command": "touch newfile.txt"},
+            working_dir=tmp_path, file_auth=None, require_confirm=require,
+        )
+        assert n_touch is False
+
+        n_py, _ = tool_requires_confirmation(
+            shell, {"command": "python3 gen.py"},
+            working_dir=tmp_path, file_auth=None, require_confirm=require,
+        )
+        assert n_py is True
+
+        n_escape, _ = tool_requires_confirmation(
+            shell, {"command": "echo x > /tmp/outside/out.txt"},
+            working_dir=tmp_path, file_auth=None, require_confirm=require,
+        )
+        assert n_escape is True
+
+
+def test_yolo_workspace_shell_free(tmp_path: Path) -> None:
+    from secretary.agent.confirmation_policy import tool_requires_confirmation
+    from secretary.agent.fs_jail import full_fs_access_scope
+    from secretary.agent.tools.shell import ShellTool
+
+    require = apply_permission_mode("yolo")
+    with full_fs_access_scope(True):
+        n, _ = tool_requires_confirmation(
+            ShellTool(), {"command": "python3 gen.py"},
+            working_dir=tmp_path, file_auth=None, require_confirm=require,
+        )
+        assert n is False

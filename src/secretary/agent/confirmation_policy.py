@@ -6,10 +6,33 @@ from pathlib import Path
 from typing import Any
 
 from secretary.agent.fs_jail import get_full_fs_access, is_writable_path, shell_escapes_jail
-from secretary.agent.harness_config import ConfirmRequireConfig
+from secretary.agent.harness_config import ConfirmRequireConfig, infer_permission_mode
 from secretary.agent.tools.base import Tool, _resolve_path
 from secretary.agent.tools.shell import _is_read_only_shell_command
 from secretary.services.file_auth import FileAuthService
+
+_WRITE_SHELL_CMDS = frozenset(
+    {"echo", "touch", "mkdir", "cp", "mv", "rm", "rmdir", "tee", "truncate", "install", "ln", "chmod", "chown"}
+)
+
+
+def _shell_writes_inside_cwd(command: str, working_dir: Path) -> bool:
+    """True when a shell command is a file operation that stays in the cwd."""
+    # Always enforce the jail here: full access relaxes path scope for the
+    # write tools, but this auto-mode exemption must still see real escapes.
+    if shell_escapes_jail(command, working_dir, full_fs_access=False) is not None:
+        return False
+    if ">" in command or ">>" in command:
+        return True
+    try:
+        import shlex
+
+        argv = shlex.split(command.split("|")[0].strip())
+    except ValueError:
+        return False
+    if not argv:
+        return False
+    return argv[0].lower() in _WRITE_SHELL_CMDS
 
 
 def _is_thread_sandbox(working_dir: Path) -> bool:
@@ -142,6 +165,15 @@ def tool_requires_confirmation(
         # as long as every absolute path stays inside it (fs_jail check) the
         # command cannot touch the outside world. Real workspaces stay gated.
         if _is_thread_sandbox(working_dir) and shell_escapes_jail(command, working_dir) is None:
+            return False, ""
+        # auto mode: file-operation shells inside the working dir (touch/mkdir/
+        # cp/mv/rm/echo>…, no jail escape) are free — same spirit as the
+        # in-cwd write exemption; arbitrary commands still confirm.
+        if (
+            require_confirm is not None
+            and infer_permission_mode(require_confirm) == "auto"
+            and _shell_writes_inside_cwd(command, working_dir)
+        ):
             return False, ""
         kind = "shell"
         if not kind_requires_confirm(kind, require_confirm):
