@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -153,6 +154,12 @@ class ShellTool(Tool):
             return ToolResult.failure(jail_err, error_type="permission", retryable=False)
         cwd = working_dir if working_dir.is_dir() else Path.home()
         env = os.environ.copy()
+        # Prepend the project virtualenv bin so `python3`/`pip`/etc resolve to
+        # Lumina's own interpreter (with all project deps) instead of whatever
+        # system python happens to be on PATH.
+        _venv_python = Path(sys.executable).resolve()
+        _venv_bin = _venv_python.parent
+        env["PATH"] = f"{_venv_bin}{os.pathsep}{env.get('PATH', '')}"
 
         needs_shell = "|" in command
         for attempt in range(2):

@@ -136,12 +136,10 @@ def tool_requires_confirmation(
         return True, kind
 
     if tool.name == "code_exec":
-        if file_auth is not None and file_auth.has_session_code_exec():
-            return False, ""
-        kind = "action"
-        if not kind_requires_confirm(kind, require_confirm):
-            return False, ""
-        return True, kind
+        # code_exec is a soft sandbox by construction (read-only workspace,
+        # temp cwd, no network) — it cannot damage anything, so it never needs
+        # confirmation regardless of permission mode.
+        return False, ""
 
     if tool.needs_confirmation:
         kind = "shell" if tool.name == "shell" else "action"
