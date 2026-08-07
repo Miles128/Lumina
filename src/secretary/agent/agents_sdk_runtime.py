@@ -25,6 +25,7 @@ from uuid import uuid4
 from agents import (
     Agent,
     AgentHooks,
+    MaxTurnsExceeded,
     ModelSettings,
     Runner,
     RunState,
@@ -710,12 +711,29 @@ def run_with_agents_sdk(
     note = ""
     while True:
         current_input = _split_system_and_input(run_messages)[1]
-        result = Runner.run_sync(
-            agent,
-            cast(Any, current_input if current_input else run_messages),
-            max_turns=max_turns,
-            run_config=RunConfig(tracing_disabled=True),
-        )
+        try:
+            result = Runner.run_sync(
+                agent,
+                cast(Any, current_input if current_input else run_messages),
+                max_turns=max_turns,
+                run_config=RunConfig(tracing_disabled=True),
+            )
+        except MaxTurnsExceeded:
+            logger.warning("agents-sdk run exceeded turn budget")
+            final_reply = "已用完工具轮次上限，无法继续执行。请重新发起请求或降低任务复杂度。"
+            user_message = resolve_turn_user_message(_safe_messages(run_messages))
+            final_reply, verified, note = enforce_grounded_reply(
+                final_reply, user_message, tracked,
+                grounding_verified=True, grounding_note="",
+            )
+            return LoopResult(
+                reply=final_reply,
+                steps=tracked_steps,
+                used_tools=tracked,
+                total_steps=len(tracked) or 1,
+                grounding_verified=verified,
+                grounding_note=note,
+            )
 
         interruptions = getattr(result, "interruptions", None) or []
         if interruptions:
@@ -863,6 +881,17 @@ def resume_with_agents_sdk(
         )
         return needs
 
+    # Calls the user already approved during a previous pause must not re-trigger
+    # confirmation when the resumed model re-issues the same call (fresh call_id
+    # would otherwise fail the needs_approval check again → double confirmation).
+    approved_calls: set[tuple[str, str]] = set()
+
+    def _needs_confirm_resume(tool_name: str, arguments: dict[str, Any]) -> bool:
+        key = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+        if key in approved_calls:
+            return False
+        return _needs_confirm(tool_name, arguments)
+
     async def _resume() -> LoopResult:
         instructions, input_messages = _split_system_and_input(messages)
         parent_tools = [t for t in tools if getattr(t, "name", "") != "spawn_subagent"]
@@ -892,7 +921,7 @@ def resume_with_agents_sdk(
                 *wrap_lumina_tools(
                     parent_tools,
                     working_dir,
-                    needs_confirm=_needs_confirm,
+                    needs_confirm=_needs_confirm_resume,
                     progress_callback=progress_callback,
                     cancel_check=cancel_check,
                     tracked=tracked,
@@ -915,6 +944,16 @@ def resume_with_agents_sdk(
             if str(getattr(item, "name", "") or "") == pending.tool_name:
                 state.approve(item, always_approve=True)
                 approved = True
+                approved_calls.add(
+                    (
+                        str(getattr(item, "name", "") or ""),
+                        json.dumps(
+                            _parse_tool_arguments(getattr(item, "arguments", None) or {}),
+                            sort_keys=True,
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
         if not approved:
             raise ValueError(f"paused interruption {pending.tool_name} not found in state")
         # The SDK counts max_turns against the FULL run (current_turn resumes
@@ -923,12 +962,21 @@ def resume_with_agents_sdk(
         # before pausing dies with MaxTurnsExceeded right after resume.
         used_turns = int(getattr(state, "_current_turn", 0) or 0)
         resume_max_turns = used_turns + max_turns
-        result = await Runner.run(
-            agent,
-            state,
-            max_turns=resume_max_turns,
-            run_config=RunConfig(tracing_disabled=True),
-        )
+        try:
+            result = await Runner.run(
+                agent,
+                state,
+                max_turns=resume_max_turns,
+                run_config=RunConfig(tracing_disabled=True),
+            )
+        except MaxTurnsExceeded:
+            logger.warning("agents-sdk resumed run exceeded turn budget")
+            return LoopResult(
+                reply="已用完工具轮次上限，无法继续执行。请重新发起请求或降低任务复杂度。",
+                steps=tracked_steps,
+                used_tools=tracked,
+                total_steps=len(tracked) or 1,
+            )
         interruptions = getattr(result, "interruptions", None) or []
         if interruptions:
             next_pending, step = _pending_from_interruption(
