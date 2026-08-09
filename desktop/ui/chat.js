@@ -3494,15 +3494,40 @@
     return `${hh}:${mm}`;
   }
 
+  const CJK_CHAR_RE = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
+
+  function displayWidth(text) {
+    let w = 0;
+    for (const ch of text) {
+      w += CJK_CHAR_RE.test(ch) ? 1 : 0.5;
+    }
+    return w;
+  }
+
+  function truncateByWidth(text, max = 18) {
+    if (displayWidth(text) <= max) return text;
+    let out = "";
+    let w = 0;
+    for (const ch of text) {
+      const cw = CJK_CHAR_RE.test(ch) ? 1 : 0.5;
+      if (w + cw > max) break;
+      out += ch;
+      w += cw;
+    }
+    return `${out}…`;
+  }
+
   function buildThreadPreview(thread) {
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       return t("thread.empty");
     }
-    const path = computeActivePath(thread).filter((m) => !m.archived);
-    const last = path.length ? path[path.length - 1] : thread.messages[thread.messages.length - 1];
-    const text = String(last?.text || "").replace(/\s+/g, " ").trim();
+    // 整体对话综述：标题（自动跟随主题）优先，否则取首条用户消息。
+    const title = String(thread.title || "").replace(/\s+/g, " ").trim();
+    if (title) return truncateByWidth(title, 18);
+    const firstUser = thread.messages.find((m) => m.role === "user");
+    const text = String(firstUser?.text || "").replace(/\s+/g, " ").trim();
     if (!text) return t("thread.empty");
-    return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+    return truncateByWidth(text, 18);
   }
 
   function sortThreadsByUpdatedAt(items) {
