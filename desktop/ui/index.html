@@ -169,19 +169,19 @@
                   <ul class="agent-mode-menu" id="agent-mode-menu" role="listbox" hidden>
                     <li role="option" data-mode="auto">
                       <strong>Auto · 自动</strong>
-                      <span>系统按问题类型选择 Ask / Plan / Build</span>
-                    </li>
-                    <li role="option" data-mode="build">
-                      <strong>Build · 执行</strong>
-                      <span>可读写工具 + 子 Agent 委派</span>
-                    </li>
-                    <li role="option" data-mode="ask">
-                      <strong>Ask · 问答</strong>
-                      <span>只读检索，不改文件不跑 shell</span>
+                      <span>按任务自动执行/规划/问答，常规确认</span>
                     </li>
                     <li role="option" data-mode="plan">
                       <strong>Plan · 规划</strong>
                       <span>只读分析 + 待办，输出计划</span>
+                    </li>
+                    <li role="option" data-mode="normal">
+                      <strong>Normal · 执行</strong>
+                      <span>全工具执行，区外操作需确认</span>
+                    </li>
+                    <li role="option" data-mode="yolo">
+                      <strong>Yolo · 全信任</strong>
+                      <span>全工具执行，无需确认</span>
                     </li>
                   </ul>
                 </div>

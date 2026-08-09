@@ -149,8 +149,14 @@ _ASK_MARKERS = (
 )
 
 
+# Permission-tier modes select execution tools; the confirmation strategy is
+# driven separately by permission_mode (normal/yolo/auto).
+_TIER_TO_PROFILE = {"normal": "build", "yolo": "build"}
+
+
 def parse_agent_profile(raw: str | None) -> AgentProfile:
     normalized = (raw or AgentProfile.AUTO.value).strip().lower()
+    normalized = _TIER_TO_PROFILE.get(normalized, normalized)
     try:
         return AgentProfile(normalized)
     except ValueError:

@@ -744,6 +744,7 @@ def run_with_agents_sdk(
     subagent_deps: Any | None = None,
     web_search_backend: str = "tavily",
     full_tools: list[Tool] | None = None,
+    allow_mode_upgrade: bool = True,
 ) -> LoopResult:
     """Run one Agents SDK turn and map to LoopResult (HITL + grounding)."""
     _bind_default_client(llm_config)
@@ -959,7 +960,8 @@ def run_with_agents_sdk(
             missing = _missing_tool_name(result.error)
             upgraded = False
             if (
-                full_tools
+                allow_mode_upgrade
+                and full_tools
                 and missing
                 and missing not in {getattr(t, "name", "") for t in parent_tools}
                 and any(getattr(t, "name", "") == missing for t in full_tools)
@@ -1113,6 +1115,7 @@ def resume_with_agents_sdk(
     subagent_deps: Any | None = None,
     web_search_backend: str = "tavily",
     full_tools: list[Tool] | None = None,
+    allow_mode_upgrade: bool = True,
 ) -> LoopResult:
     """Approve a paused SDK interruption (RunState round-trip) and continue.
 

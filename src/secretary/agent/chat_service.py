@@ -1270,6 +1270,7 @@ class ChatService:
             max_tool_output_chars=harness.max_tool_output_chars,
             web_search_backend=harness.web_search_backend,
             full_tools=self._tool_registry.build_tools() if self._tool_registry else None,
+            profile=profile.value,
         )
 
         try:
@@ -1590,7 +1591,17 @@ class ChatService:
     def _harness_config(self) -> HarnessConfig:
         if self._agent_config_store is None:
             return HarnessConfig()
-        return self._agent_config_store.load().harness
+        harness = self._agent_config_store.load().harness
+        # Permission-tier modes (normal/yolo) pin the confirmation strategy:
+        # normal → everything outside the cwd confirms; yolo → never confirm.
+        tier = (self._agent_config_store.load().agent_profile or "").strip().lower()
+        if tier in {"normal", "yolo"}:
+            from secretary.agent.harness_config import apply_permission_mode
+
+            harness = harness.model_copy(
+                update={"permission_mode": tier, "require_confirm": apply_permission_mode(tier)}
+            )
+        return harness
 
     def _build_loop_hooks(self, tools: list[Tool]) -> LoopHookBundle:
         from secretary.agent.hook_policies import HooksConfig, build_default_hooks

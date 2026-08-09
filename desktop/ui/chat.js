@@ -58,10 +58,12 @@
 
   const AGENT_MODE_LABELS = {
     auto: "Auto",
-    build: "Build",
-    ask: "Ask",
     plan: "Plan",
-    orchestrator: "Build",
+    normal: "Normal",
+    yolo: "Yolo",
+    build: "Normal",
+    ask: "Plan",
+    orchestrator: "Normal",
   };
   let currentAgentMode = "auto";
   let currentWorkspaceDir = "";

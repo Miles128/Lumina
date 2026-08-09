@@ -476,3 +476,35 @@ def test_missing_tool_triggers_mode_upgrade(monkeypatch) -> None:
     assert len(calls) >= 2, "应升级后重试"
     assert any("自动切换" in str(m.get("content", "")) for call in calls for m in call), calls
     assert result.reply == "done, wrote the file"
+
+
+def test_manual_ask_never_upgrades(monkeypatch) -> None:
+    """Manual ASK keeps its read-only boundary: no mode upgrade, only guidance."""
+    from secretary.agent import agents_sdk_runtime
+    from secretary.agent.tools.fs import FileReadTool, ListDirTool
+
+    calls: list[Any] = []
+
+    def _fake_run(agent, input_msg, max_turns, progress_callback, thought_buffer):
+        calls.append(input_msg)
+        if len(calls) == 1:
+            return agents_sdk_runtime._MissingToolResult(
+                "Tool write not found in agent lumina"
+            )
+        return _fake_result(final_output="read-only done")
+
+    monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
+    tools = [FileReadTool(), ListDirTool()]
+    full = [FileReadTool(), ListDirTool(), FileWriteTool()]
+    result = agents_sdk_runtime.run_with_agents_sdk(
+        llm_config=_llm_config(),
+        messages=[{"role": "user", "content": "分析一下项目"}],
+        tools=tools,
+        working_dir=Path("/tmp"),
+        max_turns=6,
+        full_tools=full,
+        allow_mode_upgrade=False,
+    )
+    # 没有升级提示，只给可用工具列表
+    assert not any("自动切换" in str(m.get("content", "")) for call in calls for m in call)
+    assert result.reply == "read-only done"
