@@ -134,12 +134,13 @@ def _to_sdk_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for call in tool_calls:
                 if not isinstance(call, dict):
                     continue
-                fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+                fn = call.get("function")
+                fn_dict = fn if isinstance(fn, dict) else {}
                 items.append(
                     {
                         "type": "function_call",
-                        "name": str(fn.get("name") or ""),
-                        "arguments": str(fn.get("arguments") or ""),
+                        "name": str(fn_dict.get("name") or ""),
+                        "arguments": str(fn_dict.get("arguments") or ""),
                         "call_id": str(call.get("id") or ""),
                     }
                 )
