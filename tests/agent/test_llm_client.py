@@ -62,7 +62,7 @@ def test_chat_completion_raises_on_empty_content() -> None:
         "secretary.agent.llm_client._non_stream_request",
         return_value=payload,
     ):
-        with pytest.raises(AgentError, match="大模型"):
+        with pytest.raises(AgentError, match="未返回任何内容"):
             chat_completion(_config(), [{"role": "user", "content": "hi"}], temperature=0.0)
 
 
