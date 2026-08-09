@@ -236,6 +236,18 @@ def chat_completion_stream(
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 return _stream_request(client, url, payload, config.api_key, on_delta)
+            except AgentError:
+                # Empty-content stream (thinking mode on short inputs) — retry
+                # with thinking disabled before giving up.
+                if attempt >= _MAX_RETRIES:
+                    raise
+                logger.warning("LLM stream empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
+                _sleep_for_retry(attempt)
+                if thinking in ("enabled", "auto"):
+                    payload["thinking"] = {"type": "disabled"}
+                    if reasoning_effort is not None:
+                        payload["reasoning_effort"] = None
+                continue
             except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                 last_error = str(exc)
                 logger.warning("LLM stream attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
@@ -289,7 +301,7 @@ def _stream_request(
                 on_delta(delta)
     content = "".join(parts).strip()
     if not content:
-        raise AgentError("大模型返回空内容")
+        raise AgentError("模型未返回任何内容（流式），请重试。若频繁出现，可在设置里关闭思考模式。")
     return content
 
 
