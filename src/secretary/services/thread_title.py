@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from secretary.agent.llm_client import chat_completion
 from secretary.agent.llm_config import LlmConfig
 from secretary.exceptions import AgentError

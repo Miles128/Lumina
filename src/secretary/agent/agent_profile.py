@@ -50,6 +50,12 @@ PLAN_TOOL_NAMES = (ASK_TOOL_NAMES - frozenset({"code_exec"})) | frozenset(
 MCP_READ_PREFIXES = ("read_", "list_", "get_")
 
 # "做一个/生成/创建/画 + 文件类型" → 产物创建任务（Build）
+# 总结/摘要/归纳类 → 只读问答（不执行修改）
+_SUMMARIZE_RE = re.compile(
+    r"(?:总结|摘要|概括|归纳|要点|提炼|简述|概述|summarize|summary)",
+    re.IGNORECASE,
+)
+
 _CREATE_ARTIFACT_RE = re.compile(
     r"(?:生成|创建|做一个|做一份|写一个|画|导出|产出一个|做份)"
     r".{0,30}?"
@@ -218,7 +224,7 @@ def resolve_auto_profile(
     # Default routing is execution (BUILD = full tools): writing/office tasks
     # are things to DO (produce documents, generate files). Only research
     # stays read-only; only complex multi-step planning drops to PLAN.
-    if intent is TaskIntent.RESEARCH:
+    if intent is TaskIntent.RESEARCH or _SUMMARIZE_RE.search(text):
         return AgentProfile.ASK
 
     if build_hit or filesystem_turn or intent in (TaskIntent.WRITING, TaskIntent.OFFICE):
