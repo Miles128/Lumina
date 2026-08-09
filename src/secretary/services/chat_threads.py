@@ -337,15 +337,28 @@ class ChatThreadStore:
             return _active_path(item)
         return []
 
+    # Degraded-reply fallback texts that once got persisted as assistant
+    # messages ("大模型返回空内容/我先切换到离线模式…"). Feeding them back to
+    # the model makes it mimic that exact format. Skip them in agent history.
+    _DEGRADED_REPLY_MARKERS = (
+        "我先切换到离线模式",
+        "大模型返回空内容",
+        "大模型请求失败",
+        "模型未返回任何内容",
+    )
+
     def agent_history(self, thread_id: str) -> list[dict[str, str]]:
         path = self.active_path(thread_id)
         history: list[dict[str, str]] = []
         for message in path[-MAX_HISTORY_MESSAGES:]:
             role = message.get("role")
             text = message.get("text") or message.get("content")
-            if role in {"user", "assistant", "bot"} and isinstance(text, str) and text.strip():
-                normalized = "assistant" if role == "bot" else str(role)
-                history.append({"role": normalized, "content": text.strip()})
+            if not (role in {"user", "assistant", "bot"} and isinstance(text, str) and text.strip()):
+                continue
+            if any(marker in text for marker in self._DEGRADED_REPLY_MARKERS):
+                continue
+            normalized = "assistant" if role == "bot" else str(role)
+            history.append({"role": normalized, "content": text.strip()})
         return history
 
     def append_turn(
