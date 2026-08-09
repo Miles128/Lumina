@@ -379,12 +379,21 @@ def _is_memory_light_query(text: str) -> bool:
     return any(marker in text for marker in extra)
 
 
+# 简短执行指令：单独出现时是催促，但要进 AgentLoop（工具）而非 DIRECT。
+_EXECUTE_CUE = frozenset({"执行", "做", "动手", "开工", "继续", "开始", "接着做", "干活", "快做", "go"})
+_EXECUTE_CUE_COMPOUND = ("执行吧", "开始吧", "继续做", "继续执行", "动手做", "直接做", "开做", "现在就做")
+
+
 def _is_tool_execution_request(text: str, lowered: str) -> bool:
     if "```bash" in lowered or "```tool-call" in lowered:
         return True
     if "等 shell 结果" in text or "等输出" in text:
         return True
     if "执行命令" in text and ("shell" in lowered or "`" in text):
+        return True
+    if text.strip() in _EXECUTE_CUE:
+        return True
+    if any(cue in text for cue in _EXECUTE_CUE_COMPOUND):
         return True
     return False
 
