@@ -19,6 +19,47 @@ _TITLE_SYSTEM = """你是对话标题生成器。根据对话内容写一个简�
 - 只输出标题本身"""
 
 
+_SUMMARY_SYSTEM = """你是对话摘要生成器。根据整段对话写一句简短综述。
+要求：
+- 最多 10 个汉字（两个英文/数字字符算一个汉字）
+- 概括对话的主题与结论/产出，不要照抄某一句
+- 不要引号、句号、书名号、emoji
+- 不要以「关于」「对话」开头
+- 只输出综述本身"""
+
+
+def summarize_thread_summary(
+    messages: list[dict[str, object]],
+    llm_config: Any,
+    *,
+    fallback: str = "",
+) -> str:
+    """LLM one-line digest of the whole conversation (≈10 CJK chars)."""
+    if not messages:
+        return fallback
+    try:
+        history = "\n".join(
+            f"{item.get('role')}: {str(item.get('text') or item.get('content') or '')[:200]}"
+            for item in messages[-12:]
+        )
+        raw = chat_completion(
+            llm_config,
+            [
+                {"role": "system", "content": _SUMMARY_SYSTEM},
+                {"role": "user", "content": f"对话内容：\n{history}"},
+            ],
+            timeout=60.0,
+            thinking="disabled",
+            temperature=0.3,
+        )
+        text = " ".join(str(raw or "").split()).strip()
+        if not text or len(text) > 40:
+            return fallback
+        return text
+    except AgentError:
+        return fallback
+
+
 def heuristic_title(user_message: str, *, max_chars: int = MAX_TITLE_CHARS) -> str:
     compact = " ".join(str(user_message or "").split()).strip()
     if not compact:

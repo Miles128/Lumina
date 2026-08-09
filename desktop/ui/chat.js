@@ -3521,7 +3521,9 @@
     if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
       return t("thread.empty");
     }
-    // 整体对话综述：标题（自动跟随主题）优先，否则取首条用户消息。
+    // 整体对话综述：LLM 生成的 summary 优先；宽度截断仅作兜底。
+    const summary = String(thread.summary || "").replace(/\s+/g, " ").trim();
+    if (summary) return truncateByWidth(summary, 18);
     const title = String(thread.title || "").replace(/\s+/g, " ").trim();
     if (title) return truncateByWidth(title, 18);
     const firstUser = thread.messages.find((m) => m.role === "user");

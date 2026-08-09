@@ -232,6 +232,7 @@ class ChatThreadStore:
             {
                 "id": thread_id,
                 "title": (title or "新对话")[:120],
+                "summary": "",
                 "updatedAt": now,
                 "messages": [],
                 "active_leaf_id": "",
@@ -315,6 +316,7 @@ class ChatThreadStore:
             cleaned_item: dict[str, Any] = {
                 "id": thread_id,
                 "title": str(item.get("title") or "新对话")[:120],
+            "summary": str(item.get("summary") or "")[:120],
                 "updatedAt": str(item.get("updatedAt") or item.get("updated_at") or datetime.now(UTC).isoformat()),
                 "messages": normalized_messages,
                 "active_leaf_id": active_leaf_id,
@@ -458,6 +460,7 @@ class ChatThreadStore:
         """
         from secretary.services.thread_title import (
             should_refresh_title,
+            summarize_thread_summary,
             summarize_thread_title,
             user_turn_count,
         )
@@ -484,6 +487,9 @@ class ChatThreadStore:
         if not title:
             title = fallback
         target["title"] = title[:120]
+        summary = summarize_thread_summary(messages, llm_config, fallback=str(target.get("summary") or ""))
+        if summary:
+            target["summary"] = summary[:120]
         target["auto_title_at_turn"] = turns
         target["updatedAt"] = datetime.now(UTC).isoformat()
         self.save_document(current_id=document["current_id"], threads=threads)
