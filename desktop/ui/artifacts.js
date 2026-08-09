@@ -438,17 +438,21 @@
     return sheets
       .map((sheet) => {
         const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
+        if (!rows.length) return `<section class="artifact-sheet"><h4>${escapeHtml(sheet.name || "Sheet")}</h4><p class="artifact-muted">空表</p></section>`;
+        const colCount = Math.max(...rows.map((r) => (Array.isArray(r) ? r.length : 0)));
         const body = rows
           .map((row, rowIdx) => {
-            const cells = (Array.isArray(row) ? row : []).map((cell) => {
-              const tag = rowIdx === 0 ? "th" : "td";
-              return `<${tag}>${escapeHtml(cell)}</${tag}>`;
-            });
-            return `<tr>${cells.join("")}</tr>`;
+            const cells = Array.from({ length: colCount }, (_, ci) => {
+              const value = Array.isArray(row) ? String(row[ci] ?? "") : "";
+              if (rowIdx === 0) return `<th>${escapeHtml(value)}</th>`;
+              return `<td>${escapeHtml(value)}</td>`;
+            }).join("");
+            return `<tr>${cells}</tr>`;
           })
           .join("");
-        const trunc = sheet.truncated ? `<p class="artifact-muted">已截断行数</p>` : "";
-        return `<section class="artifact-sheet"><h4>${escapeHtml(sheet.name || "Sheet")}</h4><div class="artifact-table-wrap"><table class="artifact-table">${body}</table></div>${trunc}</section>`;
+        const trunc = sheet.truncated ? `<p class="artifact-muted">已截断后续行（仅显示前 ${rows.length} 行）</p>` : "";
+        const meta = `<p class="artifact-muted">${rows.length} 行 × ${colCount} 列</p>`;
+        return `<section class="artifact-sheet"><h4>${escapeHtml(sheet.name || "Sheet")}</h4>${meta}<div class="artifact-table-wrap"><table class="artifact-table">${body}</table></div>${trunc}</section>`;
       })
       .join("");
   }
@@ -569,6 +573,41 @@
     if (!path) return;
     // Reveal via file:// — Electron may block; still useful in browser/dev.
     window.open(`file://${path}`, "_blank");
+  });
+
+  // 宽度拖拽：左边框把手，宽度记忆到 localStorage
+  const resizeHandle = document.createElement("div");
+  resizeHandle.className = "artifact-resize";
+  resizeHandle.setAttribute("aria-hidden", "true");
+  panel.appendChild(resizeHandle);
+  try {
+    const savedWidth = Number(localStorage.getItem("artifactPanelWidth") || 0);
+    if (savedWidth >= 240) panel.style.width = `${savedWidth}px`;
+  } catch (_e) {
+    /* ignore */
+  }
+  resizeHandle.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panel.offsetWidth;
+    const onMove = (ev) => {
+      const next = Math.min(
+        Math.max(startWidth + (startX - ev.clientX), 240),
+        Math.floor(window.innerWidth * 0.6),
+      );
+      panel.style.width = `${next}px`;
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      try {
+        localStorage.setItem("artifactPanelWidth", String(panel.offsetWidth));
+      } catch (_e) {
+        /* ignore */
+      }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   });
 
   applyMode();

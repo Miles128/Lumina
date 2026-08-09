@@ -4450,3 +4450,63 @@ body.map-view-open .chat-column > .fork-banner {
 .bubble .artifact-link:hover {
   color: var(--sig-hover, #6ea4ff);
 }
+
+/* Artifact panel: width resize handle + table preview polish */
+.artifact-panel {
+  position: relative;
+}
+.artifact-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 6;
+}
+.artifact-resize:hover,
+.artifact-resize:active {
+  background: var(--sig-soft, #2c4a7a);
+}
+.artifact-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 100%;
+}
+.artifact-table th,
+.artifact-table td {
+  border: 1px solid var(--line, #232a32);
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-2, #20262d);
+  color: var(--text, #e8edf2);
+  font-weight: 600;
+  z-index: 1;
+}
+.artifact-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--panel, #171c21) 60%, transparent);
+}
+.artifact-table-wrap {
+  overflow: auto;
+  max-height: 55vh;
+}
+.artifact-sheet {
+  margin-bottom: 14px;
+}
+.artifact-sheet h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text, #e8edf2);
+}
+.artifact-sheet .artifact-muted {
+  margin: 4px 0;
+  font-size: 11px;
+}
