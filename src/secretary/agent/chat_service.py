@@ -1596,10 +1596,16 @@ class ChatService:
         # normal → everything outside the cwd confirms; yolo → never confirm.
         tier = (self._agent_config_store.load().agent_profile or "").strip().lower()
         if tier in {"normal", "yolo"}:
-            from secretary.agent.harness_config import apply_permission_mode
+            from typing import cast
 
+            from secretary.agent.harness_config import PermissionMode, apply_permission_mode
+
+            mode = cast(PermissionMode, tier)
             harness = harness.model_copy(
-                update={"permission_mode": tier, "require_confirm": apply_permission_mode(tier)}
+                update={
+                    "permission_mode": mode,
+                    "require_confirm": apply_permission_mode(mode),
+                }
             )
         return harness
 
