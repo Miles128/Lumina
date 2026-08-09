@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -222,6 +223,15 @@ def _pick_retry(
     write_claim = write_claims_unverified(reply, working_dir, used_tools)
     if write_claim:
         return write_claim
+    # "先看工作区/让我先…/稍等" deferral talk with tools available and
+    # nothing executed → force action instead of letting the turn end.
+    if _DEFER_TALK_RE.search(reply) and not used_tools:
+        return "你一直在说要先查看/先做，但没有实际调用任何工具。请立即调用 ls/read/write/shell 等工具完成用户请求，不要只说要做什么。"
+    # Pasting a code block without executing it is not doing the task.
+    if _CODE_BLOCK_RE.search(reply) and not any(
+        t in used_tools for t in ("write", "edit", "shell", "code_exec", "move")
+    ):
+        return "你贴出了代码但未实际生成/执行文件。请用 write 把代码写入当前工作目录并用 shell/code_exec 执行，产出真实文件。"
     if reply_claims_web_search(reply, used_tools):
         return "web_claim"
     if should_retry_for_grounding(user_message, reply, used_tools):
@@ -716,6 +726,12 @@ def _emit_stream_event(
     elif etype == "response.reasoning_text.delta" and isinstance(delta, str) and delta:
         if thought_buffer is not None:
             thought_buffer.append(delta)
+
+
+_DEFER_TALK_RE = re.compile(
+    r"(?:先看|先看看|让我先|我先|稍等|等我看|先确认|先建|先做(?:一下|个)?工作|看一下|看下|先浏览|先探索|先检查|先查)",
+)
+_CODE_BLOCK_RE = re.compile(r"```[\w+]*\s*\n", re.IGNORECASE)
 
 
 class _MissingToolResult:
