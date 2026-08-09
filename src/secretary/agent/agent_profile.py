@@ -215,14 +215,13 @@ def resolve_auto_profile(
         return AgentProfile.BUILD
     if intent is TaskIntent.WRITING and is_writing_plan_request(text):
         return AgentProfile.PLAN
-    if intent is TaskIntent.WRITING:
-        return AgentProfile.ASK
+    # Default routing is execution (BUILD = full tools): writing/office tasks
+    # are things to DO (produce documents, generate files). Only research
+    # stays read-only; only complex multi-step planning drops to PLAN.
     if intent is TaskIntent.RESEARCH:
         return AgentProfile.ASK
-    if intent is TaskIntent.OFFICE:
-        return AgentProfile.ASK
 
-    if build_hit or filesystem_turn:
+    if build_hit or filesystem_turn or intent in (TaskIntent.WRITING, TaskIntent.OFFICE):
         return AgentProfile.BUILD
     if plan_hit:
         return AgentProfile.PLAN
