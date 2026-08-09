@@ -1005,6 +1005,20 @@ def run_with_agents_sdk(
                 )
             )
 
+        if not final_reply.strip():
+            # Empty model output (occasional DeepSeek thinking-mode quirk):
+            # ask once more with thinking disabled rather than returning blank.
+            if shared_retries >= max_shared_retries:
+                break
+            shared_retries += 1
+            run_messages.append(
+                {
+                    "role": "user",
+                    "content": "你上一步没有返回任何内容。请重新回答用户的问题。",
+                }
+            )
+            continue
+
         if shared_retries >= max_shared_retries:
             break
 
@@ -1078,6 +1092,8 @@ def run_with_agents_sdk(
         user_message,
         command_evidence=command_evidence,
     )
+    if not final_reply.strip():
+        final_reply = "模型未返回任何内容，请重试或换个说法。"
     final_reply, verified, note = enforce_grounded_reply(
         final_reply,
         user_message,

@@ -3518,18 +3518,10 @@
   }
 
   function buildThreadPreview(thread) {
-    if (!thread || !Array.isArray(thread.messages) || thread.messages.length === 0) {
-      return t("thread.empty");
-    }
-    // 整体对话综述：LLM 生成的 summary 优先；宽度截断仅作兜底。
-    const summary = String(thread.summary || "").replace(/\s+/g, " ").trim();
-    if (summary) return truncateByWidth(summary, 18);
+    // 只显示对话主题（标题），不显示综述/摘要/首条消息。
+    if (!thread) return t("thread.empty");
     const title = String(thread.title || "").replace(/\s+/g, " ").trim();
-    if (title) return truncateByWidth(title, 18);
-    const firstUser = thread.messages.find((m) => m.role === "user");
-    const text = String(firstUser?.text || "").replace(/\s+/g, " ").trim();
-    if (!text) return t("thread.empty");
-    return truncateByWidth(text, 18);
+    return title || t("thread.empty");
   }
 
   function sortThreadsByUpdatedAt(items) {
