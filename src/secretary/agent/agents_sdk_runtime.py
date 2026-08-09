@@ -105,6 +105,47 @@ def _model_settings(
     return ModelSettings(**settings)
 
 
+def _to_sdk_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Lumina chat-history messages (chat-completions style) into
+    Responses-API input items.
+
+    DeepSeek's Responses endpoint rejects role='tool'; tool results must be
+    ``function_call_output`` items and assistant tool_calls must be expanded
+    into ``function_call`` items. Old threads carry such history, so without
+    this conversion every resumed conversation 400s.
+    """
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content")
+        text = content if isinstance(content, str) else ""
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": str(message.get("tool_call_id") or ""),
+                    "output": text,
+                }
+            )
+            continue
+        items.append({"type": "message", "role": role, "content": text})
+        tool_calls = message.get("tool_calls")
+        if role == "assistant" and isinstance(tool_calls, list):
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+                items.append(
+                    {
+                        "type": "function_call",
+                        "name": str(fn.get("name") or ""),
+                        "arguments": str(fn.get("arguments") or ""),
+                        "call_id": str(call.get("id") or ""),
+                    }
+                )
+    return items
+
+
 def _with_cwd_guidance(instructions: str, working_dir: Path) -> str:
     """Append cwd context so the model resolves relative tool paths correctly."""
     cwd_line = (
@@ -900,7 +941,7 @@ def run_with_agents_sdk(
     verified = True
     note = ""
     while True:
-        current_input = _split_system_and_input(run_messages)[1]
+        current_input = _to_sdk_input(_split_system_and_input(run_messages)[1])
         turn_thoughts: list[str] = []
         try:
             result = _run_streamed_turn(
