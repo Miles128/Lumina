@@ -568,12 +568,20 @@ def _chat_completion_once(
             content = _extract_message_text(message)
             if content:
                 return content
-            # Empty content — retry once more specifically
+            # Empty content — retry once more specifically. Empty replies are
+            # common when thinking is enabled for short inputs, so fall back to
+            # a non-thinking retry before giving up.
             if attempt < _MAX_RETRIES:
                 logger.warning("LLM returned empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
                 _sleep_for_retry(attempt)
+                if thinking in ("enabled", "auto"):
+                    payload["thinking"] = {"type": "disabled"}
+                    if reasoning_effort is not None:
+                        payload["reasoning_effort"] = None
                 continue
-    raise AgentError(f"大模型请求失败（{_MAX_RETRIES} 次重试后）: {last_error or '大模型返回空内容'}")
+    if last_error:
+        raise AgentError(f"大模型请求失败（{_MAX_RETRIES} 次重试后）: {last_error}")
+    raise AgentError("模型未返回任何内容，请重试。若频繁出现，可在设置里关闭思考模式。")
 
 
 def _use_aisuite_backend() -> bool:
