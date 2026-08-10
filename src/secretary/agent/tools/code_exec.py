@@ -49,6 +49,16 @@ _SANDBOX_ROOT = os.path.realpath(os.getcwd())
 _WORKSPACE_ROOT = os.path.realpath(os.environ.get("LUMINA_WORKSPACE", _SANDBOX_ROOT))
 _ORIG_OPEN = builtins.open
 _ORIG_SOCKET = socket.socket
+import subprocess as _subprocess
+_ORIG_SUBPROCESS_RUN = _subprocess.run
+_ORIG_SUBPROCESS_POPEN = _subprocess.Popen
+_ORIG_OS_SYSTEM = os.system
+_ORIG_OS_POPEN = os.popen
+_ORIG_OS_EXEC = (os.execv, os.execve, os.execl, os.execle, os.execlp, os.execvp, os.execvpe)
+
+
+def _deny_process_spawn(*_args, **_kwargs):
+    raise PermissionError("sandbox: subprocess/os.system/popen is blocked in code_exec")
 _ORIG_REMOVE = os.remove
 _ORIG_UNLINK = getattr(os, "unlink", os.remove)
 _ORIG_RENAME = os.rename
@@ -189,6 +199,16 @@ class _GuardedSocket(_ORIG_SOCKET):
 
 builtins.open = _guarded_open
 socket.socket = _GuardedSocket
+_subprocess.run = _deny_process_spawn
+_subprocess.Popen = _deny_process_spawn
+os.system = _deny_process_spawn
+os.popen = _deny_process_spawn
+for _fn in _ORIG_OS_EXEC:
+    try:
+        setattr(os, _fn.__name__, _deny_process_spawn)
+    except (AttributeError, TypeError):
+        pass
+del _fn, _ORIG_OS_EXEC
 os.remove = _guarded_remove
 os.unlink = _guarded_unlink
 os.rename = _guarded_rename

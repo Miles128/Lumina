@@ -21,7 +21,18 @@ from secretary.agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COMMAND_DENY = ("rm -rf /", "sudo ")
+DEFAULT_COMMAND_DENY = (
+    "rm -rf /",
+    "rm -rf --no-preserve-root",
+    "rm -fr /",
+    "rm -fr --no-preserve-root",
+    "sudo ",
+    "mkfs.",
+    "dd if=/dev/zero of=/dev/",
+    ":(){:|:&};:",
+    "chmod -r 777 /",
+    "chown -r 0:0 /",
+)
 DEFAULT_MAX_TOOL_OUTPUT_CHARS = 12_000
 
 
