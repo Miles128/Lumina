@@ -769,7 +769,6 @@
         thinking_mode: document.getElementById("harness-thinking-mode")?.value || "auto",
         reasoning_effort: document.getElementById("harness-reasoning-effort")?.value || "high",
         strict_tools: Boolean(document.getElementById("harness-strict-tools")?.checked),
-        runtime_backend: document.getElementById("harness-runtime-backend")?.value || "agents_sdk",
         web_search_backend: document.getElementById("harness-web-search-backend")?.value || "tavily",
       },
     };
@@ -798,9 +797,6 @@
       return;
     }
     const h = agentConfig?.harness || {};
-    const runtimeBackend = ["legacy", "agents_sdk"].includes(h.runtime_backend)
-      ? h.runtime_backend
-      : "agents_sdk";
     contentEl.innerHTML = `
       <div class="settings-pane">
         <header class="settings-pane-head">
@@ -851,13 +847,6 @@
             <input id="harness-strict-tools" type="checkbox" ${h.strict_tools ? "checked" : ""} />
           </label>
           <h4 class="settings-group-title">${escapeHtml(t("settings.harness.group.runtime"))}</h4>
-          <label class="settings-field">
-            <span>${escapeHtml(t("settings.harness.runtime_backend"))}</span>
-            <select id="harness-runtime-backend">
-              <option value="agents_sdk" ${runtimeBackend === "agents_sdk" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.agents_sdk"))}</option>
-              <option value="legacy" ${runtimeBackend === "legacy" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.legacy"))}</option>
-            </select>
-          </label>
           <label class="settings-field">
             <span>${escapeHtml(t("settings.harness.web_search_backend"))}</span>
             <select id="harness-web-search-backend">

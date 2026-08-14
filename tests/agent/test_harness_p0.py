@@ -75,18 +75,15 @@ def test_turn_runner_emits_turn_lifecycle(tmp_path) -> None:
 
     fake_result = LoopResult(reply="ok", steps=[], used_tools=[], total_steps=1)
 
-    fake_loop = MagicMock()
-    fake_loop.run.return_value = fake_result
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            "secretary.agent.turn_runner.AgentLoop",
-            MagicMock(return_value=fake_loop),
+            "secretary.agent.agents_sdk_runtime.run_with_agents_sdk",
+            MagicMock(return_value=fake_result),
         )
         plan = AgentTurnPlan(
             messages=[{"role": "user", "content": "go"}],
             max_steps=3,
             tools=[],
-            runtime_backend="legacy",
         )
         runner.run_agent_turn(
             MagicMock(),

@@ -171,7 +171,6 @@ def test_orchestrator_confirmed_action_continues_loop_after_followup_tool_call(
             messages=[{"role": "user", "content": "执行命令后继续完成任务"}],
             temperature=0.0,
             working_dir=tmp_path,
-            runtime_backend="legacy",
         )
 
     assert result.reply == final_answer

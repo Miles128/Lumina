@@ -276,18 +276,6 @@
       en: "Observability",
       zh: "可观测",
     },
-    "settings.harness.runtime_backend": {
-      en: "Agent runtime backend",
-      zh: "Agent 运行时后端",
-    },
-    "settings.harness.runtime_backend.agents_sdk": {
-      en: "OpenAI Agents SDK (default)",
-      zh: "OpenAI Agents SDK（默认）",
-    },
-    "settings.harness.runtime_backend.legacy": {
-      en: "legacy AgentLoop",
-      zh: "legacy AgentLoop",
-    },
     "settings.harness.web_search_backend": {
       en: "Web search backend",
       zh: "联网搜索后端",

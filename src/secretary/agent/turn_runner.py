@@ -25,7 +25,7 @@ from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
 
-RuntimeBackend = Literal["legacy", "agents_sdk"]
+RuntimeBackend = Literal["agents_sdk"]
 
 
 def _uses_legacy_pause(pending: Any) -> bool:
@@ -105,18 +105,6 @@ def bind_turn_progress(
         callback(enrich_progress_event(event, turn))
 
     return wrapped
-
-
-def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
-    """Features not yet ported to the SDK Runner keep the Lumina AgentLoop.
-
-    Completions go through the unified openai-SDK ``llm_client`` (legacy path).
-    """
-    if plan.runtime_backend == "legacy":
-        return True
-    if plan.force_web_first_step:
-        return True
-    return False
 
 
 class TurnRunner:
@@ -217,51 +205,30 @@ class TurnRunner:
 
             with full_fs_access_scope(plan.full_fs_access):
                 cwd = working_dir or Path.home()
-                if plan.runtime_backend == "agents_sdk":
-                    from secretary.agent.agents_sdk_runtime import run_with_agents_sdk
+                from secretary.agent.agents_sdk_runtime import run_with_agents_sdk
 
-                    result = run_with_agents_sdk(
-                        llm_config=llm_config,
-                        messages=list(plan.messages),
-                        tools=plan.tools,
-                        working_dir=cwd,
-                        max_turns=plan.max_steps,
-                        temperature=temperature,
-                        thinking=plan.thinking,
-                        reasoning_effort=plan.reasoning_effort,
-                        strict_tools=plan.strict_tools,
-                        file_auth=self._file_auth,
-                        progress_callback=wrapped,
-                        cancel_check=cancel_check,
-                        explicit_working_dir=plan.explicit_working_dir,
-                        require_confirm=plan.require_confirm,
-                        compaction_max_tokens=plan.compaction_max_tokens,
-                        compaction_keep_tail=plan.compaction_keep_tail,
-                        subagent_deps=_find_spawn_deps(plan.tools),
-                        web_search_backend=plan.web_search_backend,
-                        full_tools=plan.full_tools,
-                        allow_mode_upgrade=plan.profile == "auto",
-                    )
-                else:
-                    loop = self._build_agent_loop(
-                        llm_config,
-                        tools=plan.tools,
-                        max_steps=plan.max_steps,
-                        working_dir=working_dir,
-                        progress_callback=wrapped,
-                        on_subagent_paused=on_subagent_paused,
-                        cancel_check=cancel_check,
-                        force_web_first_step=plan.force_web_first_step,
-                        explicit_working_dir=plan.explicit_working_dir,
-                        compaction_max_tokens=plan.compaction_max_tokens,
-                        compaction_keep_tail=plan.compaction_keep_tail,
-                        thinking=plan.thinking,
-                        reasoning_effort=plan.reasoning_effort,
-                        strict_tools=plan.strict_tools,
-                        require_confirm=plan.require_confirm,
-                        max_tool_output_chars=plan.max_tool_output_chars,
-                    )
-                    result = loop.run(plan.messages, temperature=temperature)
+                result = run_with_agents_sdk(
+                    llm_config=llm_config,
+                    messages=list(plan.messages),
+                    tools=plan.tools,
+                    working_dir=cwd,
+                    max_turns=plan.max_steps,
+                    temperature=temperature,
+                    thinking=plan.thinking,
+                    reasoning_effort=plan.reasoning_effort,
+                    strict_tools=plan.strict_tools,
+                    file_auth=self._file_auth,
+                    progress_callback=wrapped,
+                    cancel_check=cancel_check,
+                    explicit_working_dir=plan.explicit_working_dir,
+                    require_confirm=plan.require_confirm,
+                    compaction_max_tokens=plan.compaction_max_tokens,
+                    compaction_keep_tail=plan.compaction_keep_tail,
+                    subagent_deps=_find_spawn_deps(plan.tools),
+                    web_search_backend=plan.web_search_backend,
+                    full_tools=plan.full_tools,
+                    allow_mode_upgrade=plan.profile == "auto",
+                )
             if wrapped is not None and turn is not None:
                 if result.pending_confirmation:
                     wrapped(
