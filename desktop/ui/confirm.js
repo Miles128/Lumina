@@ -1,3 +1,4 @@
+// @ts-check
 /* LuminaConfirm — lightweight two-stage danger confirmation dialog. */
 (function () {
   "use strict";
@@ -21,6 +22,12 @@
     }
   }
 
+  /**
+   * @param {{
+   *   title: string, message: string, confirmText: string,
+   *   danger?: boolean, onConfirm: () => void, onCancel: () => void,
+   * }} opts
+   */
   function openDialog({ title, message, confirmText, danger, onConfirm, onCancel }) {
     close();
     const overlay = document.createElement("div");
@@ -51,7 +58,8 @@
     });
     document.body.appendChild(overlay);
     active = overlay;
-    overlay.querySelector(".lumina-confirm-ok").focus();
+    const okBtn = overlay.querySelector(".lumina-confirm-ok");
+    if (okBtn instanceof HTMLElement) okBtn.focus();
   }
 
   /**

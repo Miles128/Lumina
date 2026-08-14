@@ -1,3 +1,4 @@
+// @ts-check
 class ApiTimeoutError extends Error {
   constructor(message) {
     super(message);

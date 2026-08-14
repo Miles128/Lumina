@@ -1,3 +1,4 @@
+// @ts-check
 (function () {
   "use strict";
 
@@ -198,7 +199,8 @@
       btn.addEventListener("click", () => {
         const openAll = btn.getAttribute("data-ctx-expand") === "1";
         contextContentEl.querySelectorAll("details.artifact-context-msg").forEach((el) => {
-          el.open = openAll;
+          const details = /** @type {HTMLDetailsElement} */ (el);
+          details.open = openAll;
         });
       });
     });
@@ -260,6 +262,7 @@
 
   async function refreshContext() {
     try {
+      /** @type {LuminaArtifactsContextResponse} */
       const ctx = await window.SecretaryAPI.request(
         "GET",
         `/api/artifacts/context?thread_id=${encodeURIComponent(threadId || "")}`,
@@ -268,7 +271,7 @@
       workspacePath = String(ctx?.workspace || "") || workspacePath;
       const roots = Array.isArray(ctx?.roots) ? ctx.roots : [];
       if (rootSelect) {
-        const prev = rootSelect.value;
+        const prev = /** @type {HTMLSelectElement} */ (rootSelect).value;
         rootSelect.innerHTML = "";
         for (const root of roots) {
           const opt = document.createElement("option");
@@ -282,16 +285,17 @@
           opt.textContent = "本轮产物";
           rootSelect.appendChild(opt);
         }
-        if (prev && [...rootSelect.options].some((o) => o.value === prev)) {
-          rootSelect.value = prev;
+        const rootSelectEl = /** @type {HTMLSelectElement} */ (rootSelect);
+        if (prev && [...rootSelectEl.options].some((o) => o.value === prev)) {
+          rootSelectEl.value = prev;
         } else if (workspacePath) {
-          rootSelect.value = workspacePath;
+          rootSelectEl.value = workspacePath;
         } else if (sessionFiles.length) {
-          rootSelect.value = "__session__";
+          rootSelectEl.value = "__session__";
         } else if (sandboxPath) {
-          rootSelect.value = sandboxPath;
+          rootSelectEl.value = sandboxPath;
         }
-        activeRoot = rootSelect.value;
+        activeRoot = rootSelectEl.value;
       }
     } catch (error) {
       console.warn("[artifacts] context failed", error);
@@ -353,6 +357,7 @@
     }
     treeEl.innerHTML = `<p class="artifact-muted">加载中…</p>`;
     try {
+      /** @type {LuminaArtifactsTreeResponse} */
       const data = await window.SecretaryAPI.request(
         "GET",
         `/api/artifacts/tree?path=${encodeURIComponent(root)}&thread_id=${encodeURIComponent(threadId || "")}&depth=3`,
@@ -502,6 +507,7 @@
       btnOpenExternal.dataset.path = path;
     }
     try {
+      /** @type {Record<string, unknown> & { kind?: string; size?: number } } */
       const data = await window.SecretaryAPI.request(
         "GET",
         `/api/artifacts/file?path=${encodeURIComponent(path)}&thread_id=${encodeURIComponent(threadId || "")}`,
@@ -522,7 +528,7 @@
     await refreshContext();
     if (workspacePath) {
       activeRoot = workspacePath;
-      if (rootSelect) rootSelect.value = workspacePath;
+      if (rootSelect) /** @type {HTMLSelectElement} */ (rootSelect).value = workspacePath;
       ensureOpen();
       await renderTree();
     } else if (!sessionFiles.length) {
@@ -563,7 +569,7 @@
     void refreshContext().then(renderTree);
   });
   rootSelect?.addEventListener("change", () => {
-    activeRoot = rootSelect.value;
+    activeRoot = /** @type {HTMLSelectElement} */ (rootSelect).value;
     void renderTree();
   });
   btnModeDocs?.addEventListener("click", () => setMode("documents"));

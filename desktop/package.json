@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Local-first Agent productivity desktop for Lumina",
   "main": "main.js",
-  "author": "四海",
+  "author": "\u56db\u6d77",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
@@ -11,7 +11,8 @@
     "pack": "npm run icon && electron-builder --mac",
     "pack:dir": "npm run icon && electron-builder --mac dir",
     "install:cn": "bash ../scripts/install-electron.sh",
-    "vendor:sync": "mkdir -p ui/vendor && cp node_modules/markdown-it/dist/markdown-it.min.js ui/vendor/ && cp node_modules/dompurify/dist/purify.min.js ui/vendor/ && cp node_modules/drawflow/dist/drawflow.min.js ui/vendor/ && cp node_modules/drawflow/dist/drawflow.min.css ui/vendor/"
+    "vendor:sync": "mkdir -p ui/vendor && cp node_modules/markdown-it/dist/markdown-it.min.js ui/vendor/ && cp node_modules/dompurify/dist/purify.min.js ui/vendor/ && cp node_modules/drawflow/dist/drawflow.min.js ui/vendor/ && cp node_modules/drawflow/dist/drawflow.min.css ui/vendor/",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "electron": "^35.0.0",
@@ -19,7 +20,7 @@
   },
   "build": {
     "appId": "com.lumina.desktop",
-    "productName": "灵犀",
+    "productName": "\u7075\u7280",
     "directories": {
       "output": "dist",
       "buildResources": "icons"
@@ -40,9 +41,9 @@
         "zip"
       ],
       "extendInfo": {
-        "CFBundleDisplayName": "灵犀",
-        "CFBundleName": "灵犀",
-        "NSLocationWhenInUseUsageDescription": "灵犀需要获取您的位置以提供本地天气等服务。"
+        "CFBundleDisplayName": "\u7075\u7280",
+        "CFBundleName": "\u7075\u7280",
+        "NSLocationWhenInUseUsageDescription": "\u7075\u7280\u9700\u8981\u83b7\u53d6\u60a8\u7684\u4f4d\u7f6e\u4ee5\u63d0\u4f9b\u672c\u5730\u5929\u6c14\u7b49\u670d\u52a1\u3002"
       }
     }
   },
