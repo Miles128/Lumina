@@ -46,9 +46,10 @@ Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpo
 
 | 层 | 做法 | 代码位置 |
 |---|---|---|
-| LLM 协议 / tool 解析 / provider 适配 | **openai-agents SDK**（`agents_sdk_runtime.py`） | 边界文件，别处不 import SDK |
+| LLM 协议 / tool 解析 / provider 适配 | **openai-agents SDK**（`agents_sdk_runtime.py`）| 边界文件，别处不 import SDK |
+| LLM Chat Completions（utility/direct 路径） | **openai SDK**（同步 `OpenAI` client，`max_retries=0` 让外层统一重试）| `llm_client.py` |
 | HITL 暂停/恢复/状态序列化 | SDK `interruptions` + `RunState`（`sdk_state`） | 同上 |
-| 网络重试/退避 | SDK 内置（legacy 路径自研重试是统一层；aisuite 内层已 `max_retries=0`） | `llm_client.py` / `aisuite_bridge.py` |
+| 网络重试/退避 | SDK 内置（`llm_client` 自研重试是统一外层；openai client 内层已 `max_retries=0`） | `llm_client.py` |
 | MCP 连接（stdio/SSE/HTTP） | 官方 `mcp` SDK；`mcp_manager` 只做工具桥接/审批（产品层，保留） | `mcp_manager.py` |
 | Markdown 渲染/消毒 | markdown-it + DOMPurify | `desktop/ui/markdown.js` |
 | 前端打包 | esbuild（未引入前保持 script 顺序 + `node --check`） | `desktop/ui/*` |

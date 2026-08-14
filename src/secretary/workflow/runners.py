@@ -235,7 +235,7 @@ class WorkflowAgentRunner:
             messages=messages,
             max_steps=max_steps,
             tools=tools,
-            runtime_backend="aisuite",
+            runtime_backend="agents_sdk",
         )
         result = self._turn_runner.run_agent_turn(
             self._llm_config,

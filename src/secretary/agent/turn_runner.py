@@ -1,4 +1,4 @@
-"""Turn-scoped runner that constructs AgentLoop / aisuite runtime and emits turn_* events."""
+"""Turn-scoped runner that constructs AgentLoop / SDK runtime and emits turn_* events."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from secretary.services.file_auth import FileAuthService
 
 logger = logging.getLogger(__name__)
 
-RuntimeBackend = Literal["legacy", "aisuite", "agents_sdk"]
+RuntimeBackend = Literal["legacy", "agents_sdk"]
 
 
 def _uses_legacy_pause(pending: Any) -> bool:
@@ -59,7 +59,7 @@ class AgentTurnPlan:
     thinking: str = "enabled"
     reasoning_effort: str | None = "high"
     strict_tools: bool = False
-    runtime_backend: RuntimeBackend = "aisuite"
+    runtime_backend: RuntimeBackend = "agents_sdk"
     require_confirm: ConfirmRequireConfig | None = None
     full_fs_access: bool = False
     max_tool_output_chars: int | None = None
@@ -108,23 +108,13 @@ def bind_turn_progress(
 
 
 def _prefer_legacy_loop(plan: AgentTurnPlan) -> bool:
-    """Features not yet ported to aisuite/SDK Runners keep the Lumina AgentLoop.
+    """Features not yet ported to the SDK Runner keep the Lumina AgentLoop.
 
-    Completions still go through vendored aisuite via ``llm_client`` (legacy path).
+    Completions go through the unified openai-SDK ``llm_client`` (legacy path).
     """
     if plan.runtime_backend == "legacy":
         return True
     if plan.force_web_first_step:
-        return True
-    if plan.runtime_backend == "agents_sdk":
-        # Sub-agent delegation is handled natively (per-archetype as_tools).
-        return False
-    # aisuite backend: strict_tools unsupported and spawn falls back to legacy.
-    if plan.strict_tools:
-        logger.info("strict_tools=True not supported on aisuite Runner; using legacy AgentLoop")
-        return True
-    tool_names = {getattr(tool, "name", "") for tool in plan.tools}
-    if "spawn_subagent" in tool_names:
         return True
     return False
 
@@ -252,27 +242,6 @@ class TurnRunner:
                         full_tools=plan.full_tools,
                         allow_mode_upgrade=plan.profile == "auto",
                     )
-                elif plan.runtime_backend == "aisuite" and not _prefer_legacy_loop(plan):
-                    from secretary.agent.aisuite_runtime import run_with_aisuite
-
-                    result = run_with_aisuite(
-                        llm_config=llm_config,
-                        messages=list(plan.messages),
-                        tools=plan.tools,
-                        working_dir=cwd,
-                        max_turns=plan.max_steps,
-                        temperature=temperature,
-                        thinking=plan.thinking,
-                        reasoning_effort=plan.reasoning_effort,
-                        file_auth=self._file_auth,
-                        progress_callback=wrapped,
-                        cancel_check=cancel_check,
-                        on_subagent_paused=on_subagent_paused,
-                        explicit_working_dir=plan.explicit_working_dir,
-                        require_confirm=plan.require_confirm,
-                        compaction_max_tokens=plan.compaction_max_tokens,
-                        compaction_keep_tail=plan.compaction_keep_tail,
-                    )
                 else:
                     loop = self._build_agent_loop(
                         llm_config,
@@ -337,7 +306,7 @@ class TurnRunner:
         progress_callback: Callable[[ProgressEvent], None] | None = None,
         turn: TurnContext | None = None,
         cancel_check: Callable[[], bool] | None = None,
-        runtime_backend: RuntimeBackend = "aisuite",
+        runtime_backend: RuntimeBackend = "agents_sdk",
         max_steps: int = 20,
         thinking: str = "enabled",
         reasoning_effort: str | None = "high",
@@ -354,12 +323,6 @@ class TurnRunner:
     ) -> LoopResult:
         wrapped = bind_turn_progress(progress_callback, turn)
         cwd = working_dir or Path.home()
-        tool_names = {getattr(tool, "name", "") for tool in tools}
-        use_aisuite = (
-            runtime_backend == "aisuite"
-            and "spawn_subagent" not in tool_names
-            and not strict_tools
-        )
         from secretary.agent.fs_jail import full_fs_access_scope
 
         with full_fs_access_scope(full_fs_access):
@@ -384,25 +347,6 @@ class TurnRunner:
                     web_search_backend=web_search_backend,
                     full_tools=full_tools,
                     allow_mode_upgrade=allow_mode_upgrade,
-                )
-            if use_aisuite:
-                from secretary.agent.aisuite_runtime import resume_with_aisuite
-
-                return resume_with_aisuite(
-                    llm_config=llm_config,
-                    pending=pending,
-                    messages=list(messages),
-                    tools=tools,
-                    working_dir=cwd,
-                    max_turns=max_steps,
-                    temperature=temperature,
-                    thinking=thinking,
-                    reasoning_effort=reasoning_effort,
-                    file_auth=self._file_auth,
-                    progress_callback=wrapped,
-                    cancel_check=cancel_check,
-                    compaction_max_tokens=compaction_max_tokens,
-                    compaction_keep_tail=compaction_keep_tail,
                 )
             loop = self._build_agent_loop(
                 llm_config,

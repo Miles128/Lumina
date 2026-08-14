@@ -1,10 +1,9 @@
-"""OpenAI-compatible chat completion client via vendored aisuite (httpx stream kept)."""
+"""OpenAI-compatible chat completion client via the openai SDK."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import random
 import time
 from collections.abc import Callable
@@ -12,13 +11,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import httpx
+from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
-from secretary.agent.aisuite_bridge import (
-    build_aisuite_client,
-    response_to_openai_dict,
-    to_aisuite_model,
-)
 from secretary.agent.llm_config import LlmConfig, deepseek_beta_base_url, model_supports_thinking
 from secretary.exceptions import AgentError
 
@@ -34,23 +28,16 @@ _MAX_BACKOFF_SECONDS = 30.0
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
-# Unified retry layer (no-reinventing rule): the aisuite inner openai client is
-# configured with max_retries=0 (aisuite_bridge.build_provider_configs), so this
-# is the ONLY retry/backoff for the legacy path. The agents-sdk path uses the
-# openai SDK's built-in retries (agents_sdk_runtime._build_async_client). The
-# httpx streaming path below has no library equivalent (SSE streaming), so it
-# shares this layer by design.
+# Unified retry layer (no-reinventing rule): the openai client is created with
+# max_retries=0, so THIS is the only retry/backoff for the direct/utility path.
+# The agents-sdk path uses the SDK's built-in retries (separate async client).
 
 
 def _is_retryable_error(exc: Exception) -> bool:
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
         return True
-    if isinstance(exc, httpx.NetworkError):
-        return True
-    if isinstance(exc, httpx.RemoteProtocolError):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in _RETRYABLE_STATUSES
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in _RETRYABLE_STATUSES
     return False
 
 
@@ -62,11 +49,117 @@ def _sleep_for_retry(attempt: int) -> None:
     time.sleep(delay + jitter)
 
 
-def _build_http_client(timeout: float) -> httpx.Client:
-    return httpx.Client(
-        timeout=httpx.Timeout(timeout, connect=15.0),
-        limits=httpx.Limits(max_keepalive_connections=5, max_connections=20),
+def _build_openai_client(
+    config: LlmConfig,
+    timeout: float,
+    *,
+    base_url: str | None = None,
+) -> OpenAI:
+    base = (base_url or config.base_url or "").rstrip("/")
+    return OpenAI(
+        api_key=config.api_key,
+        base_url=base or None,
+        max_retries=0,
+        timeout=timeout,
     )
+
+
+def _thinking_extra_body(payload: dict[str, Any]) -> dict[str, Any]:
+    """DeepSeek thinking params go via extra_body on the OpenAI SDK."""
+    extra: dict[str, Any] = {}
+    thinking = payload.get("thinking")
+    if isinstance(thinking, dict):
+        extra["thinking"] = thinking
+    effort = payload.get("reasoning_effort")
+    if effort is not None:
+        extra["reasoning_effort"] = effort
+    return extra
+
+
+def _completion_kwargs(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map our OpenAI-shaped payload to chat.completions.create kwargs."""
+    kwargs: dict[str, Any] = {
+        "model": payload["model"],
+        "messages": payload["messages"],
+    }
+    if "temperature" in payload:
+        kwargs["temperature"] = payload["temperature"]
+    if "tools" in payload:
+        kwargs["tools"] = payload["tools"]
+    if "tool_choice" in payload:
+        kwargs["tool_choice"] = payload["tool_choice"]
+    if payload.get("stream"):
+        kwargs["stream"] = True
+    extra = _thinking_extra_body(payload)
+    if extra:
+        kwargs["extra_body"] = extra
+    return kwargs
+
+
+def _sdk_response_to_dict(response: Any) -> dict[str, Any]:
+    """Normalize an OpenAI SDK ChatCompletion to a plain OpenAI-shaped dict.
+
+    Reads fields via getattr (not model_dump) so DeepSeek-only fields survive:
+    reasoning_content on the message, prompt_cache_hit/miss_tokens on usage.
+    """
+    choices_out: list[dict[str, Any]] = []
+    for choice in getattr(response, "choices", None) or []:
+        message = getattr(choice, "message", None)
+        if message is None:
+            choices_out.append({"message": {"role": "assistant", "content": ""}})
+            continue
+        msg_dict: dict[str, Any] = {
+            "role": getattr(message, "role", "assistant"),
+            "content": getattr(message, "content", "") or "",
+        }
+        reasoning = getattr(message, "reasoning_content", None)
+        if isinstance(reasoning, str):
+            msg_dict["reasoning_content"] = reasoning
+        tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            serialized: list[dict[str, Any]] = []
+            for call in tool_calls:
+                fn = getattr(call, "function", None)
+                if fn is None:
+                    continue
+                serialized.append(
+                    {
+                        "id": getattr(call, "id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": getattr(fn, "name", ""),
+                            "arguments": getattr(fn, "arguments", "{}"),
+                        },
+                    }
+                )
+            msg_dict["tool_calls"] = serialized
+        choices_out.append({"message": msg_dict})
+    body: dict[str, Any] = {"choices": choices_out}
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        body["usage"] = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            "prompt_cache_hit_tokens": getattr(usage, "prompt_cache_hit_tokens", 0) or 0,
+            "prompt_cache_miss_tokens": getattr(usage, "prompt_cache_miss_tokens", 0) or 0,
+        }
+    return body
+
+
+def _read_error_body(exc: APIStatusError) -> str:
+    try:
+        response = getattr(exc, "response", None)
+        if response is not None:
+            return getattr(response, "text", "") or ""
+    except Exception:
+        pass
+    body = getattr(exc, "body", None)
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body).decode("utf-8", "replace")
+    if isinstance(body, str):
+        return body
+    return ""
 
 
 @dataclass
@@ -218,7 +311,6 @@ def chat_completion_stream(
     thinking: ThinkingState | None = "disabled",
     reasoning_effort: ReasoningEffort | str | None = None,
 ) -> str:
-    url = f"{config.base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
@@ -232,77 +324,75 @@ def chat_completion_stream(
         reasoning_effort=reasoning_effort,
     )
     last_error: str | None = None
-    with _build_http_client(timeout) as client:
-        for attempt in range(1, _MAX_RETRIES + 1):
-            try:
-                return _stream_request(client, url, payload, config.api_key, on_delta)
-            except AgentError:
-                # Empty-content stream (thinking mode on short inputs) — retry
-                # with thinking disabled before giving up.
-                if attempt >= _MAX_RETRIES:
-                    raise
-                logger.warning("LLM stream empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return _stream_request(config, payload, timeout, on_delta)
+        except AgentError:
+            # Empty-content stream (thinking mode on short inputs) — retry
+            # with thinking disabled before giving up.
+            if attempt >= _MAX_RETRIES:
+                raise
+            logger.warning("LLM stream empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
+            _sleep_for_retry(attempt)
+            if thinking in ("enabled", "auto"):
+                payload["thinking"] = {"type": "disabled"}
+                if reasoning_effort is not None:
+                    payload["reasoning_effort"] = None
+            continue
+        except (APIConnectionError, APITimeoutError) as exc:
+            last_error = str(exc)
+            logger.warning("LLM stream attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
+            if attempt < _MAX_RETRIES:
                 _sleep_for_retry(attempt)
-                if thinking in ("enabled", "auto"):
-                    payload["thinking"] = {"type": "disabled"}
-                    if reasoning_effort is not None:
-                        payload["reasoning_effort"] = None
+        except APIStatusError as exc:
+            detail = _read_error_body(exc)
+            logger.warning("LLM stream HTTP error %s: %s", exc.status_code, detail[:300])
+            if exc.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                _sleep_for_retry(attempt)
                 continue
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-                last_error = str(exc)
-                logger.warning("LLM stream attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
-                if attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-            except httpx.HTTPStatusError as exc:
-                detail = _read_error_body(exc)
-                logger.warning("LLM stream HTTP error %s: %s", exc.response.status_code, detail[:300])
-                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-                    continue
-                message = _extract_api_error(detail) or f"大模型请求失败 ({exc.response.status_code})"
-                raise AgentError(message) from exc
+            message = _extract_api_error(detail) or f"大模型请求失败 ({exc.status_code})"
+            raise AgentError(message) from exc
     raise AgentError(f"大模型流式请求失败（{_MAX_RETRIES} 次重试后）: {last_error or '未知错误'}")
 
 
 def _stream_request(
-    client: httpx.Client,
-    url: str,
+    config: LlmConfig,
     payload: dict[str, Any],
-    api_key: str,
+    timeout: float,
     on_delta: Callable[[str], None],
 ) -> str:
+    client = _build_openai_client(config, timeout)
+    kwargs = _completion_kwargs(payload)
+    kwargs["stream"] = True
+    kwargs["stream_options"] = {"include_usage": True}
     parts: list[str] = []
-    with client.stream(
-        "POST",
-        url,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line.startswith("data: "):
-                continue
-            data = line[6:].strip()
-            if not data or data == "[DONE]":
-                continue
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            usage = chunk.get("usage")
-            if isinstance(usage, dict):
-                _record_usage(usage)
-            delta = _extract_stream_delta(chunk)
-            if delta:
-                parts.append(delta)
-                on_delta(delta)
-    content = "".join(parts).strip()
-    if not content:
+    stream = client.chat.completions.create(**kwargs)
+    for chunk in stream:
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            _record_usage(
+                {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                    "prompt_cache_hit_tokens": getattr(usage, "prompt_cache_hit_tokens", 0) or 0,
+                    "prompt_cache_miss_tokens": getattr(usage, "prompt_cache_miss_tokens", 0) or 0,
+                }
+            )
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            continue
+        content = getattr(delta, "content", None)
+        if isinstance(content, str) and content:
+            parts.append(content)
+            on_delta(content)
+    result = "".join(parts).strip()
+    if not result:
         raise AgentError("模型未返回任何内容（流式），请重试。若频繁出现，可在设置里关闭思考模式。")
-    return content
+    return result
 
 
 def schemas_to_openai_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -360,10 +450,6 @@ def chat_completion_with_tools(
     strict_tools: bool = False,
 ) -> ChatCompletionResult:
     """Call /chat/completions with OpenAI-style function tools."""
-    base = config.base_url.rstrip("/")
-    if strict_tools and model_supports_thinking(config.model):
-        base = deepseek_beta_base_url(config.base_url).rstrip("/")
-    url = f"{base}/chat/completions"
     active_tools = _with_strict_tools(tools) if strict_tools else tools
     effective_choice = coerce_tool_choice_for_thinking(
         tool_choice,
@@ -390,46 +476,38 @@ def chat_completion_with_tools(
         thinking=thinking,
         reasoning_effort=reasoning_effort,
     )
+    base_url: str | None = None
+    if strict_tools and model_supports_thinking(config.model):
+        base_url = deepseek_beta_base_url(config.base_url).rstrip("/")
     last_error: str | None = None
-    with _build_http_client(timeout) as client:
-        for attempt in range(1, _MAX_RETRIES + 1):
-            try:
-                return _tools_request(client, url, payload, config.api_key)
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-                last_error = str(exc)
-                logger.warning("LLM tools attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
-                if attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-            except httpx.HTTPStatusError as exc:
-                detail = _read_error_body(exc)
-                logger.warning("LLM tools HTTP error %s: %s", exc.response.status_code, detail[:300])
-                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-                    continue
-                message = _extract_api_error(detail) or f"大模型工具调用失败 ({exc.response.status_code})"
-                raise AgentError(message) from exc
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return _tools_request(config, payload, timeout, base_url)
+        except (APIConnectionError, APITimeoutError) as exc:
+            last_error = str(exc)
+            logger.warning("LLM tools attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
+            if attempt < _MAX_RETRIES:
+                _sleep_for_retry(attempt)
+        except APIStatusError as exc:
+            detail = _read_error_body(exc)
+            logger.warning("LLM tools HTTP error %s: %s", exc.status_code, detail[:300])
+            if exc.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                _sleep_for_retry(attempt)
+                continue
+            message = _extract_api_error(detail) or f"大模型工具调用失败 ({exc.status_code})"
+            raise AgentError(message) from exc
     raise AgentError(f"大模型工具调用失败（{_MAX_RETRIES} 次重试后）: {last_error or '未知错误'}")
 
 
 def _tools_request(
-    client: httpx.Client,
-    url: str,
+    config: LlmConfig,
     payload: dict[str, Any],
-    api_key: str,
+    timeout: float,
+    base_url: str | None,
 ) -> ChatCompletionResult:
-    if _use_aisuite_backend():
-        body = _completion_via_aisuite(url, payload, api_key)
-    else:
-        response = client.post(
-            url,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        response.raise_for_status()
-        body = response.json()
+    client = _build_openai_client(config, timeout, base_url=base_url)
+    response = client.chat.completions.create(**_completion_kwargs(payload))
+    body = _sdk_response_to_dict(response)
     _record_usage(body.get("usage"))
     try:
         message = body["choices"][0]["message"]
@@ -512,25 +590,6 @@ def _assistant_message_dict(
     return result
 
 
-def _extract_stream_delta(chunk: dict[str, object]) -> str:
-    choices = chunk.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    first = choices[0]
-    if not isinstance(first, dict):
-        return ""
-    delta = first.get("delta")
-    if not isinstance(delta, dict):
-        return ""
-    reasoning = delta.get("reasoning_content")
-    if isinstance(reasoning, str) and reasoning.strip():
-        return ""
-    content = delta.get("content")
-    if isinstance(content, str):
-        return content
-    return ""
-
-
 def _chat_completion_once(
     config: LlmConfig,
     messages: list[dict[str, str]],
@@ -540,7 +599,6 @@ def _chat_completion_once(
     thinking: ThinkingState | None = "disabled",
     reasoning_effort: ReasoningEffort | str | None = None,
 ) -> str:
-    url = f"{config.base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
@@ -553,123 +611,56 @@ def _chat_completion_once(
         reasoning_effort=reasoning_effort,
     )
     last_error: str | None = None
-    with _build_http_client(timeout) as client:
-        for attempt in range(1, _MAX_RETRIES + 1):
-            try:
-                body = _non_stream_request(client, url, payload, config.api_key)
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-                last_error = str(exc)
-                logger.warning("LLM attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
-                if attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-                continue
-            except httpx.HTTPStatusError as exc:
-                detail = _read_error_body(exc)
-                logger.warning("LLM HTTP error %s: %s", exc.response.status_code, detail[:300])
-                if exc.response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
-                    _sleep_for_retry(attempt)
-                    continue
-                message = _extract_api_error(detail) or f"大模型请求失败 ({exc.response.status_code})"
-                raise AgentError(message) from exc
-
-            _record_usage(body.get("usage"))
-            try:
-                message = body["choices"][0]["message"]
-            except (KeyError, IndexError, TypeError) as error:
-                raise AgentError("大模型返回格式异常") from error
-            content = _extract_message_text(message)
-            if content:
-                return content
-            # Empty content — retry once more specifically. Empty replies are
-            # common when thinking is enabled for short inputs, so fall back to
-            # a non-thinking retry before giving up.
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            body = _non_stream_request(config, payload, timeout)
+        except (APIConnectionError, APITimeoutError) as exc:
+            last_error = str(exc)
+            logger.warning("LLM attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc)
             if attempt < _MAX_RETRIES:
-                logger.warning("LLM returned empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
                 _sleep_for_retry(attempt)
-                if thinking in ("enabled", "auto"):
-                    payload["thinking"] = {"type": "disabled"}
-                    if reasoning_effort is not None:
-                        payload["reasoning_effort"] = None
+            continue
+        except APIStatusError as exc:
+            detail = _read_error_body(exc)
+            logger.warning("LLM HTTP error %s: %s", exc.status_code, detail[:300])
+            if exc.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
+                _sleep_for_retry(attempt)
                 continue
+            message = _extract_api_error(detail) or f"大模型请求失败 ({exc.status_code})"
+            raise AgentError(message) from exc
+
+        _record_usage(body.get("usage"))
+        try:
+            message = body["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise AgentError("大模型返回格式异常") from error
+        content = _extract_message_text(message)
+        if content:
+            return content
+        # Empty content — retry once more specifically. Empty replies are
+        # common when thinking is enabled for short inputs, so fall back to
+        # a non-thinking retry before giving up.
+        if attempt < _MAX_RETRIES:
+            logger.warning("LLM returned empty content, retrying (attempt %d/%d)", attempt, _MAX_RETRIES)
+            _sleep_for_retry(attempt)
+            if thinking in ("enabled", "auto"):
+                payload["thinking"] = {"type": "disabled"}
+                if reasoning_effort is not None:
+                    payload["reasoning_effort"] = None
+            continue
     if last_error:
         raise AgentError(f"大模型请求失败（{_MAX_RETRIES} 次重试后）: {last_error}")
     raise AgentError("模型未返回任何内容，请重试。若频繁出现，可在设置里关闭思考模式。")
 
 
-def _use_aisuite_backend() -> bool:
-    """LLM Completions go through vendored aisuite unless LUMINA_LLM_BACKEND=httpx."""
-    return os.environ.get("LUMINA_LLM_BACKEND", "aisuite").strip().lower() != "httpx"
-
-
-def _config_from_completion_url(url: str, api_key: str, model: str) -> LlmConfig:
-    base = url.strip()
-    suffix = "/chat/completions"
-    if base.endswith(suffix):
-        base = base[: -len(suffix)]
-    return LlmConfig(
-        api_key=api_key,
-        base_url=base or "https://api.deepseek.com/v1",
-        model=model or "deepseek-v4-flash",
-        source="request",
-    )
-
-
-def _completion_via_aisuite(
-    url: str,
-    payload: dict[str, Any],
-    api_key: str,
-) -> dict[str, Any]:
-    model = str(payload.get("model") or "")
-    config = _config_from_completion_url(url, api_key, model)
-    client = build_aisuite_client(config)
-    kwargs = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"model", "messages", "stream"}
-    }
-    # DeepSeek (and forks): OpenAI SDK only accepts these via extra_body.
-    extra_body = dict(kwargs.pop("extra_body", None) or {})
-    for key in ("thinking", "reasoning_effort"):
-        if key in kwargs:
-            extra_body[key] = kwargs.pop(key)
-    if extra_body:
-        kwargs["extra_body"] = extra_body
-    try:
-        response = client.chat.completions.create(
-            model=to_aisuite_model(config),
-            messages=list(payload.get("messages") or []),
-            **kwargs,
-        )
-    except Exception as exc:
-        raise AgentError(f"大模型请求失败: {exc}") from exc
-    return response_to_openai_dict(response)
-
-
 def _non_stream_request(
-    client: httpx.Client,
-    url: str,
+    config: LlmConfig,
     payload: dict[str, Any],
-    api_key: str,
+    timeout: float,
 ) -> dict[str, Any]:
-    if _use_aisuite_backend():
-        return _completion_via_aisuite(url, payload, api_key)
-    response = client.post(
-        url,
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    response.raise_for_status()
-    return response.json()  # type: ignore[no-any-return]
-
-
-def _read_error_body(exc: httpx.HTTPStatusError) -> str:
-    try:
-        return exc.response.text
-    except Exception:
-        return ""
+    client = _build_openai_client(config, timeout)
+    response = client.chat.completions.create(**_completion_kwargs(payload))
+    return _sdk_response_to_dict(response)
 
 
 def _extract_api_error(detail: str) -> str | None:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 TraceRetention = Literal["full", "summary", "off"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 ReasoningEffort = Literal["low", "high", "max"]
-RuntimeBackend = Literal["legacy", "aisuite", "agents_sdk"]
+RuntimeBackend = Literal["legacy", "agents_sdk"]
 WebSearchBackend = Literal["tavily", "responses"]
 PermissionMode = Literal["normal", "auto", "yolo", "custom"]
 
@@ -82,10 +82,10 @@ class HarnessConfig(BaseModel):
     reasoning_effort: ReasoningEffort = "high"
     strict_tools: bool = False
     # Backend selection: ``agents_sdk`` (default) drives turns through the
-    # OpenAI Agents SDK Runner (native HITL + RunState persistence); ``aisuite``
-    # uses the vendored aisuite Runner; ``legacy`` uses the in-house AgentLoop.
-    # All backends fall back to AgentLoop when spawn_subagent / force_web_first
-    # are in play (nested pause stack not ported yet).
+    # OpenAI Agents SDK Runner (native HITL + RunState persistence); ``legacy``
+    # uses the in-house AgentLoop. All backends fall back to AgentLoop when
+    # spawn_subagent / force_web_first are in play (nested pause stack not
+    # ported yet).
     runtime_backend: RuntimeBackend = "agents_sdk"
     # tavily = Lumina's own web_search tool (Tavily/Bocha API);
     # responses = DeepSeek server-side web_search via the Responses API.

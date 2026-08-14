@@ -798,7 +798,7 @@
       return;
     }
     const h = agentConfig?.harness || {};
-    const runtimeBackend = ["legacy", "aisuite", "agents_sdk"].includes(h.runtime_backend)
+    const runtimeBackend = ["legacy", "agents_sdk"].includes(h.runtime_backend)
       ? h.runtime_backend
       : "agents_sdk";
     contentEl.innerHTML = `
@@ -855,7 +855,6 @@
             <span>${escapeHtml(t("settings.harness.runtime_backend"))}</span>
             <select id="harness-runtime-backend">
               <option value="agents_sdk" ${runtimeBackend === "agents_sdk" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.agents_sdk"))}</option>
-              <option value="aisuite" ${runtimeBackend === "aisuite" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.aisuite"))}</option>
               <option value="legacy" ${runtimeBackend === "legacy" ? "selected" : ""}>${escapeHtml(t("settings.harness.runtime_backend.legacy"))}</option>
             </select>
           </label>

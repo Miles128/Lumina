@@ -1,6 +1,6 @@
 """OpenAI Agents SDK backend preserving Lumina LoopResult / confirm contracts.
 
-Replaces the aisuite Runner as the primary harness backend. The Agents SDK
+Replaces the legacy loop as the primary harness backend. The Agents SDK
 provides native HITL (``needs_approval`` → ``interruptions`` → ``RunState``
 serialization), which maps 1:1 onto Lumina's confirmation flow:
 

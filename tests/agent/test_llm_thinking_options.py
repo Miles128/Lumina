@@ -46,7 +46,7 @@ def test_model_supports_thinking() -> None:
 def test_chat_completion_disables_thinking_by_default_for_deepseek() -> None:
     captured: dict[str, object] = {}
 
-    def fake_request(client, url, payload, api_key):  # noqa: ANN001
+    def fake_request(config, payload, timeout):  # noqa: ANN001
         captured.update(payload)
         return {"choices": [{"message": {"content": "OK"}}], "usage": {}}
 
@@ -64,7 +64,7 @@ def test_chat_completion_disables_thinking_by_default_for_deepseek() -> None:
 def test_chat_completion_with_tools_enables_thinking_and_effort() -> None:
     captured: dict[str, object] = {}
 
-    def fake_tools_request(client, url, payload, api_key):  # noqa: ANN001
+    def fake_tools_request(config, payload, timeout, base_url):  # noqa: ANN001
         captured.update(payload)
         from secretary.agent.llm_client import _result_from_assistant_message
 
@@ -124,7 +124,7 @@ def test_thinking_mode_coerces_required_tool_choice_to_auto() -> None:
 def test_chat_completion_with_tools_coerces_required_under_thinking() -> None:
     captured: dict[str, object] = {}
 
-    def fake_tools_request(client, url, payload, api_key):  # noqa: ANN001
+    def fake_tools_request(config, payload, timeout, base_url):  # noqa: ANN001
         captured.update(payload)
         from secretary.agent.llm_client import _result_from_assistant_message
 
@@ -149,10 +149,10 @@ def test_chat_completion_with_tools_coerces_required_under_thinking() -> None:
 
 def test_strict_tools_marks_functions_and_uses_beta_url() -> None:
     captured: dict[str, object] = {}
-    captured_url: list[str] = []
+    captured_base_url: list[str] = []
 
-    def fake_tools_request(client, url, payload, api_key):  # noqa: ANN001
-        captured_url.append(url)
+    def fake_tools_request(config, payload, timeout, base_url):  # noqa: ANN001
+        captured_base_url.append(base_url or "")
         captured.update(payload)
         from secretary.agent.llm_client import _result_from_assistant_message
 
@@ -183,7 +183,7 @@ def test_strict_tools_marks_functions_and_uses_beta_url() -> None:
             reasoning_effort="high",
             strict_tools=True,
         )
-    assert "/beta/chat/completions" in captured_url[0]
+    assert captured_base_url[0].endswith("/beta")
     assert captured["tools"][0]["function"]["strict"] is True
 
 
