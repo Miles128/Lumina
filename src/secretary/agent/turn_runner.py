@@ -48,7 +48,6 @@ class AgentTurnPlan:
     messages: list[dict[str, str]]
     max_steps: int
     tools: list[Tool]
-    force_web_first_step: bool = False
     # True when the user explicitly selected a workspace folder this turn
     # (chat request carried a non-empty working_dir). Triggers an unconditional
     # top-level list_dir preflight at step 0 so the model starts with real
@@ -142,7 +141,6 @@ class TurnRunner:
         progress_callback: Callable[[ProgressEvent], None] | None,
         on_subagent_paused: Callable[[Any], None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
-        force_web_first_step: bool = False,
         explicit_working_dir: bool = False,
         compaction_max_tokens: int | None = None,
         compaction_keep_tail: int | None = None,
@@ -166,7 +164,6 @@ class TurnRunner:
             before_model_call_hooks=hooks.before_model_call,
             before_tool_execution_hooks=hooks.before_tool_execution,
             after_tool_execution_hooks=hooks.after_tool_execution,
-            force_web_first_step=force_web_first_step,
             explicit_working_dir=explicit_working_dir,
             compaction_max_tokens=compaction_max_tokens,
             compaction_keep_tail=compaction_keep_tail,

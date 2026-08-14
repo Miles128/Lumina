@@ -228,7 +228,6 @@ class AgentLoop:
         before_model_call_hooks: list[BeforeModelCallHook] | None = None,
         before_tool_execution_hooks: list[BeforeToolExecutionHook] | None = None,
         after_tool_execution_hooks: list[AfterToolExecutionHook] | None = None,
-        force_web_first_step: bool = False,
         explicit_working_dir: bool = False,
         compaction_max_tokens: int | None = None,
         compaction_keep_tail: int | None = None,
@@ -260,8 +259,6 @@ class AgentLoop:
         self._before_model_call_hooks = before_model_call_hooks or []
         self._before_tool_execution_hooks = before_tool_execution_hooks or []
         self._after_tool_execution_hooks = after_tool_execution_hooks or []
-        self._force_web_first_step = force_web_first_step
-        self._web_forced_used = False
         self._explicit_working_dir = explicit_working_dir
         self._compaction_max_tokens = compaction_max_tokens
         self._compaction_keep_tail = compaction_keep_tail
@@ -594,46 +591,6 @@ class AgentLoop:
                     self._append_tool_result_messages(
                         current_messages,
                         raw=raw or f"[auto] web_search {web_call.arguments['query']}",
-                        tool_call=web_call,
-                        tool_output=web_output,
-                        assistant_message=assistant_message,
-                        native_used=native_used,
-                        step_idx=step_idx,
-                    )
-                    continue
-
-                # Force web search when the router already judged needs_web=true
-                # but the model still tried to end the turn without calling any
-                # web tool (e.g. "有引用吗" → model restates old citations).
-                # Fires once per turn; not gated by shared_retries because the
-                # router's judgement is authoritative for this branch.
-                from secretary.agent.web_research import _WEB_TOOL_NAMES
-
-                if (
-                    self._force_web_first_step
-                    and not self._web_forced_used
-                    and "web_search" in self._tools
-                    and not any(
-                        name in _WEB_TOOL_NAMES for name in used_tools
-                    )
-                ):
-                    self._web_forced_used = True
-                    web_outcome = self._run_injected_tool(
-                        tool_name="web_search",
-                        arguments={"query": turn_user_message.strip()[:200]},
-                        iteration=iteration,
-                        step_idx=step_idx,
-                        call_id=f"call_force_web_{step_idx}",
-                        thought=thought,
-                        steps=steps,
-                        used_tools=used_tools,
-                    )
-                    if isinstance(web_outcome, LoopResult):
-                        return web_outcome
-                    web_call, web_output = web_outcome
-                    self._append_tool_result_messages(
-                        current_messages,
-                        raw=raw or f"[force] web_search {web_call.arguments['query']}",
                         tool_call=web_call,
                         tool_output=web_output,
                         assistant_message=assistant_message,

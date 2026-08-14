@@ -1098,7 +1098,6 @@ class ChatService:
             messages=messages,
             max_steps=20,
             tools=tools,
-            force_web_first_step=True,
             runtime_backend=harness.runtime_backend,
             require_confirm=harness.require_confirm,
             full_fs_access=self._full_fs_access(),
