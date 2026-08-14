@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 from secretary.agent.agent_profile import AgentProfile
@@ -14,8 +13,6 @@ from secretary.agent.p0_tools import AskUserTool, is_user_input_request
 from secretary.agent.permission_guard import guard_tools_for_profile
 from secretary.agent.stop_hooks import LoopSnapshot
 from secretary.agent.structured_cards import EmitCardTool, is_structured_card_output
-from secretary.agent.subagent.archetype_router import select_archetype
-from secretary.agent.subagent.worktree import create_worktree, diff_stat, find_git_root
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import FileWriteTool
 from secretary.agent.tools.shell import ShellTool
@@ -91,62 +88,6 @@ def handle_compaction(case: EvalCase) -> None:
     blob = json.dumps(result.messages, ensure_ascii=False)
     for fact in must_keep:
         assert fact in blob, f"missing fact after compaction: {fact}"
-
-
-@register_handler("archetype_router")
-def handle_archetype(case: EvalCase) -> None:
-    for item in case.payload.get("cases") or []:
-        got = select_archetype(
-            str(item.get("goal", "")),
-            explicit=item.get("explicit"),
-            success_criteria=str(item.get("success_criteria", "")),
-        )
-        assert got == item["expect"], f"{item} -> {got}"
-
-
-@register_handler("worker_worktree_isolation")
-def handle_worktree(case: EvalCase) -> None:
-    """Placeholder — real isolation check runs in test_eval_cases with tmp_path."""
-    del case
-    assert callable(create_worktree)
-    assert callable(find_git_root)
-    assert callable(diff_stat)
-
-
-def assert_worker_worktree_isolation(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "eval@lumina.test"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Eval"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    (repo / "README").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    assert find_git_root(repo) == repo.resolve()
-    wt_a = create_worktree(repo, "eval-a", base_dir=tmp_path / "wts")
-    wt_b = create_worktree(repo, "eval-b", base_dir=tmp_path / "wts")
-    assert wt_a is not None and wt_b is not None
-    (wt_a / "a.txt").write_text("A", encoding="utf-8")
-    (wt_b / "b.txt").write_text("B", encoding="utf-8")
-    assert not (wt_a / "b.txt").exists()
-    assert not (wt_b / "a.txt").exists()
-    assert (wt_a / "a.txt").read_text(encoding="utf-8") == "A"
-    assert (wt_b / "b.txt").read_text(encoding="utf-8") == "B"
 
 
 @register_handler("hooks_command_deny")

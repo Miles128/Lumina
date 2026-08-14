@@ -1,4 +1,4 @@
-"""Tests for harness P0: session store, turn runner, delegation, progress schema."""
+"""Tests for harness P0: session store, turn runner, progress schema."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from secretary.agent.delegation import delegation_from_cli, format_subagent_result
 from secretary.agent.loop import LoopResult
 from secretary.agent.progress_events import ProgressEvent, progress_event_payload
 from secretary.agent.session_store import SessionStore
@@ -46,25 +45,6 @@ def test_bind_turn_progress_adds_item_ids() -> None:
     wrapped(ProgressEvent(kind="tool_started", iteration=1, tool_name="shell"))
     assert len(seen) == 2
     assert seen[0] != seen[1]
-
-
-def test_delegation_tool_output_unified() -> None:
-    sub = format_subagent_result(
-        LoopResult(reply="done", steps=[], used_tools=["file_read"], files_read=["a.py"], total_steps=1),
-        run_id="r1",
-        archetype="explore",
-        goal="find auth",
-    )
-    cli = delegation_from_cli(
-        run_id="r2",
-        provider="codex",
-        goal="fix bug",
-        summary="patched",
-        success=True,
-        exit_code=0,
-    ).to_tool_output()
-    assert sub.startswith("[subagent:explore:r1]")
-    assert cli.startswith("[cli:codex:r2]")
 
 
 def test_turn_runner_emits_turn_lifecycle(tmp_path) -> None:

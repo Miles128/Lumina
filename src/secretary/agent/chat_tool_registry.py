@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from secretary.agent.agent_profile import AgentProfile, resolve_parent_tools
 from secretary.agent.llm_config import LlmConfig
 from secretary.agent.permission_guard import guard_tools_for_profile
-from secretary.agent.subagent import SpawnContext, SpawnSubagentTool, SubAgentDeps
 from secretary.agent.tools.base import Tool
 from secretary.agent.tools.fs import (
     AliasedTool,
@@ -83,9 +82,7 @@ class ChatToolRegistry:
         light_mode: bool,
         llm_config: LlmConfig,
         trace_id: str = "",
-    ) -> tuple[list[Tool], object | None]:
-        spawn_tool = self.make_spawn_tool(llm_config, trace_id=trace_id)
-
+    ) -> list[Tool]:
         if profile is AgentProfile.BUILD:
             if filesystem_turn:
                 base_tools = self.build_tools()
@@ -97,34 +94,22 @@ class ChatToolRegistry:
                     user_message,
                     profile=profile,
                 )
-            tools = resolve_parent_tools(
-                profile,
-                base_tools,
-                spawn_tool=spawn_tool,
-            )
+            tools = resolve_parent_tools(profile, base_tools)
         elif profile is AgentProfile.ASK:
             base_tools = self.append_browser_tools(
                 self.build_tools(),
                 user_message,
                 profile=profile,
             )
-            tools = resolve_parent_tools(
-                profile,
-                base_tools,
-                spawn_tool=None,
-            )
+            tools = resolve_parent_tools(profile, base_tools)
         else:
             base_tools = self.append_browser_tools(
                 self.build_tools(),
                 user_message,
                 profile=profile,
             )
-            tools = resolve_parent_tools(
-                profile,
-                base_tools,
-                spawn_tool=None,
-            )
-        return guard_tools_for_profile(profile, tools), spawn_tool
+            tools = resolve_parent_tools(profile, base_tools)
+        return guard_tools_for_profile(profile, tools)
 
     def build_tools(self) -> list[Tool]:
         from secretary.agent.p0_tools import (
@@ -217,29 +202,6 @@ class ChatToolRegistry:
                 return picked
         defaults = self._default_memory_tool_names()
         return [all_tools[name] for name in defaults if name in all_tools]
-
-    def make_spawn_tool(
-        self,
-        llm_config: LlmConfig,
-        *,
-        parent_session_id: str | None = None,
-        trace_id: str = "",
-    ) -> SpawnSubagentTool:
-        session_id = (parent_session_id or "").strip() or self._get_session_id()
-        spawn_context = SpawnContext(
-            parent_session_id=session_id,
-            depth=0,
-            trace_id=(trace_id or "").strip(),
-        )
-        deps = SubAgentDeps(
-            llm_config=llm_config,
-            file_auth=self._file_auth,
-            memory_store=self._store,
-            memory=self._memory,
-            lumina_dir=self._settings.resolved_data_dir(),
-            temperature=min(self._temperature(), 0.5),
-        )
-        return SpawnSubagentTool(deps, spawn_context)
 
     def append_browser_tools(
         self,

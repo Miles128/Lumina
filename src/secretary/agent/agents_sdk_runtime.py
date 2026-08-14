@@ -799,7 +799,7 @@ def run_with_agents_sdk(
     require_confirm: ConfirmRequireConfig | None = None,
     compaction_max_tokens: int | None = None,
     compaction_keep_tail: int | None = None,
-    subagent_deps: Any | None = None,
+    lumina_dir: Path | None = None,
     web_search_backend: str = "tavily",
     full_tools: list[Tool] | None = None,
     allow_mode_upgrade: bool = True,
@@ -905,7 +905,7 @@ def run_with_agents_sdk(
         """Build the agent for a given parent tool set (rebuildable on mode upgrade)."""
         set_by_name = {t.name: t for t in tool_set if getattr(t, "name", "")}
         subagent_tools: list[FunctionTool] = []
-        if subagent_deps is not None:
+        if lumina_dir is not None:
             subagent_tools = build_subagent_tools(
                 llm_config=llm_config,
                 tools_by_name=set_by_name,
@@ -917,7 +917,7 @@ def run_with_agents_sdk(
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
                 temperature=temperature,
-                lumina_dir=getattr(subagent_deps, "lumina_dir", None),
+                lumina_dir=lumina_dir,
                 tracked=tracked,
                 steps_out=tracked_steps,
             )
@@ -1186,7 +1186,7 @@ def resume_with_agents_sdk(
     progress_callback: Callable[[ProgressEvent], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     require_confirm: ConfirmRequireConfig | None = None,
-    subagent_deps: Any | None = None,
+    lumina_dir: Path | None = None,
     web_search_backend: str = "tavily",
     full_tools: list[Tool] | None = None,
     allow_mode_upgrade: bool = True,
@@ -1250,7 +1250,7 @@ def resume_with_agents_sdk(
             extra_tools.append(WebSearchTool())
         parent_by_name = {t.name: t for t in parent_tools}
         subagent_tools: list[FunctionTool] = []
-        if subagent_deps is not None:
+        if lumina_dir is not None:
             subagent_tools = build_subagent_tools(
                 llm_config=llm_config,
                 tools_by_name=parent_by_name,
@@ -1262,7 +1262,7 @@ def resume_with_agents_sdk(
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
                 temperature=temperature,
-                lumina_dir=getattr(subagent_deps, "lumina_dir", None),
+                lumina_dir=lumina_dir,
                 tracked=tracked,
                 steps_out=tracked_steps,
             )

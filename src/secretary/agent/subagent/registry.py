@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from secretary.agent.p0_tools import EditTool, SearchFilesTool
 from secretary.agent.subagent.custom import load_custom_archetypes
 from secretary.agent.subagent.policy import (
     BUILTIN_ARCHETYPES,
@@ -16,15 +14,6 @@ from secretary.agent.subagent.policy import (
     VERIFY_MAX_STEPS,
     WORKER_MAX_STEPS,
 )
-from secretary.agent.tools.base import Tool
-from secretary.agent.tools.fs import ListDirTool, ReadTool, WriteTool
-from secretary.agent.tools.memory_tools import SearchMemoryTool, SessionSearchTool
-from secretary.agent.tools.shell import ShellTool
-from secretary.agent.tools.web import WebFetchTool
-from secretary.agent.web_search import WebSearchTool
-
-if TYPE_CHECKING:
-    from secretary.agent.subagent.runner import SubAgentDeps
 
 
 @dataclass(frozen=True)
@@ -191,99 +180,3 @@ def get_archetype(name: str, lumina_dir: Path | None = None) -> ArchetypeSpec | 
             ),
         )
     return None
-
-
-def resolve_tools(archetype: str, deps: SubAgentDeps) -> list[Tool]:
-    from secretary.agent.tools.code_exec import CodeExecTool
-    from secretary.agent.tools.documents import ReadDocumentTool
-
-    spec = get_archetype(archetype, deps.lumina_dir)
-    if spec is None:
-        return []
-    allowed = spec.tool_names
-    if allowed is None:
-        if spec.name == "explore":
-            allowed = frozenset(
-                {
-                    "ls",
-                    "read",
-                    "read_document",
-                    "grep",
-                    "search_memory",
-                    "web_search",
-                    "web_fetch",
-                    "session_search",
-                }
-            )
-        elif spec.name == "verify":
-            allowed = frozenset(
-                {
-                    "ls",
-                    "read",
-                    "read_document",
-                    "grep",
-                    "search_memory",
-                    "web_search",
-                    "web_fetch",
-                    "session_search",
-                }
-            )
-        else:
-            return []
-
-    from secretary.agent.tools.fs import MoveTool
-
-    factories: dict[str, Tool] = {
-        "ls": ListDirTool(),
-        "read": ReadTool(),
-        "read_document": ReadDocumentTool(),
-        "grep": SearchFilesTool(),
-        "search_memory": SearchMemoryTool(deps.memory_store),
-        "web_search": WebSearchTool(),
-        "web_fetch": WebFetchTool(),
-        "session_search": SessionSearchTool(deps.memory),
-        "write": WriteTool(),
-        "edit": EditTool(),
-        "move": MoveTool(),
-        "shell": ShellTool(),
-        "code_exec": CodeExecTool(),
-    }
-    # Legacy names in custom archetype frontmatter → canonical factories.
-    _name_aliases = {
-        "file_read": "read",
-        "file_write": "write",
-        "patch": "edit",
-        "list_dir": "ls",
-        "search_files": "grep",
-        "glob_files": "glob",
-        "find": "glob",
-    }
-    tools: list[Tool] = []
-    seen: set[str] = set()
-    for key in sorted(allowed):
-        canonical = _name_aliases.get(key, key)
-        if canonical in seen:
-            continue
-        tool = factories.get(canonical)
-        if tool is None:
-            continue
-        seen.add(canonical)
-        tools.append(tool)
-    return tools
-
-
-def build_messages(
-    *,
-    goal: str,
-    context: str,
-    spec: ArchetypeSpec,
-    success_criteria: str = "",
-) -> list[dict[str, str]]:
-    context_block = context.strip() or "None."
-    user_content = f"## Task\n{goal.strip()}\n\n## Context\n{context_block}"
-    if success_criteria:
-        user_content += f"\n\n## 成功标准（机器可验证）\n{success_criteria}"
-    return [
-        {"role": "system", "content": spec.system_prompt},
-        {"role": "user", "content": user_content},
-    ]

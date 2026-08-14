@@ -7,10 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from secretary.agent.llm_config import LlmConfig
-from secretary.agent.session_store import SessionStore, pause_restore_parent
+from secretary.agent.session_store import SessionStore
 from secretary.agent.tools.shell import ShellTool
 from secretary.agent.turn_cancel import begin_turn, end_turn, is_cancelled, request_cancel
 from secretary.services.mcp_config import McpServerConfig
@@ -58,33 +55,6 @@ def test_session_store_prune_keeps_paused_and_drops_old(tmp_path: Path) -> None:
     assert "old" not in doc["turns"]
     assert "paused" in doc["turns"]
     assert "fresh" in doc["turns"]
-
-
-def test_pause_restore_parent_fails_loud_on_missing_tools() -> None:
-    data = {
-        "tool_names": ["shell", "missing_tool"],
-        "messages_snapshot": [],
-        "max_steps": 5,
-        "pending_step": {
-            "thought": "t",
-            "tool_call": {"name": "shell", "arguments": {}},
-            "tool_result": "",
-            "reply": "",
-        },
-        "native_used": False,
-        "step_idx": 1,
-    }
-    with pytest.raises(ValueError, match="missing"):
-        pause_restore_parent(
-            data,
-            llm_config=LlmConfig(
-                api_key="k",
-                base_url="https://example.com",
-                model="m",
-                source="test",
-            ),
-            tools=[],
-        )
 
 
 def test_mcp_connect_remote_streamable_http() -> None:

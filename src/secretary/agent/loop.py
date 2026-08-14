@@ -222,7 +222,6 @@ class AgentLoop:
         file_auth: FileAuthService | None = None,
         stop_hooks: list[StopHook] | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
-        on_subagent_paused: Callable[[Any], None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         before_turn_hooks: list[BeforeTurnHook] | None = None,
         before_model_call_hooks: list[BeforeModelCallHook] | None = None,
@@ -252,7 +251,6 @@ class AgentLoop:
         ]
         self._progress_callback = progress_callback
         self._native_tools_enabled = True
-        self._on_subagent_paused = on_subagent_paused
         self._cancel_check = cancel_check
         self._cancelled = False
         self._before_turn_hooks = before_turn_hooks or []
@@ -921,32 +919,6 @@ class AgentLoop:
             if len(tool_output) > self._tool_output_limit:
                 tool_output = self._truncate_tool_output(tool_output)
 
-            if tool_call.name == "spawn_subagent" and hasattr(tool, "consume_paused"):
-                paused = tool.consume_paused()
-                if paused is not None and self._on_subagent_paused is not None:
-                    self._on_subagent_paused(paused)
-                    step = StepResult(
-                        thought=thought,
-                        tool_call=tool_call,
-                        tool_output=f"[Sub-agent paused for confirmation] {paused.pending.description}",
-                        needs_confirmation=True,
-                    )
-                    steps.append(step)
-                    return LoopResult(
-                        reply=(
-                            f"子 Agent ({paused.archetype}) 需要你的确认：\n\n"
-                            f"{paused.pending.description}\n\n是否允许？"
-                        ),
-                        steps=steps,
-                        used_tools=used_tools,
-                        total_steps=step_idx + 1,
-                        pending_confirmation=paused.pending,
-                        pending_step=step,
-                        messages_snapshot=list(current_messages),
-                        pause_assistant_message=assistant_message,
-                        pause_native_used=native_used,
-                    )
-
             step = StepResult(thought=thought, tool_call=tool_call, tool_output=tool_output)
             steps.append(step)
 
@@ -1220,34 +1192,6 @@ class AgentLoop:
         result = self.run(continued, temperature=temperature)
         if pending.tool_name not in result.used_tools:
             result.used_tools.insert(0, pending.tool_name)
-        return result
-
-    def resume_after_subagent_tool(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        thought: str,
-        tool_call: ToolCall,
-        tool_output: str,
-        assistant_message: dict[str, Any] | None,
-        native_used: bool,
-        step_idx: int,
-        temperature: float = 0.7,
-    ) -> LoopResult:
-        """Append a completed spawn_subagent result and continue the parent loop."""
-        current_messages = list(messages)
-        self._append_tool_result_messages(
-            current_messages,
-            raw=thought,
-            tool_call=tool_call,
-            tool_output=tool_output,
-            assistant_message=assistant_message,
-            native_used=native_used,
-            step_idx=step_idx,
-        )
-        result = self.run(current_messages, temperature=temperature)
-        if "spawn_subagent" not in result.used_tools:
-            result.used_tools.insert(0, "spawn_subagent")
         return result
 
     def _requires_confirmation(

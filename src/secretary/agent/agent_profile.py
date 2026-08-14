@@ -294,20 +294,12 @@ def _is_mcp_read_tool(tool: Tool) -> bool:
 def resolve_parent_tools(
     profile: AgentProfile,
     tools: list[Tool],
-    *,
-    spawn_tool: Tool | None,
 ) -> list[Tool]:
     """Filter parent-session tools by profile (OpenCode permission ruleset)."""
     by_name = {tool.name: tool for tool in tools}
 
-    def _append_spawn_tools(ordered: list[Tool]) -> list[Tool]:
-        names = {tool.name for tool in ordered}
-        if spawn_tool is not None and spawn_tool.name not in names:
-            ordered.append(spawn_tool)
-        return ordered
-
     if profile is AgentProfile.BUILD:
-        return _append_spawn_tools(list(tools))
+        return list(tools)
 
     allowed = PLAN_TOOL_NAMES if profile is AgentProfile.PLAN else ASK_TOOL_NAMES
     picked: list[Tool] = []

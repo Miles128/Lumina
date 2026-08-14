@@ -83,7 +83,7 @@ def test_ask_profile_excludes_mcp_write_tools() -> None:
         _FakeMcpTool("mcp_fs_read_file", needs_confirmation=False),
         ListDirTool(),
     ]
-    picked = resolve_parent_tools(AgentProfile.ASK, tools, spawn_tool=None)
+    picked = resolve_parent_tools(AgentProfile.ASK, tools)
     names = {t.name for t in picked}
     assert "mcp_fs_read_file" in names
     assert "mcp_search_hub_delete_item" not in names

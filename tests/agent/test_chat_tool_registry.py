@@ -86,7 +86,7 @@ def test_plan_resolve_tools_excludes_write_shell_and_delegation(tmp_path: Path) 
         source="test",
     )
 
-    tools, _ = registry.resolve_tools(
+    tools = registry.resolve_tools(
         profile=AgentProfile.PLAN,
         user_message="帮我计划重构",
         suggested=(),

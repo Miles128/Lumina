@@ -1,7 +1,8 @@
-"""F21 Reflexion: spawn reflect sub-agent to generate structured reflection.
+"""F21 Reflexion: analyze a failed turn into a structured lesson.
 
-Wraps SubAgentRunner.run_from_tool with archetype="reflect".
-Parses JSON output; returns empty string on any failure (never crashes main flow).
+Runs a single llm_client completion (no tool loop) against the reflect system
+prompt; parses JSON output; returns empty string on any failure (never crashes
+the main flow).
 """
 
 from __future__ import annotations
@@ -12,9 +13,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from secretary.agent.llm_client import chat_completion
 from secretary.agent.reflection.trigger import FailureSignal
-from secretary.agent.subagent.context import SpawnContext
-from secretary.agent.subagent.runner import SubAgentDeps, SubAgentRunner
+from secretary.agent.subagent.registry import REFLECT_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _JSON_EXTRACT = re.compile(r"\{[^{}]*\}", re.DOTALL)
 
 
 class ReflectionRunner:
-    """Spawns a reflect sub-agent and parses its JSON output."""
+    """Runs the reflect prompt and parses its JSON output."""
 
     def __init__(
         self,
@@ -34,15 +35,10 @@ class ReflectionRunner:
         memory: Any,
         lumina_dir: Path | None = None,
     ) -> None:
-        deps = SubAgentDeps(
-            llm_config=llm_config,
-            file_auth=file_auth,
-            memory_store=memory_store,
-            memory=memory,
-            lumina_dir=lumina_dir,
-            temperature=0.3,
-        )
-        self._runner = SubAgentRunner(deps)
+        # file_auth / memory_store / memory / lumina_dir are kept for signature
+        # compatibility with ChatService._ensure_reflection_runner; the pure
+        # completion path below does not need tools.
+        self._llm_config = llm_config
 
     def run(
         self,
@@ -51,25 +47,23 @@ class ReflectionRunner:
         working_dir: Path,
         parent_session_id: str = "",
     ) -> str:
-        """Spawn reflect sub-agent. Returns JSON string, or "" on failure."""
+        """Analyze a failure signal. Returns JSON string, or "" on failure."""
         context = self._build_context(signal)
         goal = f"分析失败 turn: mode={signal.mode}, summary={signal.summary}"
 
-        spawn_context = SpawnContext(parent_session_id=parent_session_id)
+        messages = [
+            {"role": "system", "content": REFLECT_PROMPT},
+            {"role": "user", "content": f"## Task\n{goal}\n\n## Context\n{context}"},
+        ]
         try:
-            output = self._runner.run_from_tool(
-                {
-                    "goal": goal,
-                    "context": context,
-                    "archetype": "reflect",
-                },
-                spawn_context,
-                working_dir,
-                progress_callback=None,
-                cancel_check=None,
+            output = chat_completion(
+                self._llm_config,
+                messages,
+                temperature=0.3,
+                thinking="disabled",
             )
         except Exception as exc:
-            logger.warning("Reflection sub-agent failed: %s", exc)
+            logger.warning("Reflection completion failed: %s", exc)
             return ""
 
         return self._extract_json(output)

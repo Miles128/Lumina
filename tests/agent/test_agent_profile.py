@@ -16,10 +16,6 @@ from secretary.agent.tools.shell import ShellTool
 from secretary.services.todo_store import TodoStore
 
 
-class _SpawnStub:
-    name = "spawn_subagent"
-
-
 def test_parse_agent_profile_defaults_to_auto() -> None:
     assert parse_agent_profile(None) is AgentProfile.AUTO
     assert parse_agent_profile("unknown") is AgentProfile.AUTO
@@ -51,7 +47,7 @@ def test_ask_profile_filters_to_read_only_tools(tmp_path) -> None:
         AskUserTool(),
         TodoTool(TodoStore(tmp_path / "todo.json")),
     ]
-    picked = resolve_parent_tools(AgentProfile.ASK, tools, spawn_tool=_SpawnStub())
+    picked = resolve_parent_tools(AgentProfile.ASK, tools)
     names = {tool.name for tool in picked}
     assert "ls" in names
     assert "ask_user" in names
@@ -69,7 +65,7 @@ def test_plan_profile_includes_todo_and_skills(tmp_path) -> None:
         TodoTool(TodoStore(tmp_path / "todo.json")),
         SkillsListTool(SkillManager(tmp_path)),
     ]
-    picked = resolve_parent_tools(AgentProfile.PLAN, tools, spawn_tool=_SpawnStub())
+    picked = resolve_parent_tools(AgentProfile.PLAN, tools)
     names = {tool.name for tool in picked}
     assert "todo" in names
     assert "skills_list" in names
@@ -78,12 +74,8 @@ def test_plan_profile_includes_todo_and_skills(tmp_path) -> None:
     assert "spawn_subagent" not in names
 
 
-def test_build_profile_keeps_tools_and_spawn() -> None:
+def test_build_profile_keeps_tools() -> None:
     tools = [ListDirTool(), FileReadTool()]
-    picked = resolve_parent_tools(
-        AgentProfile.BUILD,
-        tools,
-        spawn_tool=_SpawnStub(),
-    )
+    picked = resolve_parent_tools(AgentProfile.BUILD, tools)
     names = {tool.name for tool in picked}
-    assert names == {"ls", "read", "spawn_subagent"}
+    assert names == {"ls", "read"}

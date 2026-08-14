@@ -9,15 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from secretary.agent.llm_config import LlmConfig
 from secretary.agent.loop import PendingConfirmation, StepResult
-from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
-from secretary.agent.tools.base import Tool, ToolCall
+from secretary.agent.tools.base import ToolCall
 from secretary.agent.turn_models import TurnContext, TurnStatus
 
-PauseKind = Literal["confirmation", "subagent", "parent_resume"]
+PauseKind = Literal["confirmation"]
 
-_PAUSE_KINDS: tuple[PauseKind, ...] = ("confirmation", "subagent", "parent_resume")
+_PAUSE_KINDS: tuple[PauseKind, ...] = ("confirmation",)
 
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
@@ -110,100 +108,6 @@ def pause_restore_confirmation(data: dict[str, Any]) -> tuple[PendingConfirmatio
     if not isinstance(pending_raw, dict) or not isinstance(messages_raw, list):
         raise ValueError("invalid confirmation pause bundle")
     return _pending_from_dict(pending_raw), [item for item in messages_raw if isinstance(item, dict)]
-
-
-def pause_bundle_subagent(state: SubAgentResumeState) -> dict[str, Any]:
-    return {
-        "run_id": state.run_id,
-        "archetype": state.archetype,
-        "goal": state.goal,
-        "context": state.context,
-        "child_session_id": state.child_session_id,
-        "parent_session_id": state.parent_session_id,
-        "messages": state.messages,
-        "max_steps": state.max_steps,
-        "working_dir": str(state.working_dir),
-        "pending": _to_json(asdict(state.pending)),
-        "temperature": state.temperature,
-        "pending_step": _to_json(asdict(state.pending_step)) if state.pending_step else None,
-        "steps_completed": state.steps_completed,
-        "used_tools": list(state.used_tools),
-        "trace_id": state.trace_id,
-        "success_criteria": state.success_criteria,
-    }
-
-
-def pause_restore_subagent(data: dict[str, Any], llm_config: LlmConfig) -> SubAgentResumeState:
-    pending_raw = data.get("pending")
-    if not isinstance(pending_raw, dict):
-        raise ValueError("invalid subagent pause bundle")
-    return SubAgentResumeState(
-        run_id=str(data.get("run_id") or ""),
-        archetype=str(data.get("archetype") or "explore"),
-        goal=str(data.get("goal") or ""),
-        context=str(data.get("context") or ""),
-        child_session_id=str(data.get("child_session_id") or ""),
-        parent_session_id=str(data.get("parent_session_id") or ""),
-        messages=[item for item in data.get("messages", []) if isinstance(item, dict)],
-        max_steps=int(data.get("max_steps") or 20),
-        working_dir=Path(str(data.get("working_dir") or ".")),
-        pending=_pending_from_dict(pending_raw),
-        llm_config=llm_config,
-        temperature=float(data.get("temperature") or 0.7),
-        pending_step=_step_from_dict(data.get("pending_step")),
-        steps_completed=int(data.get("steps_completed") or 0),
-        used_tools=[str(item) for item in data.get("used_tools", []) if isinstance(item, str)],
-        trace_id=str(data.get("trace_id") or ""),
-        success_criteria=str(data.get("success_criteria") or ""),
-    )
-
-
-def pause_bundle_parent(state: ParentTurnResumeState) -> dict[str, Any]:
-    return {
-        "messages_snapshot": state.messages_snapshot,
-        "tool_names": [tool.name for tool in state.tools],
-        "max_steps": state.max_steps,
-        "pending_step": _to_json(asdict(state.pending_step)),
-        "assistant_message": state.assistant_message,
-        "native_used": state.native_used,
-        "step_idx": state.step_idx,
-        "session_id": state.session_id,
-        "user_message": state.user_message,
-        "profile_excerpt": state.profile_excerpt,
-        "memory_hits": state.memory_hits,
-    }
-
-
-def pause_restore_parent(
-    data: dict[str, Any],
-    *,
-    llm_config: LlmConfig,
-    tools: list[Tool],
-) -> ParentTurnResumeState:
-    pending_step = _step_from_dict(data.get("pending_step"))
-    if pending_step is None:
-        raise ValueError("invalid parent resume bundle")
-    by_name = {tool.name: tool for tool in tools}
-    tool_names = [str(name) for name in data.get("tool_names", []) if isinstance(name, str)]
-    missing = [name for name in tool_names if name not in by_name]
-    if missing:
-        raise ValueError(f"parent resume tools missing after restart: {', '.join(missing)}")
-    return ParentTurnResumeState(
-        messages_snapshot=[item for item in data.get("messages_snapshot", []) if isinstance(item, dict)],
-        tools=[by_name[name] for name in tool_names],
-        max_steps=int(data.get("max_steps") or 20),
-        pending_step=pending_step,
-        assistant_message=data.get("assistant_message")
-        if isinstance(data.get("assistant_message"), dict)
-        else None,
-        native_used=bool(data.get("native_used")),
-        step_idx=int(data.get("step_idx") or 0),
-        llm_config=llm_config,
-        session_id=str(data.get("session_id") or ""),
-        user_message=str(data.get("user_message") or ""),
-        profile_excerpt=str(data.get("profile_excerpt") or ""),
-        memory_hits=int(data.get("memory_hits") or 0),
-    )
 
 
 def _turn_to_dict(turn: TurnContext) -> dict[str, Any]:

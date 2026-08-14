@@ -49,16 +49,10 @@ from secretary.agent.session_store import (
     PauseKind,
     SessionStore,
     pause_bundle_confirmation,
-    pause_bundle_parent,
-    pause_bundle_subagent,
     pause_restore_confirmation,
-    pause_restore_parent,
-    pause_restore_subagent,
 )
 from secretary.agent.skills import SkillManager
 from secretary.agent.soul import load_soul
-from secretary.agent.subagent import SpawnSubagentTool
-from secretary.agent.subagent.resume import ParentTurnResumeState, SubAgentResumeState
 from secretary.agent.tools.base import Tool
 from secretary.agent.turn_models import TurnContext
 from secretary.agent.turn_runner import AgentTurnPlan, LoopHookBundle, TurnRunner
@@ -166,9 +160,6 @@ class ChatService:
         self._pending_messages: list[dict[str, str]] | None = None
         self._pending_llm_config: LlmConfig | None = None
         self._pending_lock = threading.Lock()
-        self._subagent_pending: SubAgentResumeState | None = None
-        self._parent_turn_resume: ParentTurnResumeState | None = None
-        self._active_spawn_tool: SpawnSubagentTool | None = None
         self._prompt_gate = PromptGate(settings, agent_config_store)
         from secretary.agent.web_routing import WebIntentRouter
 
@@ -266,41 +257,12 @@ class ChatService:
         llm_config = resolve_llm_config(self._settings, self._agent_config_store)
         if llm_config is None:
             return
-        sub_state = None
         if "confirmation" in loaded:
             try:
                 pending, messages = pause_restore_confirmation(loaded["confirmation"])
                 self._set_pending(pending, messages, llm_config, persist=False)
             except ValueError as exc:
                 logger.warning("confirmation pause restore failed: %s", exc)
-        if "subagent" in loaded:
-            try:
-                sub_state = pause_restore_subagent(loaded["subagent"], llm_config)
-                self._handle_subagent_paused(sub_state, persist=False)
-            except ValueError as exc:
-                logger.warning("subagent pause restore failed: %s", exc)
-        if "parent_resume" in loaded:
-            try:
-                tools = self._tool_registry.build_tools()
-                self._set_parent_turn_resume(
-                    pause_restore_parent(
-                        loaded["parent_resume"],
-                        llm_config=llm_config,
-                        tools=tools,
-                    ),
-                    persist=False,
-                )
-            except ValueError as exc:
-                logger.warning("parent resume pause restore failed: %s", exc)
-        if sub_state is not None or self._parent_turn_resume is not None:
-            parent_session_id = (
-                sub_state.parent_session_id if sub_state is not None else ""
-            )
-            self._active_spawn_tool = self._tool_registry.make_spawn_tool(
-                llm_config,
-                parent_session_id=parent_session_id or None,
-                trace_id=_active_trace_id_var.get(),
-            )
 
     def _set_pending(
         self,
@@ -321,30 +283,6 @@ class ChatService:
                 "confirmation",
                 pause_bundle_confirmation(pending=pending, messages=messages),
             )
-
-    def _handle_subagent_paused(self, state: SubAgentResumeState, *, persist: bool = True) -> None:
-        with self._pending_lock:
-            self._subagent_pending = state
-        if persist:
-            self._persist_pause(_active_trace_id_var.get(), "subagent", pause_bundle_subagent(state))
-
-    def _take_subagent_pending(self) -> SubAgentResumeState | None:
-        with self._pending_lock:
-            state = self._subagent_pending
-            self._subagent_pending = None
-            return state
-
-    def _set_parent_turn_resume(self, state: ParentTurnResumeState, *, persist: bool = True) -> None:
-        with self._pending_lock:
-            self._parent_turn_resume = state
-        if persist:
-            self._persist_pause(_active_trace_id_var.get(), "parent_resume", pause_bundle_parent(state))
-
-    def _take_parent_turn_resume(self) -> ParentTurnResumeState | None:
-        with self._pending_lock:
-            state = self._parent_turn_resume
-            self._parent_turn_resume = None
-            return state
 
     def is_author_turn(self, message: str) -> bool:
         cleaned = message.strip()
@@ -613,10 +551,7 @@ class ChatService:
         _active_parent_message_id_var.set("")
         self._active_parent_message_id = ""
         self._restore_pause_from_store(_active_trace_id_var.get())
-        sub_state = self._take_subagent_pending()
         pending, messages, llm_config = self._take_pending()
-        with self._pending_lock:
-            spawn_tool = self._active_spawn_tool
 
         if not approved or pending is None or messages is None or llm_config is None:
             reply = "好的，已取消操作。"
@@ -638,26 +573,6 @@ class ChatService:
             self._file_auth.grant_session_write_new()
         if pending.tool_name == "code_exec":
             self._file_auth.grant_session_code_exec()
-
-        if sub_state is not None:
-            if spawn_tool is None:
-                self._clear_persisted_pause(_active_trace_id_var.get())
-                reply = "子代理状态丢失，无法恢复。请重新发起请求。"
-                self._append_assistant_notice(reply)
-                return ChatResult(
-                    reply=reply,
-                    profile_excerpt="",
-                    used_llm=False,
-                    memory_hits=0,
-                )
-            return self._confirm_subagent_action(
-                sub_state,
-                spawn_tool,
-                messages,
-                llm_config,
-                progress_callback=progress_callback,
-                cancel_check=cancel_check,
-            )
 
         tools = self._tool_registry.build_tools()
         harness = self._harness_config()
@@ -684,6 +599,7 @@ class ChatService:
             compaction_keep_tail=harness.compaction_keep_tail,
             max_tool_output_chars=harness.max_tool_output_chars,
             web_search_backend=harness.web_search_backend,
+            lumina_dir=self._settings.resolved_data_dir(),
         )
 
         if result.pending_confirmation:
@@ -749,109 +665,6 @@ class ChatService:
             allow_permanent_read=cui.allow_permanent_read,
             allow_session_write=cui.allow_session_write,
             context_snapshot=confirm_context,
-        )
-
-    def _confirm_subagent_action(
-        self,
-        state: SubAgentResumeState,
-        spawn_tool: SpawnSubagentTool,
-        messages: list[dict[str, str]],
-        llm_config: LlmConfig,
-        *,
-        progress_callback: Callable[[ProgressEvent], None] | None = None,
-        cancel_check: Callable[[], bool] | None = None,
-    ) -> ChatResult:
-        summary = spawn_tool._runner.resume_paused(
-            state,
-            self._shell_working_dir(),
-            progress_callback=progress_callback,
-            cancel_check=cancel_check,
-        )
-        re_paused = spawn_tool.consume_paused()
-        if re_paused is not None:
-            self._handle_subagent_paused(re_paused)
-            raw_reply = (
-                f"子 Agent ({re_paused.archetype}) 需要你的确认：\n\n"
-                f"{re_paused.pending.description}\n\n是否允许？"
-            )
-            self._set_pending(
-                re_paused.pending,
-                messages + [{"role": "assistant", "content": raw_reply}],
-                llm_config,
-            )
-            safe_reply, _, _ = self._prepare_user_reply(raw_reply, "system:confirmed", llm_config)
-            self._append_history("system:confirmed", safe_reply)
-            self._save_to_session("assistant", safe_reply)
-            cui = _confirmation_ui(re_paused.pending)
-            return ChatResult(
-                reply=safe_reply,
-                profile_excerpt="",
-                used_llm=True,
-                memory_hits=0,
-                pending_confirmation=re_paused.pending,
-                confirmation_kind=cui.confirmation_kind,
-                allow_permanent_read=cui.allow_permanent_read,
-                allow_session_write=cui.allow_session_write,
-                confirmation_scope="subagent",
-            )
-
-        parent_resume = self._take_parent_turn_resume()
-        if parent_resume is not None:
-            result = self._turn_runner.resume_after_subagent(
-                llm_config,
-                parent_resume,
-                summary,
-                temperature=self._temperature(),
-                working_dir=self._shell_working_dir(),
-                progress_callback=progress_callback,
-                on_subagent_paused=self._handle_subagent_paused,
-                turn=self._active_turn(_active_trace_id_var.get()),
-                cancel_check=cancel_check,
-            )
-            if (
-                result.pending_confirmation
-                and self._subagent_pending
-                and result.messages_snapshot
-                and result.pending_step
-            ):
-                self._set_parent_turn_resume(
-                    ParentTurnResumeState(
-                        messages_snapshot=list(result.messages_snapshot),
-                        tools=parent_resume.tools,
-                        max_steps=parent_resume.max_steps,
-                        pending_step=result.pending_step,
-                        assistant_message=result.pause_assistant_message,
-                        native_used=result.pause_native_used,
-                        step_idx=result.total_steps - 1,
-                        llm_config=llm_config,
-                        session_id=parent_resume.session_id,
-                        user_message=parent_resume.user_message,
-                        profile_excerpt=parent_resume.profile_excerpt,
-                        memory_hits=parent_resume.memory_hits,
-                    )
-                )
-            return self._finalize_agent_result(
-                parent_resume.user_message,
-                parent_resume.messages_snapshot,
-                result,
-                llm_config,
-                parent_resume.session_id,
-                parent_resume.profile_excerpt,
-                memory_hits=parent_resume.memory_hits,
-                progress_callback=progress_callback,
-            )
-
-        raw_reply = f"子 Agent ({state.archetype}) 已完成：\n\n{summary}"
-        safe_reply, _, _ = self._prepare_user_reply(raw_reply, "system:confirmed", llm_config)
-        self._append_history("system:confirmed", safe_reply)
-        self._save_to_session("assistant", safe_reply)
-        self._background_review.schedule("system:confirmed", safe_reply, llm_config)
-        return ChatResult(
-            reply=safe_reply,
-            profile_excerpt="",
-            used_llm=True,
-            memory_hits=0,
-            confirmation_scope="subagent",
         )
 
     def clear_history(self) -> None:
@@ -1101,6 +914,7 @@ class ChatService:
             runtime_backend=harness.runtime_backend,
             require_confirm=harness.require_confirm,
             full_fs_access=self._full_fs_access(),
+            lumina_dir=self._settings.resolved_data_dir(),
         )
 
         if progress_callback is not None:
@@ -1233,7 +1047,7 @@ class ChatService:
 
         light_mode = decision.action == GateAction.LIGHT
         suggested = decision.intent.suggested_tools if decision.intent else ()
-        tools, spawn_tool = self._tool_registry.resolve_tools(
+        tools = self._tool_registry.resolve_tools(
             profile=profile,
             user_message=cleaned,
             suggested=suggested,
@@ -1242,8 +1056,6 @@ class ChatService:
             llm_config=llm_config,
             trace_id=_active_trace_id_var.get(),
         )
-        with self._pending_lock:
-            self._active_spawn_tool = spawn_tool if isinstance(spawn_tool, SpawnSubagentTool) else None
 
         harness = self._harness_config()
         max_steps = (
@@ -1268,6 +1080,7 @@ class ChatService:
             full_fs_access=self._full_fs_access(),
             max_tool_output_chars=harness.max_tool_output_chars,
             web_search_backend=harness.web_search_backend,
+            lumina_dir=self._settings.resolved_data_dir(),
             full_tools=self._tool_registry.build_tools() if self._tool_registry else None,
             profile=profile.value,
         )
@@ -1279,32 +1092,9 @@ class ChatService:
                 temperature=self._temperature(),
                 working_dir=self._shell_working_dir(),
                 progress_callback=progress_callback,
-                on_subagent_paused=self._handle_subagent_paused,
                 turn=self._active_turn(_active_trace_id_var.get()),
                 cancel_check=cancel_check,
             )
-            if (
-                result.pending_confirmation
-                and self._subagent_pending
-                and result.messages_snapshot
-                and result.pending_step
-            ):
-                self._set_parent_turn_resume(
-                    ParentTurnResumeState(
-                        messages_snapshot=list(result.messages_snapshot),
-                        tools=plan.tools,
-                        max_steps=plan.max_steps,
-                        pending_step=result.pending_step,
-                        assistant_message=result.pause_assistant_message,
-                        native_used=result.pause_native_used,
-                        step_idx=result.total_steps - 1,
-                        llm_config=llm_config,
-                        session_id=session_id,
-                        user_message=cleaned,
-                        profile_excerpt=profile_excerpt,
-                        memory_hits=len(hits),
-                    )
-                )
             return self._finalize_agent_result(
                 cleaned,
                 messages,
@@ -1430,8 +1220,6 @@ class ChatService:
 
         cui3 = _confirmation_ui(result.pending_confirmation)
         confirmation_scope = ""
-        if result.pending_confirmation is not None and self._subagent_pending is not None:
-            confirmation_scope = "subagent"
         snapshot_messages = (
             list(result.messages_snapshot)
             if result.messages_snapshot is not None
@@ -1896,8 +1684,7 @@ class ChatService:
                 "- 用户消息含自动写入关键词（默认「记住」）或「写入记忆：…」时，系统会立刻写入 MEMORY.md；"
                 "其他明确个人事实也可用 memory 工具写入；后台只整理稳定事实，不记 API 故障\n"
                 "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
-                "- 复杂任务可 spawn_subagent：explore（只读）、worker（可改文件）、verify（审查）；"
-                "可用 goals 数组并行最多 3 个 explore；"
+                "- 复杂任务可委派子 Agent：spawn_explore（只读）、spawn_worker（可改文件）、spawn_verify（审查）；"
                 "子任务只回摘要，关键结论需你自行整合后再回复用户"
             )
             if browser_on:

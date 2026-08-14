@@ -11,7 +11,4 @@ VERIFY_MAX_STEPS = 6
 PLAN_MAX_STEPS = 8
 REFLECT_MAX_STEPS = 4
 
-SUBAGENT_TIMEOUT_SEC = 120
-REFLECT_TIMEOUT_SEC = 60
-
 BUILTIN_ARCHETYPES = frozenset({"explore", "worker", "verify", "plan", "reflect"})

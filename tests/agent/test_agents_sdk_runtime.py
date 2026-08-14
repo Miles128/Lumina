@@ -371,7 +371,6 @@ def test_build_subagent_tools_registers_archetypes(monkeypatch) -> None:
 
 def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
     from secretary.agent import agents_sdk_runtime
-    from secretary.agent.subagent.runner import SubAgentDeps
 
     captured: dict[str, Any] = {}
 
@@ -380,12 +379,6 @@ def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
         return _fake_result(final_output="ok")
 
     monkeypatch.setattr(agents_sdk_runtime, "_run_streamed_turn", _fake_run)
-    deps = SubAgentDeps(
-        llm_config=_llm_config(),
-        file_auth=None,
-        memory_store=None,  # type: ignore[arg-type]
-        memory=None,  # type: ignore[arg-type]
-    )
     tools = [FileWriteTool(), ListDirTool()]
     run_with_agents_sdk(
         llm_config=_llm_config(),
@@ -393,7 +386,7 @@ def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
         tools=tools,
         working_dir=Path("/tmp"),
         max_turns=3,
-        subagent_deps=deps,
+        lumina_dir=Path("/tmp"),
     )
     names = captured["tool_names"]
     assert "spawn_subagent" not in names

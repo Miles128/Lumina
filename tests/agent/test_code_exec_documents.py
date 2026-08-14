@@ -131,8 +131,8 @@ def test_code_exec_never_confirms(tmp_path: Path) -> None:
 
 def test_ask_profile_includes_code_exec_plan_excludes(tmp_path: Path) -> None:
     tools = [ListDirTool(), FileReadTool(), CodeExecTool()]
-    ask = {t.name for t in resolve_parent_tools(AgentProfile.ASK, tools, spawn_tool=None)}
-    plan = {t.name for t in resolve_parent_tools(AgentProfile.PLAN, tools, spawn_tool=None)}
+    ask = {t.name for t in resolve_parent_tools(AgentProfile.ASK, tools)}
+    plan = {t.name for t in resolve_parent_tools(AgentProfile.PLAN, tools)}
     assert "code_exec" in ask
     assert "code_exec" not in plan
 

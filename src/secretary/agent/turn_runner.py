@@ -33,14 +33,6 @@ def _uses_legacy_pause(pending: Any) -> bool:
     return not str(getattr(pending, "sdk_state", "") or "")
 
 
-def _find_spawn_deps(tools: list[Tool]) -> Any | None:
-    """Extract SubAgentDeps from the SpawnSubagentTool in a tool set, if any."""
-    for tool in tools:
-        if getattr(tool, "name", "") == "spawn_subagent":
-            return getattr(tool, "deps", None)
-    return None
-
-
 @dataclass(frozen=True)
 class AgentTurnPlan:
     """Prepared inputs for one agent loop turn."""
@@ -63,6 +55,9 @@ class AgentTurnPlan:
     full_fs_access: bool = False
     max_tool_output_chars: int | None = None
     web_search_backend: str = "tavily"
+    # Lumina data dir (resolved_data_dir) — passed to the SDK backend so it can
+    # load custom archetypes (~/.lumina/subagents/*.md) for as_tool sub-agents.
+    lumina_dir: Path | None = None
     # Full Build tool set (for auto mode-upgrade when the model needs a tool
     # outside the routed profile's set).
     full_tools: list[Tool] | None = None
@@ -139,7 +134,6 @@ class TurnRunner:
         max_steps: int,
         working_dir: Path | None,
         progress_callback: Callable[[ProgressEvent], None] | None,
-        on_subagent_paused: Callable[[Any], None] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         explicit_working_dir: bool = False,
         compaction_max_tokens: int | None = None,
@@ -158,7 +152,6 @@ class TurnRunner:
             file_auth=self._file_auth,
             progress_callback=progress_callback,
             working_dir=working_dir,
-            on_subagent_paused=on_subagent_paused,
             cancel_check=cancel_check,
             before_turn_hooks=hooks.before_turn,
             before_model_call_hooks=hooks.before_model_call,
@@ -182,7 +175,6 @@ class TurnRunner:
         temperature: float,
         working_dir: Path | None = None,
         progress_callback: Callable[[ProgressEvent], None] | None = None,
-        on_subagent_paused: Callable[[Any], None] | None = None,
         turn: TurnContext | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> LoopResult:
@@ -221,7 +213,7 @@ class TurnRunner:
                     require_confirm=plan.require_confirm,
                     compaction_max_tokens=plan.compaction_max_tokens,
                     compaction_keep_tail=plan.compaction_keep_tail,
-                    subagent_deps=_find_spawn_deps(plan.tools),
+                    lumina_dir=plan.lumina_dir,
                     web_search_backend=plan.web_search_backend,
                     full_tools=plan.full_tools,
                     allow_mode_upgrade=plan.profile == "auto",
@@ -280,6 +272,7 @@ class TurnRunner:
         compaction_keep_tail: int | None = None,
         max_tool_output_chars: int | None = None,
         web_search_backend: str = "tavily",
+        lumina_dir: Path | None = None,
         # Full Build tool set (for auto mode-upgrade when the model needs a
         # tool outside the routed profile's set).
         full_tools: list[Tool] | None = None,
@@ -307,7 +300,7 @@ class TurnRunner:
                     file_auth=self._file_auth,
                     progress_callback=wrapped,
                     cancel_check=cancel_check,
-                    subagent_deps=_find_spawn_deps(tools),
+                    lumina_dir=lumina_dir,
                     web_search_backend=web_search_backend,
                     full_tools=full_tools,
                     allow_mode_upgrade=allow_mode_upgrade,
@@ -325,54 +318,3 @@ class TurnRunner:
                 max_tool_output_chars=max_tool_output_chars,
             )
             return loop.resume_after_confirmation(pending, messages, temperature=temperature)
-
-    def resume_after_subagent(
-        self,
-        llm_config: LlmConfig,
-        resume: Any,
-        tool_output: str,
-        *,
-        temperature: float,
-        working_dir: Path | None = None,
-        progress_callback: Callable[[ProgressEvent], None] | None = None,
-        on_subagent_paused: Callable[[Any], None] | None = None,
-        turn: TurnContext | None = None,
-        cancel_check: Callable[[], bool] | None = None,
-    ) -> LoopResult:
-        wrapped = bind_turn_progress(progress_callback, turn)
-        from secretary.agent.subagent.resume import ParentTurnResumeState
-
-        if not isinstance(resume, ParentTurnResumeState):
-            return LoopResult(
-                reply=str(tool_output),
-                steps=[],
-                used_tools=["spawn_subagent"],
-                total_steps=1,
-            )
-        step = resume.pending_step
-        if step.tool_call is None:
-            return LoopResult(
-                reply=str(tool_output),
-                steps=[],
-                used_tools=["spawn_subagent"],
-                total_steps=1,
-            )
-        loop = self._build_agent_loop(
-            llm_config,
-            tools=list(resume.tools),
-            max_steps=resume.max_steps,
-            working_dir=working_dir,
-            progress_callback=wrapped,
-            on_subagent_paused=on_subagent_paused,
-            cancel_check=cancel_check,
-        )
-        return loop.resume_after_subagent_tool(
-            resume.messages_snapshot,
-            thought=step.thought,
-            tool_call=step.tool_call,
-            tool_output=tool_output,
-            assistant_message=resume.assistant_message,
-            native_used=resume.native_used,
-            step_idx=resume.step_idx,
-            temperature=temperature,
-        )

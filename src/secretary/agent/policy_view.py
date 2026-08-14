@@ -26,7 +26,7 @@ def _archetype_tools(name: str) -> list[str]:
     if spec is None:
         return []
     if spec.tool_names is None:
-        # explore / verify defaults: read-oriented (see registry.resolve_tools)
+        # explore / verify defaults: read-oriented tool set.
         return ["ls", "read", "grep", "search_memory", "web_search"]
     return sorted(spec.tool_names)
 
