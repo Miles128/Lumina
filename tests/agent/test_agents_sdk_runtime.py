@@ -373,6 +373,32 @@ def test_build_subagent_tools_registers_archetypes(monkeypatch) -> None:
     assert "goals" in parallel_params["required"]
 
 
+def test_parallel_explore_budget_enforced(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from secretary.agent import agents_sdk_runtime as r
+
+    async def _fake_run(**kwargs):
+        return MagicMock(final_output="ok", new_items=[])
+
+    monkeypatch.setattr(r.Runner, "run", _fake_run)
+
+    budget = [3]
+    invoke = r._parallel_explore_invoke(
+        MagicMock(),
+        4,
+        cancel_check=None,
+        budget=budget,
+    )
+
+    out1 = asyncio.run(invoke(None, '{"goals": ["a", "b", "c"]}'))
+    assert budget[0] == 0
+    assert "### explore 1" in out1
+
+    out2 = asyncio.run(invoke(None, '{"goals": ["d", "e"]}'))
+    assert "配额" in out2
+
+
 def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:
     from secretary.agent import agents_sdk_runtime
 

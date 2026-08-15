@@ -24,7 +24,6 @@ ProgressKind = Literal[
     "subagent_started",
     "subagent_paused",
     "subagent_finished",
-    "idp_update",
     "final_reply",
     "stopped",
     "reply_start",
@@ -55,8 +54,6 @@ class ProgressEvent:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     error_type: str = ""
-    # Optional IDP observation payload (envelope + lifecycle); JSON-serializable dict.
-    idp: dict[str, object] | None = None
     # Absolute paths for artifact sidebar auto-preview.
     paths: tuple[str, ...] = ()
     # Full assembled-context snapshot for harness UI (context_ready).
@@ -139,8 +136,6 @@ def progress_event_label(event: ProgressEvent) -> str:
         status = "完成" if event.success else "失败"
         detail = event.message[:80] if event.message else f"子任务{status}"
         return prefix + detail
-    if event.kind == "idp_update":
-        return prefix + (event.message.strip() or event.detail.strip() or "委派协议更新")
     if event.kind == "final_reply":
         return prefix + "整理回复"
     if event.kind == "stopped":
@@ -213,8 +208,6 @@ def progress_event_payload(event: ProgressEvent) -> dict[str, object]:
         payload["completion_tokens"] = event.completion_tokens
     if event.error_type.strip():
         payload["error_type"] = event.error_type.strip()
-    if event.idp is not None:
-        payload["idp"] = event.idp
     if event.paths:
         payload["paths"] = list(event.paths)
     if event.context is not None:

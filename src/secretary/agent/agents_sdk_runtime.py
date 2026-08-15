@@ -431,8 +431,13 @@ def _parallel_explore_invoke(
     max_turns: int,
     *,
     cancel_check: Callable[[], bool] | None,
+    budget: list[int],
 ) -> Callable[[Any, str], Awaitable[str]]:
-    """Invoke handler for spawn_explore_parallel: run N explore goals concurrently."""
+    """Invoke handler for spawn_explore_parallel: run N explore goals concurrently.
+
+    ``budget`` is a shared per-turn counter (MAX_PARALLEL_EXPLORE) so repeated
+    parallel calls cannot exceed the fan-out quota within one turn.
+    """
     run_config = RunConfig(tracing_disabled=True)
 
     async def run_one(goal: str) -> str:
@@ -460,6 +465,13 @@ def _parallel_explore_invoke(
         goals = [str(g).strip() for g in raw_goals if str(g).strip()][:3]
         if len(goals) < 2:
             return "Error: spawn_explore_parallel requires 2-3 non-empty goals."
+        remaining = budget[0]
+        if remaining <= 0:
+            from secretary.agent.subagent.policy import MAX_PARALLEL_EXPLORE
+
+            return f"Error: 并行 explore 配额已用完（本轮最多 {MAX_PARALLEL_EXPLORE} 个并行目标）。"
+        goals = goals[:remaining]
+        budget[0] = remaining - len(goals)
         results = await asyncio.gather(*(run_one(g) for g in goals))
         return "\n\n".join(
             f"### explore {index}: {goal}\n{text}"
@@ -618,12 +630,17 @@ def build_subagent_tools(
     max_turns ceiling. Tool usage is recorded into the shared ``tracked`` /
     ``steps_out`` lists (outer run view).
     """
+    from secretary.agent.subagent.policy import MAX_PARALLEL_EXPLORE
     from secretary.agent.subagent.registry import get_archetype, list_archetype_names
 
     names = archetypes or tuple(list_archetype_names(lumina_dir))
     wrapped: list[FunctionTool] = []
     shared_tracked = tracked if tracked is not None else []
     shared_steps = steps_out if steps_out is not None else []
+    # Per-turn fan-out quota: repeated spawn_explore_parallel calls within one
+    # turn share this counter, so the model cannot exceed MAX_PARALLEL_EXPLORE
+    # concurrent explore goals (mirrors the legacy SubAgentRunner quota).
+    parallel_budget = [MAX_PARALLEL_EXPLORE]
     for archetype in names:
         spec = get_archetype(archetype, lumina_dir)
         if spec is None:
@@ -685,6 +702,7 @@ def build_subagent_tools(
                         agent,
                         spec.max_steps,
                         cancel_check=cancel_check,
+                        budget=parallel_budget,
                     ),
                 )
             )

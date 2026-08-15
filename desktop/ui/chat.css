@@ -1008,65 +1008,6 @@ html, body {
   border: none;
 }
 
-.idp-panel {
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg-subtle);
-}
-.idp-panel-title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  margin-bottom: 4px;
-}
-.idp-panel-meta {
-  font-size: 11px;
-  margin-bottom: 6px;
-}
-.idp-panel-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.idp-panel-item {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  font-size: 12px;
-}
-.idp-panel-item-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  align-items: baseline;
-  margin-bottom: 2px;
-}
-.idp-panel-arch {
-  font-weight: 600;
-}
-.idp-panel-state {
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-.idp-panel-goal {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.idp-panel-envelope {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.35;
-}
-
 /* ========== 思考过程可视化 · Agent 泳道 + 工具芯片 ========== */
 .tp-tree,
 .tp-sublanes {

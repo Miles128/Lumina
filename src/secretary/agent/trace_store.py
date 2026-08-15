@@ -133,5 +133,4 @@ class TraceStore:
             "prompt_tokens": event.prompt_tokens,
             "completion_tokens": event.completion_tokens,
             "error_type": event.error_type,
-            "idp": event.idp,
         }

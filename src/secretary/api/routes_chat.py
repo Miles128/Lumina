@@ -52,19 +52,6 @@ async def chat_progress(request: Request, trace_id: str) -> StreamingResponse:
     )
 
 
-@router.get("/api/chat/idp/{trace_id}")
-def get_chat_idp(trace_id: str) -> dict[str, object]:
-    """IDP: read-only Internal Delegation Protocol snapshot for a turn."""
-    from secretary.agent.idp import get_idp_store, protocol_constants
-
-    tid = trace_id.strip()
-    view = get_idp_store().snapshot(tid)
-    return {
-        **protocol_constants(),
-        **view.to_dict(),
-    }
-
-
 @router.get("/api/chat/traces/{trace_id}")
 def get_chat_trace(request: Request, trace_id: str) -> dict[str, object]:
     """FR-51: load persisted reasoning / run trace nodes for a turn."""

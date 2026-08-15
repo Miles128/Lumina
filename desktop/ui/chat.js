@@ -21,24 +21,6 @@
     });
   }
   const subagentTreeEl = document.getElementById("subagent-tree");
-  const idpPanelEl = document.getElementById("idp-panel");
-  const idpPanelMetaEl = document.getElementById("idp-panel-meta");
-  const idpPanelListEl = document.getElementById("idp-panel-list");
-  /** @type {Map<string, object>} */
-  let idpRecords = new Map();
-  /** Fallback labels; prefer server `role_display_names` when present on snapshots. */
-  let idpRoleDisplayNames = {
-    root: "项目主管",
-    plan: "产品经理",
-    explore: "调研分析",
-    worker: "执行者",
-    verify: "调研分析",
-    pro: "方案主张",
-    con: "风险质询",
-    referee: "评审仲裁",
-    write_gate: "项目落地",
-  };
-  let idpTopology = { max_spawn_depth: 1 };
   const newThreadBtn = document.getElementById("btn-new-thread");
   const threadListEl = document.getElementById("thread-list");
   const chatForm = document.getElementById("chat-form");
@@ -98,7 +80,6 @@
     hasNetwork: false,
     hasThought: false,
     hasRawOutput: false,
-    hasIdp: false,
     rawOutput: "",
     stepCount: 0,
     panelVisible: false,
@@ -1392,7 +1373,6 @@
       hasNetwork: false,
       hasThought: false,
       hasRawOutput: false,
-      hasIdp: false,
       rawOutput: "",
       stepCount: 0,
       panelVisible: false,
@@ -1404,20 +1384,10 @@
       compactionAfter: 0,
       compactionCount: 0,
     };
-    idpRecords = new Map();
     const metricsEl = document.getElementById("turn-efficiency-metrics");
     if (metricsEl) {
       metricsEl.hidden = true;
       metricsEl.textContent = "";
-    }
-    if (idpPanelEl) {
-      idpPanelEl.hidden = true;
-    }
-    if (idpPanelListEl) {
-      idpPanelListEl.innerHTML = "";
-    }
-    if (idpPanelMetaEl) {
-      idpPanelMetaEl.textContent = "";
     }
     if (subagentTreeEl) {
       subagentTreeEl.hidden = true;
@@ -1455,74 +1425,8 @@
       progressSession.hasSubagent ||
       progressSession.hasThought ||
       progressSession.hasTurnTree ||
-      progressSession.hasRawOutput ||
-      progressSession.hasIdp
+      progressSession.hasRawOutput
     );
-  }
-
-  function idpDisplayRole(archetype) {
-    const key = String(archetype || "").toLowerCase();
-    return idpRoleDisplayNames[key] || String(archetype || "?");
-  }
-
-  function applyIdpProtocolMeta(payload) {
-    if (!payload || typeof payload !== "object") return;
-    if (payload.role_display_names && typeof payload.role_display_names === "object") {
-      idpRoleDisplayNames = {
-        ...idpRoleDisplayNames,
-        ...payload.role_display_names,
-      };
-    }
-    if (payload.topology && typeof payload.topology === "object") {
-      idpTopology = { ...idpTopology, ...payload.topology };
-    }
-  }
-
-  function renderIdpPanel() {
-    if (!idpPanelEl || !idpPanelListEl) return;
-    if (idpRecords.size === 0) {
-      idpPanelEl.hidden = true;
-      return;
-    }
-    progressSession.hasIdp = true;
-    idpPanelEl.hidden = false;
-    if (idpPanelMetaEl) {
-      const depthCap = idpTopology.max_spawn_depth ?? 1;
-      idpPanelMetaEl.textContent =
-        `channel=parent_child_only · peer=forbidden · return=summary_only · depth≤${depthCap}`;
-    }
-    idpPanelListEl.innerHTML = "";
-    for (const rec of idpRecords.values()) {
-      const env = rec?.envelope || {};
-      const li = document.createElement("li");
-      li.className = "idp-panel-item";
-      const head = document.createElement("div");
-      head.className = "idp-panel-item-head";
-      const arch = document.createElement("span");
-      arch.className = "idp-panel-arch";
-      arch.textContent = idpDisplayRole(env.archetype);
-      arch.title = String(env.archetype || "");
-      const state = document.createElement("span");
-      state.className = "idp-panel-state";
-      state.textContent = String(rec.state || "");
-      head.appendChild(arch);
-      head.appendChild(state);
-      const goal = document.createElement("div");
-      goal.className = "idp-panel-goal";
-      goal.textContent = String(env.goal || "");
-      goal.title = String(env.goal || "");
-      const envelope = document.createElement("div");
-      envelope.className = "idp-panel-envelope";
-      const tools = Array.isArray(env.tool_scope) ? env.tool_scope.length : 0;
-      const rounds = env.budget?.max_rounds ?? "?";
-      envelope.textContent =
-        `conflict=${env.conflict_policy || "?"} · tools=${tools} · rounds≤${rounds}` +
-        (env.batch_id ? ` · batch=${env.batch_id}` : "");
-      li.appendChild(head);
-      li.appendChild(goal);
-      li.appendChild(envelope);
-      idpPanelListEl.appendChild(li);
-    }
   }
 
   function progressStepCount() {
@@ -2603,18 +2507,6 @@
       window.LuminaArtifacts?.noteToolEvent?.(event);
     }
     emitMapLiveOverlay(event);
-    if (kind === "idp_update" && event?.idp) {
-      applyIdpProtocolMeta(event.idp);
-      const runId = String(event.idp?.envelope?.run_id || event.sub_run_id || "");
-      if (runId) {
-        idpRecords.set(runId, event.idp);
-      }
-      renderIdpPanel();
-      if (shouldShowProgressPanel()) {
-        scheduleFlushProgressPanel();
-      }
-      return;
-    }
     if (kind === "tool_finished") {
       progressSession.toolCount = (progressSession.toolCount || 0) + 1;
       progressSession.hasTools = true;
