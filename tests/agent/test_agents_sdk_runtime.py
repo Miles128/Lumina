@@ -364,9 +364,13 @@ def test_build_subagent_tools_registers_archetypes(monkeypatch) -> None:
     by_tool_name = {tool.name: tool for tool in wrapped}
     assert "spawn_explore" in by_tool_name
     assert "spawn_worker" in by_tool_name
+    assert "spawn_explore_parallel" in by_tool_name
     params = by_tool_name["spawn_explore"].params_json_schema
     assert "goal" in params["properties"]
     assert "required" in params and "goal" in params["required"]
+    parallel_params = by_tool_name["spawn_explore_parallel"].params_json_schema
+    assert "goals" in parallel_params["properties"]
+    assert "goals" in parallel_params["required"]
 
 
 def test_run_with_agents_sdk_swaps_spawn_tool_for_as_tools(monkeypatch) -> None:

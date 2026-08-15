@@ -395,6 +395,81 @@ def _subagent_input_builder(options: Any) -> list[dict[str, Any]]:
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
 
+def _agent_result_text(result: Any) -> str:
+    """Extract the final text output from an SDK RunResult (mirrors as_tool default)."""
+    out = getattr(result, "final_output", None)
+    if isinstance(out, str) and out.strip():
+        return out.strip()
+    from agents.items import ItemHelpers, MessageOutputItem
+
+    for item in reversed(getattr(result, "new_items", None) or []):
+        if isinstance(item, MessageOutputItem):
+            text = ItemHelpers.text_message_output(item)
+            if text:
+                return text
+    return str(out or "").strip()
+
+
+_PARALLEL_EXPLORE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "goals": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 2,
+            "maxItems": 3,
+            "description": "2-3 independent read-only explore goals to run in parallel.",
+        }
+    },
+    "required": ["goals"],
+    "additionalProperties": False,
+}
+
+
+def _parallel_explore_invoke(
+    explore_agent: Agent,
+    max_turns: int,
+    *,
+    cancel_check: Callable[[], bool] | None,
+) -> Callable[[Any, str], Awaitable[str]]:
+    """Invoke handler for spawn_explore_parallel: run N explore goals concurrently."""
+    run_config = RunConfig(tracing_disabled=True)
+
+    async def run_one(goal: str) -> str:
+        if cancel_check is not None and cancel_check():
+            return f"[cancelled] {goal}"
+        try:
+            result = await Runner.run(
+                starting_agent=explore_agent,
+                input=[{"role": "user", "content": goal}],
+                max_turns=max_turns,
+                run_config=run_config,
+            )
+        except MaxTurnsExceeded:
+            return f"[max_turns exceeded] {goal}"
+        except Exception as exc:
+            logger.warning("parallel explore goal failed: %s", exc)
+            return f"[error] {goal}: {exc}"
+        text = _agent_result_text(result)
+        return text or f"[no output] {goal}"
+
+    async def _invoke(ctx: Any, arguments: str) -> str:
+        del ctx
+        args = _parse_tool_arguments(arguments)
+        raw_goals = args.get("goals") or []
+        goals = [str(g).strip() for g in raw_goals if str(g).strip()][:3]
+        if len(goals) < 2:
+            return "Error: spawn_explore_parallel requires 2-3 non-empty goals."
+        results = await asyncio.gather(*(run_one(g) for g in goals))
+        return "\n\n".join(
+            f"### explore {index}: {goal}\n{text}"
+            for index, (goal, text) in enumerate(zip(goals, results, strict=False), 1)
+        )
+
+    return _invoke
+
+
+
 def _strip_reasoning_xml(text: str) -> str:
     """Strip tool-call XML residue the model mimics inside reasoning.
 
@@ -596,6 +671,23 @@ def build_subagent_tools(
                 max_turns=spec.max_steps,
             )
         )
+        if archetype == "explore":
+            wrapped.append(
+                FunctionTool(
+                    name="spawn_explore_parallel",
+                    description=(
+                        "Run 2-3 independent read-only explore goals in parallel. "
+                        "Use for fanning out independent research/lookup tasks; "
+                        "each goal returns its own summary."
+                    ),
+                    params_json_schema=_PARALLEL_EXPLORE_SCHEMA,
+                    on_invoke_tool=_parallel_explore_invoke(
+                        agent,
+                        spec.max_steps,
+                        cancel_check=cancel_check,
+                    ),
+                )
+            )
     return wrapped
 
 

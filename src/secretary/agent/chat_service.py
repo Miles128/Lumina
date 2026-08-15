@@ -1685,6 +1685,7 @@ class ChatService:
                 "其他明确个人事实也可用 memory 工具写入；后台只整理稳定事实，不记 API 故障\n"
                 "- 完成复杂任务后，总结关键事实到 durable memory（target=memory）\n"
                 "- 复杂任务可委派子 Agent：spawn_explore（只读）、spawn_worker（可改文件）、spawn_verify（审查）；"
+                "多个独立的只读查证可用 spawn_explore_parallel 并行 2-3 个；"
                 "子任务只回摘要，关键结论需你自行整合后再回复用户"
             )
             if browser_on:
