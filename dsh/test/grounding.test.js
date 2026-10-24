@@ -26,3 +26,9 @@ test('content questions require a real read', () => {
   assert.equal(isContentQuestion('列出目录里有哪些文件'), false)
   assert.equal(isContentQuestion('今天有什么新闻'), false)
 })
+
+test('write/action requests are not grounding questions', () => {
+  assert.equal(isContentQuestion('把 hello 写到 /private/tmp/x.txt'), false)
+  assert.equal(isFilesystemQuestion('用 write 工具把内容保存到 out.md'), false)
+  assert.equal(isFilesystemQuestion('删除这个目录'), false)
+})

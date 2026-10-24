@@ -32,6 +32,20 @@ export interface PromptConfig {
   persona: string
 }
 
+export interface MemoryConfig {
+  enabled: boolean
+  root: string
+  /** Inject MEMORY.md into the system prompt on every assembly. */
+  inject: boolean
+  maxChars: number
+}
+
+export interface WriteGateConfig {
+  enabled: boolean
+  /** Workspace-relative proposals root for delegated children. */
+  proposalsDir: string
+}
+
 export interface LuminaConfig {
   /** Workspace root used by the jail and the confirmation policy. Defaults to cwd. */
   workspace?: string
@@ -44,6 +58,8 @@ export interface LuminaConfig {
   grounding: GroundingConfig
   trace: TraceConfig
   prompt: PromptConfig
+  memory: MemoryConfig
+  writeGate: WriteGateConfig
 }
 
 export const DEFAULT_PERSONA = `## Lumina (灵犀)
@@ -81,6 +97,8 @@ export const DEFAULT_CONFIG: LuminaConfig = {
   grounding: { enabled: true, maxRetries: 2 },
   trace: { enabled: true, root: '~/.lumina/traces', retention: 'full', retainDays: 30 },
   prompt: { enabled: true, persona: DEFAULT_PERSONA },
+  memory: { enabled: true, root: '~/.lumina/memories', inject: true, maxChars: 4000 },
+  writeGate: { enabled: true, proposalsDir: '.lumina/proposals' },
 }
 
 export function resolveConfig(input: Partial<LuminaConfig> = {}): LuminaConfig {
@@ -93,5 +111,7 @@ export function resolveConfig(input: Partial<LuminaConfig> = {}): LuminaConfig {
     grounding: { ...DEFAULT_CONFIG.grounding, ...(input.grounding ?? {}) },
     trace: { ...DEFAULT_CONFIG.trace, ...(input.trace ?? {}) },
     prompt: { ...DEFAULT_CONFIG.prompt, ...(input.prompt ?? {}) },
+    memory: { ...DEFAULT_CONFIG.memory, ...(input.memory ?? {}) },
+    writeGate: { ...DEFAULT_CONFIG.writeGate, ...(input.writeGate ?? {}) },
   }
 }

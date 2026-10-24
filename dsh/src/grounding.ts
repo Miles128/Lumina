@@ -33,6 +33,12 @@ const FS_MARKERS = [
 
 const WEB_MARKERS = ['联网', '网上', '搜索一下', '最新', '新闻', 'trending', 'web search', 'google']
 
+/** Action requests are not grounding questions: a denied write must not trigger a read retry. */
+const ACTION_MARKERS = [
+  '写', '创建', '新建', '删除', '移动', '复制', '保存', '追加', '重命名', '替换',
+  'write ', 'create ', 'delete ', 'remove ', 'move ', 'copy ', 'save ', 'append ', 'rename ',
+]
+
 const PATH_RE = /(?:^|[\s(（"'`])(~\/[^\s"'`]+|\/[A-Za-z0-9._+-][^\s"'`]*|\.{1,2}\/[^\s"'`]+)/
 const FILE_EXT_RE = /\b[\w./-]+\.(?:py|js|ts|tsx|jsx|json|md|yaml|yml|toml|txt|csv|rs|go|java|html|css|sh)\b/i
 
@@ -58,6 +64,12 @@ interface EventLike {
   message?: MessageLike
   name?: string
   arguments?: string
+  data?: {
+    turn?: number
+    message?: MessageLike
+    name?: string
+    arguments?: string
+  }
 }
 
 function textOf(message: MessageLike | undefined): string {
@@ -75,17 +87,22 @@ function isWebQuestion(text: string): boolean {
 }
 
 export function isContentQuestion(text: string): boolean {
-  if (isWebQuestion(text)) return false
+  if (isWebQuestion(text) || isActionRequest(text)) return false
   const lowered = text.toLowerCase()
   if (CONTENT_MARKERS.some((marker) => text.includes(marker) || lowered.includes(marker))) return true
   return FILE_EXT_RE.test(text)
 }
 
 export function isFilesystemQuestion(text: string): boolean {
-  if (!text || isWebQuestion(text)) return false
+  if (!text || isWebQuestion(text) || isActionRequest(text)) return false
   const lowered = text.toLowerCase()
   if (FS_MARKERS.some((marker) => text.includes(marker) || lowered.includes(marker))) return true
   return PATH_RE.test(text)
+}
+
+export function isActionRequest(text: string): boolean {
+  const lowered = text.toLowerCase()
+  return ACTION_MARKERS.some((marker) => text.includes(marker) || lowered.includes(marker))
 }
 
 export function installGrounding(ctx: Context, cfg: LuminaConfig): void {
@@ -95,31 +112,33 @@ export function installGrounding(ctx: Context, cfg: LuminaConfig): void {
 
   ctx.on('session/event', (session, event) => {
     const typed = event as unknown as EventLike
+    const data = typed.data ?? typed
     const id = String(session.id ?? '')
     if (!id) return
 
     if (typed.type === 'turn/start') {
-      states.set(id, { turn: typed.turn ?? 0, question: '', reply: '', tools: new Set(), commands: [] })
+      states.set(id, { turn: data.turn ?? 0, question: '', reply: '', tools: new Set(), commands: [] })
       return
     }
     const state = states.get(id)
     if (!state) return
 
     if (typed.type === 'user/message') {
-      if (typed.message?.source?.kind === 'user') state.question = textOf(typed.message)
+      const message = data as unknown as MessageLike
+      if (message?.source?.kind === 'user') state.question = textOf(message)
       return
     }
     if (typed.type === 'assistant/message') {
-      const turn = typed.turn ?? state.turn
-      if (turn === state.turn) state.reply = textOf(typed.message)
+      const turn = data.turn ?? state.turn
+      if (turn === state.turn) state.reply = textOf(data.message)
       return
     }
     if (typed.type === 'tool/call') {
-      if (typed.name) {
-        state.tools.add(typed.name)
-        if (/^(bash|pwsh)$/.test(typed.name)) {
+      if (data.name) {
+        state.tools.add(data.name)
+        if (/^(bash|pwsh)$/.test(data.name)) {
           try {
-            const args = JSON.parse(typed.arguments ?? '{}') as { command?: string }
+            const args = JSON.parse(data.arguments ?? '{}') as { command?: string }
             if (args.command) state.commands.push(args.command)
           } catch {
             /* malformed args are the tool layer's problem */

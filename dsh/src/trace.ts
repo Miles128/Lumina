@@ -21,13 +21,16 @@ const SUMMARY_LIMIT = 200
 
 interface TraceEvent {
   type: string
-  turn?: number
-  step?: number
   seq?: number
   time?: number
-  name?: string
-  callId?: string
-  message?: { role?: string; content?: Array<{ type: string; text?: string }>; isError?: boolean; source?: { kind?: string } }
+  data?: {
+    turn?: number
+    step?: number
+    name?: string
+    callId?: string
+    message?: { role?: string; content?: Array<{ type: string; text?: string }>; isError?: boolean; source?: { kind?: string } }
+    error?: unknown
+  }
   error?: unknown
 }
 
@@ -45,23 +48,27 @@ function clip(text: string, retention: string): string {
 }
 
 function project(sessionId: string, event: TraceEvent, retention: string): Record<string, unknown> {
-  const text = event.message?.content
-    ?.filter((block) => block.type === 'text' && typeof block.text === 'string')
+  const data = event.data ?? {}
+  const message = event.type === 'user/message'
+    ? (data as unknown as TraceEvent['data'] & { content?: Array<{ type: string; text?: string }>; source?: { kind?: string } })
+    : data.message
+  const content = (message as { content?: Array<{ type: string; text?: string }> } | undefined)?.content
+  const text = content?.filter((block) => block.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join('\n') ?? ''
   return {
     ts: Date.now(),
     trace_id: sessionId,
     seq: event.seq,
-    turn: event.turn,
-    step: event.step,
+    turn: data.turn,
+    step: data.step,
     kind: event.type,
-    tool_name: event.name,
-    call_id: event.callId,
-    role: event.message?.role,
-    is_error: event.message?.isError,
+    tool_name: data.name,
+    call_id: data.callId,
+    role: event.type === 'user/message' ? 'user' : data.message?.role,
+    is_error: data.message?.isError,
     text: clip(text, retention),
-    error: event.error ? clip(String(event.error), retention) : undefined,
+    error: data.error ? clip(String(data.error), retention) : undefined,
   }
 }
 

@@ -10,9 +10,9 @@ export function expandHome(input: string): string {
   return input
 }
 
-/** Absolute workspace root, resolved once per call. */
-export function workspaceRoot(configured?: string): string {
-  return path.resolve(expandHome(configured ?? process.cwd()))
+/** Absolute workspace root: explicit config wins, then the session cwd, then process cwd. */
+export function workspaceRoot(configured?: string, sessionCwd?: string): string {
+  return path.resolve(expandHome(configured ?? sessionCwd ?? process.cwd()))
 }
 
 /** Resolve a user/model supplied path against the workspace root. */

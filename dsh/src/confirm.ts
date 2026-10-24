@@ -42,7 +42,7 @@ function isMcpTool(name: string): boolean {
 export function installConfirm(ctx: Context, cfg: LuminaConfig): void {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const rule = cfg.requireConfirm
-    const root = workspaceRoot(cfg.workspace)
+    const root = workspaceRoot(cfg.workspace, exec.agent?.session?.header?.cwd)
 
     if (WRITE_TOOLS.has(exec.name)) {
       const raw = filePathOf(exec.arguments)

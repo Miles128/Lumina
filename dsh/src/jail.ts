@@ -26,7 +26,7 @@ export function installJail(ctx: Context, cfg: LuminaConfig): void {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (cfg.fullFsAccess) return next()
-    const root = workspaceRoot(cfg.workspace)
+    const root = workspaceRoot(cfg.workspace, exec.agent?.session?.header?.cwd)
 
     if (WRITE_TOOLS.has(exec.name)) {
       const raw = filePathOf(exec.arguments)

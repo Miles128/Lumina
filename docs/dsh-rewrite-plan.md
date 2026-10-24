@@ -1,9 +1,9 @@
 # DSH 插件化改造方案（Lumina → DeepSeek Harness 插件）
 
-> **状态：已启动 · Phase 0 通过 · Slice 1 已落地**
+> **状态：已启动 · Phase 0 通过 · Slice 1+2 已落地并通过真实会话验收**
 > 分支：`spike/dsh-runtime`
 > 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
-> 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / jail / confirm / grounding / trace），已安装到本机 `~/.dsh/profiles/lumina`。
+> 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / writegate / jail / confirm / grounding / memory / trace），已安装到本机 `~/.dsh/profiles/lumina`。
 > 定位：Lumina 由「独立 harness 产品」转为「DeepSeek Harness 生态的差异化插件包」，消除 PRD「不嵌入产品 runtime」冲突（见 §5.0）。
 
 ---
@@ -239,21 +239,36 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 **结论**：两个否决项（MCP、工具钩子）均通过；不做 runtime 内嵌，改为「dsh 宿主 + Lumina 插件 + 客户端 UI 插件」。Phase 1 直接进入垂直切片。
 
-### Slice 1 已交付（`dsh/`）
+### Slice 1 + 2 已交付（`dsh/`）
 
 | 模块 | 落点 | 测试 |
 |---|---|---|
 | `prompt` | `ctx.systemPrompt.section`（人格 + grounding 纪律） | 随插槽验证 |
-| `jail` | `tools/pre-execute`（写盘 / shell 绝对路径越界 deny） | 4 例 |
+| `writegate` | `subagent/start` + `tools/pre-execute`（子 Agent 只写 proposals，shell 只读） | 4 例 + 真实子 Agent 验收 |
+| `jail` | `tools/pre-execute`（写盘 / shell 绝对路径越界 deny） | 4 例 + 真实会话验收 |
 | `confirm` | `tools/pre-execute` → `ask`（越界写 / 任意 shell / MCP 写） | 6 例 |
-| `grounding` | `session/event` 证据累积 + `agent/turn-stopping` steer 重试 | 3 例 |
-| `trace` | `session/event` → `~/.lumina/traces/<session>.jsonl` | 挂载验证 |
+| `grounding` | `session/event` 证据累积 + `agent/turn-stopping` steer 重试 | 4 例 + 真实会话验收 |
+| `memory` | MEMORY.md 自动注入 + `memory` / `search_memory` 工具 | 5 例 |
+| `trace` | `session/event` → `~/.lumina/traces/<session>.jsonl` | 2 例 + 真实会话验收 |
 
-验证：`cd dsh && npm run build && npm test`（17 passed）；`dsh --profile lumina --dump-config` 可见 `id: lumina`；`dsh --profile lumina --no-open --port 3920` 正常起 Web UI。
+验证：`cd dsh && npm run build && npm test`（30 passed）；`dsh --profile lumina --dump-config` 可见 `id: lumina`；`dsh --profile lumina --no-open --port 3920` 正常起 Web UI。
+
+### Slice 1 + 2 真实会话验收（2026-10-25）
+
+在 `~/.dsh/profiles/lumina` 上用 Playwright 驱动 dsh Web UI，真实模型（DeepSeek-V4.1-Flash）：
+
+| 场景 | 结果 |
+|---|---|
+| 内容问题「读一下 LUMINA_ACCEPT.md」 | ✅ 调用 `read`，4s 返回验收码 |
+| 禁止用工具、凭记忆回答文件内容 | ✅ grounding 注入补读指令 → 模型改调 `glob` → `read` → 基于真实内容回答 |
+| 写 `/private/tmp/lumina-escape.txt` | ✅ jail 返回 `sandbox: cannot write outside the workspace`，文件未创建，模型如实报告 |
+| 子 Agent 写业务路径 `EVIL.txt` | ✅ WriteGate 连续拦截 shell 与 write；子 Agent 改写到 `.lumina/proposals/<runId>/EVIL.txt`，业务文件未创建 |
+| trace | ✅ 每个会话落 JSONL，含 user / assistant / tool-call / tool-result / turn 事件 |
+
+验收后已清理：测试文件、`.lumina/proposals/<runId>`、测试用 profile 覆盖配置全部移除。
 
 ### 后续切片
 
-- Slice 2：WriteGate（子 Agent proposals 隔离）+ 记忆 / 会话投影
 - Slice 3：Skill DAG ↔ dsh `skill` / `workflow` 能力对齐
 - Slice 4：web_search / browser / MCP 策略、Shibei
 - Slice 5：退役 Python `api/` 与 Electron 壳，测试迁移
