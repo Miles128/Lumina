@@ -1,8 +1,9 @@
 # DSH 插件化改造方案（Lumina → DeepSeek Harness 插件）
 
-> **状态：DRAFT · 仅规划 · 未执行**
-> 分支：`spike/dsh-runtime`（本方案只做设计与调研，不落地代码）
-> 前置条件：Phase 0 spike 通过前，**不进入任何实现阶段**。
+> **状态：已启动 · Phase 0 通过 · Slice 1 已落地**
+> 分支：`spike/dsh-runtime`
+> 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
+> 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / jail / confirm / grounding / trace），已安装到本机 `~/.dsh/profiles/lumina`。
 > 定位：Lumina 由「独立 harness 产品」转为「DeepSeek Harness 生态的差异化插件包」，消除 PRD「不嵌入产品 runtime」冲突（见 §5.0）。
 
 ---
@@ -220,7 +221,46 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 ---
 
-## 9. 参考
+## 9. Phase 0 实测结论（2026-10-25）
+
+运行环境：dsh `0.2.1-rc.2`（npm）+ 本机 `~/.dsh/profiles/{web,desktop,weblocal}` + `dsh-forkmap` 客户端插件先例。
+
+| # | 待验证能力 | 结论 | 证据 |
+|---|---|---|---|
+| 1 | MCP 支持 | ✅ 原生 | `packages/mcp`（`mcp-client` / `mcp-resources`）已随 base 挂载，工具按 server 限定命名 |
+| 2 | 确认 / HITL | ✅ 等价 | `ctx.approval.request()` + `ApprovalPolicy('ask'\|'never')`；`tools/pre-execute` 返回 `ask` 即可触发，无 answerer 时 fail-closed |
+| 3 | 工具前后钩子 | ✅ 同步瀑布 | `tools/pre-execute` / `tools/execute` / `tools/post-execute` / `tools/result`，可改写或阻断 |
+| 4 | 会话持久化 | ✅ | JSONL session log + `session/disposed`/`flush`；恢复走 `Session.fromRestore` |
+| 5 | 思考链轨迹 | ✅ | `session/event` 全量事件流（turn/step/tool/assistant），Slice 1 已落 `lumina-trace` JSONL |
+| 6 | 嵌入形态 | ⚠️ 改为寄生 | dsh 无稳定嵌入式库 API；官方桌面版本身是 Electron + `dsh-web-app`，Lumina 直接做客户端插件，**不内嵌 runtime** |
+| 7 | 沙箱语义 | ✅ 可叠加 | `sandbox` / `sandbox-policy` + `fs/write-intent` 事件；`lumina-jail` 在其上做工作区硬栅栏 |
+
+**UI 扩展点**：✅ 可扩展。`package.json` 的 `dsh.client.inject` + `cordis.patch.yml` 可向 Web/Desktop UI 注入 React 组件；`dsh-forkmap`（对话地图）已在本机 web profile 运行。
+
+**结论**：两个否决项（MCP、工具钩子）均通过；不做 runtime 内嵌，改为「dsh 宿主 + Lumina 插件 + 客户端 UI 插件」。Phase 1 直接进入垂直切片。
+
+### Slice 1 已交付（`dsh/`）
+
+| 模块 | 落点 | 测试 |
+|---|---|---|
+| `prompt` | `ctx.systemPrompt.section`（人格 + grounding 纪律） | 随插槽验证 |
+| `jail` | `tools/pre-execute`（写盘 / shell 绝对路径越界 deny） | 4 例 |
+| `confirm` | `tools/pre-execute` → `ask`（越界写 / 任意 shell / MCP 写） | 6 例 |
+| `grounding` | `session/event` 证据累积 + `agent/turn-stopping` steer 重试 | 3 例 |
+| `trace` | `session/event` → `~/.lumina/traces/<session>.jsonl` | 挂载验证 |
+
+验证：`cd dsh && npm run build && npm test`（17 passed）；`dsh --profile lumina --dump-config` 可见 `id: lumina`；`dsh --profile lumina --no-open --port 3920` 正常起 Web UI。
+
+### 后续切片
+
+- Slice 2：WriteGate（子 Agent proposals 隔离）+ 记忆 / 会话投影
+- Slice 3：Skill DAG ↔ dsh `skill` / `workflow` 能力对齐
+- Slice 4：web_search / browser / MCP 策略、Shibei
+- Slice 5：退役 Python `api/` 与 Electron 壳，测试迁移
+
+---
+
+## 10. 参考
 
 - DeepSeek Harness 文档：<https://deepseek-harness.github.io/deepseek-harness/en/>
 - GitHub：<https://github.com/deepseek-ai/deepseek-harness>

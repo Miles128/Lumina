@@ -21,16 +21,20 @@ Fallback (no uv): `pip install -e ".[dev]"`
 uv run pytest
 uv run ruff check src tests
 uv run mypy src
+cd dsh && npm run build && npm test   # dsh plugin suite
 ```
 
 ## Architecture
 
 ```
-src/           FastAPI backend, AgentLoop, MCP, memory
-desktop/       Electron shell
+src/           FastAPI backend, AgentLoop, MCP, memory (legacy; migration source)
+dsh/           DeepSeek Harness plugin suite (target runtime)
+desktop/       Electron shell (legacy; UI moves to dsh Desktop/Web)
 tests/
 docs/          PRD + harness design — see docs/README.md
 ```
+
+Runtime direction: **dsh owns the harness** (loop · LLM · sandbox · delegation · session). Lumina keeps only the product layer as a dsh plugin (`dsh/`). Migration slices are tracked in `docs/dsh-rewrite-plan.md`; the Python backend stays runnable until the last slice lands.
 
 Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpowers/plans/` without checking PRD.
 
