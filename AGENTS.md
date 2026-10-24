@@ -34,7 +34,7 @@ tests/
 docs/          PRD + harness design — see docs/README.md
 ```
 
-Runtime direction: **dsh owns the harness** (loop · LLM · sandbox · delegation · session). Lumina keeps only the product layer as a dsh plugin (`dsh/`). Migration slices are tracked in `docs/dsh-rewrite-plan.md`; the Python backend stays runnable until the last slice lands.
+Runtime direction: **dsh owns the harness** (loop · LLM · sandbox · delegation · session). Lumina keeps only the product layer as a dsh plugin (`dsh/`). Skills and workflow orchestration use dsh native `skill` + `workflow` scripts — the Python DAG/canvas is retired and must not gain features. Migration slices are tracked in `docs/dsh-rewrite-plan.md`; the Python backend stays runnable until the last slice lands.
 
 Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpowers/plans/` without checking PRD.
 

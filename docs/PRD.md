@@ -17,7 +17,7 @@
 
 **一句话：** 把强模型关进可控 harness——权限清楚、危险动作要确认、长任务可分支回看、子任务可委派但树不发散、思考链可追溯、行为参数可定制——让个人（及企业可控运行环境）把复杂事做完。
 
-**当前特色（已交付）：** 对话地图（分支 / 回滚 / 恢复）、Build / Ask / Plan / Auto、可调本地 harness、MCP / 工具扩展、子 Agent 委派（默认单层）、Skill 工作流画布 MVP、思考链轨迹 MVP、Harness 可调参 MVP。  
+**当前特色（已交付）：** 对话地图（分支 / 回滚 / 恢复）、Build / Ask / Plan / Auto、可调本地 harness、MCP / 工具扩展、子 Agent 委派（默认单层）、Skill + Workflow 编排（dsh 原生：`SKILL.md` 按需加载 + JavaScript 工作流脚本）、思考链轨迹 MVP、Harness 可调参 MVP。  
 **规划中的差异化能力：** **受控深树 / 结构化对抗 / WriteGate / Mission Strip**（FR-53–56，见 [规格](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md)）；Skill DAG 高级能力仍属后续——文档与营销勿写成「全量已上线」。  
 **可选扩展：** Shibei 知识库、持久记忆——增强生产力，而非产品主叙事。  
 **外部集成原则：** 只做**标准 MCP**（stdio / SSE / Streamable HTTP）或 **CLI**（经 `shell` / MCP stdio 包装的外部命令）。**不再**为飞书/读书等平台维护一等公民自定义 Connector 产品面。
@@ -39,7 +39,7 @@
 | **Parent / referee decides** | 多路摘要由**项目主管**综合；可选 `verify` / `ask_user`；高分歧或高风险写路径可进入**结构化对抗**（方案主张 ↔ 风险质询，评审仲裁收束）；**禁止**子↔子自由总线与无限互撕 |
 | **WriteGate** | 子 Agent 只写隔离草稿（proposals）；**项目落地**仅主管/仲裁收尾经确认后写入业务路径 |
 | **Conversation map** | 线程内分支 / fork / rollback / restore 为已交付差异点；地图表达「任务怎么走过来」，不是组织协作平台 |
-| **Skill orchestration (planned)** | Skill DAG 与对话地图**产品入口分离**（回顾路径 vs 设计流程） |
+| **Skill orchestration** | 采用 dsh 原生两层：**Skill**（`SKILL.md` 按需加载，用户可 `/name` 调用）+ **Workflow**（模型写 JavaScript 脚本，`agent()` / `parallel()` / `pipeline()` 扇出子 Agent）。画布式 Skill DAG 已退役 |
 | **Integrations = MCP or CLI** | 外部能力只经标准 MCP 或 CLI；不新增平台专用 connector |
 | **Knowledge optional** | 启用且就绪时，**每轮自动** Shibei 答前召回注入 system prompt；不足再 `shibei_search` |
 | **Token-aware** | PromptGate / compaction / 子 Agent 只回摘要——省上下文、提高任务完成密度 |
@@ -56,7 +56,7 @@
 - LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** · OpenWorker runtime（**例外：** 作为 **DeepSeek Harness（dsh）生态插件**运行不在此列——宿主是 dsh，Lumina 不嵌入其 runtime，见 [dsh-rewrite-plan.md](dsh-rewrite-plan.md)；Python 过渡期允许以 `openai-agents` SDK 作为库基座，见 [2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md) 的后续替换说明）
 - IM 网关作为主 UI（FR-16 Deferred）
 - Orchestrator 作为独立 Profile（已移除；委派能力并入 **Build**）
-- 将 Skill DAG 未完成部分宣称为已上线
+- 宣称自研 Skill DAG / 画布编排（已退役；编排能力来自 dsh 原生 Skill + Workflow 脚本）
 - 恢复 `spawn_cli_agent`（已 Removed）；CLI 指用户配置的 MCP stdio / shell，不是外接编码 Agent 委派
 - 把「思考链」做成不可关闭的强制云端上报；默认本地留存，导出/分析由用户或企业管控环境决定
 

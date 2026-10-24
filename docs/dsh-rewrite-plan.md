@@ -1,6 +1,6 @@
 # DSH 插件化改造方案（Lumina → DeepSeek Harness 插件）
 
-> **状态：已启动 · Phase 0 通过 · Slice 1+2 已落地并通过真实会话验收**
+> **状态：已启动 · Phase 0 通过 · Slice 1–3 已落地并通过真实会话验收**
 > 分支：`spike/dsh-runtime`
 > 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
 > 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / writegate / jail / confirm / grounding / memory / trace），已安装到本机 `~/.dsh/profiles/lumina`。
@@ -267,9 +267,21 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 验收后已清理：测试文件、`.lumina/proposals/<runId>`、测试用 profile 覆盖配置全部移除。
 
+### Slice 3 已交付：Skill + Workflow 改用 dsh 原生能力
+
+决策：**直接用 dsh 的 workflow 脚本**，Lumina 画布式 Skill DAG 退役。
+
+| 能力 | 配置 | 验证 |
+|---|---|---|
+| Skill | 启用 `skill-filesystem` + `tool-skill`；`customSkillDirs: [~/.lumina/skills]`；默认扫描 `~/.agents/skills`（47 个有效技能） | 真实会话 `skill` 工具加载 `article-flow` → 返回标题 |
+| Workflow | 启用 `workflow-ptc`（provider: spawn）+ `tool-workflow` | 真实会话 `demo-ping`：1 phase / 1 agent / 3s，返回 `{ "reply": "pong" }` |
+
+文档：`dsh/WORKFLOWS.md`（目录优先级、`SKILL.md` 格式、脚本 hook、示例、迁移状态）；profile 模板：`dsh/profile.patch.example.yml`。
+
+旧实现处置：`src/secretary/workflow/`、`skills.py`、`executable_skill.py`、`desktop/ui/workflows.js` 停止演进，Slice 5 删除。
+
 ### 后续切片
 
-- Slice 3：Skill DAG ↔ dsh `skill` / `workflow` 能力对齐
 - Slice 4：web_search / browser / MCP 策略、Shibei
 - Slice 5：退役 Python `api/` 与 Electron 壳，测试迁移
 

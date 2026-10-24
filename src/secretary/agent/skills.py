@@ -1,4 +1,8 @@
-"""Discover, install, and manage agent skills (Cursor/Claude compatible)."""
+"""Discover, install, and manage agent skills (Cursor/Claude compatible).
+
+DEPRECATED: skill discovery/loading is owned by dsh's skill-filesystem +
+tool-skill (see dsh/WORKFLOWS.md). Kept for the legacy Python backend only.
+"""
 
 from __future__ import annotations
 
