@@ -23,4 +23,14 @@ export function installPrompt(ctx: Context, cfg: LuminaConfig): void {
     order: 120,
     text: GROUNDING_RULES,
   })
+  if (cfg.shibei.recall) {
+    const server = cfg.shibei.serverName
+    ctx.systemPrompt.section({
+      name: 'lumina:shibei-recall',
+      order: 125,
+      text: `## Personal knowledge recall (Shibei)
+
+When the \`mcp__${server}__shibei_context\` tool is available, call it BEFORE answering any non-imperative question about the user's background, personal notes, projects, decisions, or past conversations. Pass the user's original message and 5–8 keywords (synonyms and Chinese/English variants). If the tool suggests remembering a new durable fact, call \`mcp__${server}__shibei_remember\` after answering. Do not use Shibei for pure coding or generic world-knowledge questions.`,
+    })
+  }
 }

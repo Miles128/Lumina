@@ -46,3 +46,22 @@
     provider: spawn
 - id: tool-workflow
   disabled: false
+
+# --- Shibei knowledge base over MCP (optional) ------------------------------
+# Replace the paths with your checkout. `serverName` must match the
+# `lumina.shibei.serverName` value used by the recall prompt.
+- insert:
+    - id: mcp-shibei
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: shibei
+        transport: stdio
+        command: /Users/me/Documents/My Projects/shibei/.venv/bin/python
+        args:
+          - -m
+          - shibei.server
+        env:
+          PYTHONPATH: /Users/me/Documents/My Projects/shibei/src
+          SHIBEI_CONFIG: /Users/me/Documents/My Projects/shibei/config.yaml
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false

@@ -46,6 +46,13 @@ export interface WriteGateConfig {
   proposalsDir: string
 }
 
+export interface ShibeiConfig {
+  /** Add an answer-first recall rule for the Shibei MCP server. */
+  recall: boolean
+  /** MCP serverName configured on dsh-mcp-client. */
+  serverName: string
+}
+
 export interface LuminaConfig {
   /** Workspace root used by the jail and the confirmation policy. Defaults to cwd. */
   workspace?: string
@@ -60,6 +67,7 @@ export interface LuminaConfig {
   prompt: PromptConfig
   memory: MemoryConfig
   writeGate: WriteGateConfig
+  shibei: ShibeiConfig
 }
 
 export const DEFAULT_PERSONA = `## Lumina (灵犀)
@@ -99,6 +107,7 @@ export const DEFAULT_CONFIG: LuminaConfig = {
   prompt: { enabled: true, persona: DEFAULT_PERSONA },
   memory: { enabled: true, root: '~/.lumina/memories', inject: true, maxChars: 4000 },
   writeGate: { enabled: true, proposalsDir: '.lumina/proposals' },
+  shibei: { recall: true, serverName: 'shibei' },
 }
 
 export function resolveConfig(input: Partial<LuminaConfig> = {}): LuminaConfig {
@@ -113,5 +122,6 @@ export function resolveConfig(input: Partial<LuminaConfig> = {}): LuminaConfig {
     prompt: { ...DEFAULT_CONFIG.prompt, ...(input.prompt ?? {}) },
     memory: { ...DEFAULT_CONFIG.memory, ...(input.memory ?? {}) },
     writeGate: { ...DEFAULT_CONFIG.writeGate, ...(input.writeGate ?? {}) },
+    shibei: { ...DEFAULT_CONFIG.shibei, ...(input.shibei ?? {}) },
   }
 }

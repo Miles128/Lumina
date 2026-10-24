@@ -41,7 +41,7 @@
 | **Conversation map** | 线程内分支 / fork / rollback / restore 为已交付差异点；地图表达「任务怎么走过来」，不是组织协作平台 |
 | **Skill orchestration** | 采用 dsh 原生两层：**Skill**（`SKILL.md` 按需加载，用户可 `/name` 调用）+ **Workflow**（模型写 JavaScript 脚本，`agent()` / `parallel()` / `pipeline()` 扇出子 Agent）。画布式 Skill DAG 已退役 |
 | **Integrations = MCP or CLI** | 外部能力只经标准 MCP 或 CLI；不新增平台专用 connector |
-| **Knowledge optional** | 启用且就绪时，**每轮自动** Shibei 答前召回注入 system prompt；不足再 `shibei_search` |
+| **Knowledge optional** | 通过 dsh MCP 接 Shibei；启用时 prompt 规则要求回答个人背景 / 笔记 / 项目 / 历史决策类问题前先调 `shibei_context`（答前召回），不足再 `shibei_search` |
 | **Token-aware** | PromptGate / compaction / 子 Agent 只回摘要——省上下文、提高任务完成密度 |
 | **Minimal UI** | 紧凑 Electron 桌面；双语 English · 中文 |
 

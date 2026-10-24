@@ -2,7 +2,7 @@
 
 Lumina 的产品差异化层，打包为一个 DeepSeek Harness（`dsh`）插件。runtime（agent loop · LLM 适配 · 沙箱 · 委派 · session）由 dsh 官方提供，本仓库只保留 Lumina 自己的产品逻辑。
 
-## 已交付（Slice 1–3）
+## 已交付（Slice 1–4）
 
 | 模块 | 作用 | dsh seam |
 |---|---|---|
@@ -90,9 +90,19 @@ Lumina 原来的 Skill DAG 画布已退役，改用 dsh 原生能力：
 
 详见 [`WORKFLOWS.md`](WORKFLOWS.md)。
 
+## MCP & Web
+
+### Shibei（拾贝）知识库
+
+dsh 的 `mcp-client` 直接接 Shibei 的 stdio server，工具名形如 `mcp__shibei__shibei_context` / `shibei_search` / `shibei_remember`。插件里的 `lumina:shibei-recall` prompt 规则会要求模型在回答个人背景、笔记、项目、历史决策类问题前先调 `shibei_context`，恢复原来「答前召回」的行为。
+
+配置见 [`profile.patch.example.yml`](profile.patch.example.yml) 的 `mcp-shibei` 段。`serverName` 改了要同步 `lumina.shibei.serverName`。
+
+### Web
+
+dsh 自带 `web_search` / `web_fetch`，默认走 DeepSeek 官方搜索（`searchProvider: deepseek-official`，复用同一账号凭据），不需要 Lumina 的 Tavily key。实测当前新闻检索正常。
+
 ## 尚未迁移（后续切片）
 
 - 对话地图 → 已有独立客户端插件 `dsh-forkmap`
-- web_search / browser 服务层
-- MCP 策略与 Shibei
-- 退役 Python `api/` 与 Electron 壳，测试迁移
+- 退役 Python `api/` 与 Electron 壳，删除 DAG / skills / 画布代码（Slice 5）

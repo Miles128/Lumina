@@ -1,6 +1,6 @@
 # DSH 插件化改造方案（Lumina → DeepSeek Harness 插件）
 
-> **状态：已启动 · Phase 0 通过 · Slice 1–3 已落地并通过真实会话验收**
+> **状态：已启动 · Phase 0 通过 · Slice 1–4 已落地并通过真实会话验收**
 > 分支：`spike/dsh-runtime`
 > 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
 > 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / writegate / jail / confirm / grounding / memory / trace），已安装到本机 `~/.dsh/profiles/lumina`。
@@ -280,10 +280,19 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 旧实现处置：`src/secretary/workflow/`、`skills.py`、`executable_skill.py`、`desktop/ui/workflows.js` 停止演进，Slice 5 删除。
 
+### Slice 4 已交付：MCP / Shibei / Web
+
+| 能力 | 配置 | 验证 |
+|---|---|---|
+| Shibei MCP | `dsh-mcp-client` stdio → `shibei.server`（PYTHONPATH + SHIBEI_CONFIG），工具 11 个 | 真实会话 `shibei_search` 命中知识库；`shibei_context` 答前召回生效 |
+| 答前召回 | 插件新增 `lumina:shibei-recall` prompt section（`shibei.recall` / `shibei.serverName` 可配） | 问「我之前做过哪些 RAG 项目」→ 先 `shibei_context`，再 2 次 `shibei_search`，17s 给出带来源的完整回答 |
+| Web | dsh 原生 `web_search` / `web_fetch`（`deepseek-official` + http fetch） | 真实会话检索到 10-24/25 的新闻并给出标题 |
+
+确认：无需接 Tavily；dsh 走 DeepSeek 官方搜索。MCP 工具沿用 `mcp__<server>__<tool>` 命名，Lumina 的 confirm 策略对 `import` / `update` 类 MCP 写操作仍会询问。
+
 ### 后续切片
 
-- Slice 4：web_search / browser / MCP 策略、Shibei
-- Slice 5：退役 Python `api/` 与 Electron 壳，测试迁移
+- Slice 5：退役 Python `api/` 与 Electron 壳，删除 DAG / skills / 画布代码，测试迁移
 
 ---
 

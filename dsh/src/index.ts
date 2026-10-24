@@ -26,6 +26,7 @@ export type {
   MemoryConfig,
   PermissionMode,
   PromptConfig,
+  ShibeiConfig,
   TraceConfig,
   TraceRetention,
   WriteGateConfig,
