@@ -1,9 +1,9 @@
 # Lumina · 灵犀 — Product Requirements Document
 
-**Version:** 0.3.2  
+**Version:** 0.4.0  
 **Author:** 四海 (myx28@qq.com)  
-**Last updated:** 2026-07-30  
-**Status:** Active development · v0.3 harness focus · local Agent productivity
+**Last updated:** 2026-10-25  
+**Status:** Active development · v0.4 runtime migration (dsh) · local Agent productivity
 
 <p align="center">
   <img src="assets/logo.png" alt="Lumina logo" width="96" />
@@ -13,7 +13,7 @@
 
 ## 1. Product Vision · 产品愿景
 
-灵犀（Lumina）是一款**本地优先的通用 Agent 生产力工具**。应用在本机运行，接入 OpenAI 兼容大模型，以自研 harness（Turn · profiles · confirm · sub-agent）驱动工具调用与任务执行——**不是**「个人 AI 秘书」人设产品，也**不是**无工具的通用网页聊天机器人。
+灵犀（Lumina）是一款**本地优先的通用 Agent 生产力工具**。应用在本机运行，接入 OpenAI 兼容大模型，以 **DeepSeek Harness（`dsh`）官方 runtime** 驱动工具调用与任务执行，Lumina 自研其上层的产品差异化层（确认 · 对话地图 · grounding · TraceStore · Skill 编排）——**不是**「个人 AI 秘书」人设产品，也**不是**无工具的通用网页聊天机器人。
 
 **一句话：** 把强模型关进可控 harness——权限清楚、危险动作要确认、长任务可分支回看、子任务可委派但树不发散、思考链可追溯、行为参数可定制——让个人（及企业可控运行环境）把复杂事做完。
 
@@ -34,7 +34,7 @@
 | **Traceable reasoning** | **思考链可记录、可追溯、可分析**——模型推理 / 工具决策 / 确认与委派节点形成结构化轨迹，支持回放、审计与事后分析；对企业可控运行环境（合规、事故复盘、质量评估）是一等公民能力，而非调试彩蛋 |
 | **Configurable harness** | **Harness 功能暴露大量可定制参数**（确认策略、委派上限、compaction、工具轮次、超时、模型/profile 路由、思考链保留策略等）；默认合理、高级可调；配置可持久化、可导出/复用，避免「黑盒运行时」 |
 | **Grounded** | 文件/记忆类回答必须基于工具输出；**内容类问题未 `file_read`（或等价 MCP 读文件）不准回复**（仅 `list_dir` 不够） |
-| **Harness-first** | 产品 harness（Turn · confirm · SSE · profiles）自研；LLM/Agents **库**基座为 vendor fork **aisuite**；**不用 LangGraph**；**不 fork / 不嵌入** Pi · Hermes · OpenCode · OpenWorker 产品 runtime |
+| **Harness-first** | Agent runtime（loop · LLM 适配 · 沙箱 · 委派 · session）采用 **DeepSeek Harness（dsh）** 官方 runtime；Lumina **不嵌入、不 fork** Pi · Hermes · OpenCode · OpenWorker 产品 runtime。Lumina 自研的是**产品差异化插件层**（grounding · 确认 · 对话地图 · TraceStore · Shibei · Skill 编排），不重写 runtime。LLM 协议适配由 dsh 与 `openai-agents` SDK 承担 |
 | **Controlled tree** | 默认浅树（`depth=1`）；可配 **受控深树** `max_depth≤2`（硬顶 3）；并行与总节点有预算；禁止无限发散 |
 | **Parent / referee decides** | 多路摘要由**项目主管**综合；可选 `verify` / `ask_user`；高分歧或高风险写路径可进入**结构化对抗**（方案主张 ↔ 风险质询，评审仲裁收束）；**禁止**子↔子自由总线与无限互撕 |
 | **WriteGate** | 子 Agent 只写隔离草稿（proposals）；**项目落地**仅主管/仲裁收尾经确认后写入业务路径 |
@@ -53,7 +53,7 @@
 - **无限深度树、无预算并行、子↔子自由 peer 总线、无限互撕式辩论**（受控深树 depth≤2 与结构化对抗见规格，另述）
 - 为各 SaaS（飞书/微信读书/小红书等）继续扩展一等公民自定义 Connector
 - 无需确认的全自动 Agent
-- LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** · OpenWorker runtime（**例外：** 允许 vendor fork [aisuite](https://github.com/andrewyng/aisuite) 作为 LLM + Agents **库**基座，见 [2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md)；不以此替换 Electron 产品壳）
+- LangGraph / **fork 或嵌入** Hermes·OpenCode·**Pi** · OpenWorker runtime（**例外：** 作为 **DeepSeek Harness（dsh）生态插件**运行不在此列——宿主是 dsh，Lumina 不嵌入其 runtime，见 [dsh-rewrite-plan.md](dsh-rewrite-plan.md)；Python 过渡期允许以 `openai-agents` SDK 作为库基座，见 [2026-08-03-aisuite-base-design.md](superpowers/specs/2026-08-03-aisuite-base-design.md) 的后续替换说明）
 - IM 网关作为主 UI（FR-16 Deferred）
 - Orchestrator 作为独立 Profile（已移除；委派能力并入 **Build**）
 - 将 Skill DAG 未完成部分宣称为已上线
@@ -568,4 +568,4 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 
 ---
 
-*End of document · 文档结束 · v0.3.1*
+*End of document · 文档结束 · v0.4.0*
