@@ -50,3 +50,22 @@ jobs:
 
       - name: E2E (API + Playwright UI)
         run: bash scripts/e2e-smoke.sh
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop deps
+        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+        working-directory: desktop
+
+      - name: Type check (JS with JSDoc contracts)
+        run: npm run typecheck
+        working-directory: desktop
