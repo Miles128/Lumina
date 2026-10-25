@@ -1,0 +1,67 @@
+# Lumina profile override template
+#
+# Copy the relevant rows into $DSH_HOME/profiles/<name>/cordis.patch.yml.
+# The user layer replaces a row's whole `config`, so keep each block complete.
+
+# --- Product layer -----------------------------------------------------------
+- id: lumina
+  config:
+    # Omit `workspace` to use the session header cwd (recommended for the Web UI).
+    # workspace: /Users/me/project
+    jail: true
+    fullFsAccess: false
+    permissionMode: normal
+    writeGate:
+      enabled: true
+      proposalsDir: .lumina/proposals
+    grounding:
+      enabled: true
+      maxRetries: 2
+    memory:
+      enabled: true
+      root: ~/.lumina/memories
+      inject: true
+      maxChars: 4000
+    trace:
+      enabled: true
+      root: ~/.lumina/traces
+      retention: full
+      retainDays: 30
+
+# --- Skills (dsh native, replaces Lumina's Skill DAG) ------------------------
+# Discovered roots: <project>/.dsh/skills, <project>/.agents/skills,
+# customSkillDirs, ~/.dsh/skills, ~/.agents/skills.
+- id: skill-filesystem
+  disabled: false
+  config:
+    customSkillDirs:
+      - /Users/me/.lumina/skills   # absolute: dsh does not expand `~` here
+- id: tool-skill
+  disabled: false
+
+# --- Workflow scripts (JS orchestration over subagents) ----------------------
+- id: workflow-ptc
+  disabled: false
+  config:
+    provider: spawn
+- id: tool-workflow
+  disabled: false
+
+# --- Shibei knowledge base over MCP (optional) ------------------------------
+# Replace the paths with your checkout. `serverName` must match the
+# `lumina.shibei.serverName` value used by the recall prompt.
+- insert:
+    - id: mcp-shibei
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: shibei
+        transport: stdio
+        command: /Users/me/Documents/My Projects/shibei/.venv/bin/python
+        args:
+          - -m
+          - shibei.server
+        env:
+          PYTHONPATH: /Users/me/Documents/My Projects/shibei/src
+          SHIBEI_CONFIG: /Users/me/Documents/My Projects/shibei/config.yaml
+        toolCallTimeoutMs: 120000
+        failOnStartupError: false

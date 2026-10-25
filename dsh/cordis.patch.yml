@@ -1,0 +1,5 @@
+# dsh-lumina bundle patch — one row for the whole product layer.
+# Install with: dsh plugin --profile web add /path/to/Lumina/dsh
+- insert:
+    - id: lumina
+      name: dsh-lumina
