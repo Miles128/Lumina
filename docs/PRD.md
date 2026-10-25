@@ -15,13 +15,13 @@
 
 ## 1. Product Vision · 产品愿景
 
-灵犀（Lumina）是一款**本地优先的通用 Agent 生产力工具**。应用在本机运行，接入 OpenAI 兼容大模型，以 **DeepSeek Harness（`dsh`）官方 runtime** 驱动工具调用与任务执行，Lumina 自研其上层的产品差异化层（确认 · 对话地图 · grounding · TraceStore · Skill 编排）——**不是**「个人 AI 秘书」人设产品，也**不是**无工具的通用网页聊天机器人。
+灵犀（Lumina）是一款**本地优先的通用 Agent 生产力工具**。应用在本机运行，接入 OpenAI 兼容大模型，以 **DeepSeek Harness（`dsh`）官方 runtime** 驱动工具调用与任务执行；Lumina 的产品层聚焦**跨对话记忆 · Shibei 知识召回 · 对话树**——**不是**「个人 AI 秘书」人设产品，也**不是**无工具的通用网页聊天机器人。
 
-**一句话：** 把强模型关进可控 harness——权限清楚、危险动作要确认、长任务可分支回看、子任务可委派但树不发散、思考链可追溯、行为参数可定制——让个人（及企业可控运行环境）把复杂事做完。
+**一句话：** 让 Agent 记得住、查得到、回得去——跨会话记住你的偏好与决策，答前召回本地知识，长任务可分支回看。
 
-**当前特色（已交付）：** 对话地图（分支 / 回滚 / 恢复）、Build / Ask / Plan / Auto、可调本地 harness、MCP / 工具扩展、子 Agent 委派（默认单层）、Skill + Workflow 编排（dsh 原生：`SKILL.md` 按需加载 + JavaScript 工作流脚本）、思考链轨迹 MVP、Harness 可调参 MVP。  
-**规划中的差异化能力：** **受控深树 / 结构化对抗 / WriteGate / Mission Strip**（FR-53–56，见 [规格](superpowers/specs/2026-07-30-controlled-tree-adversarial-mission-strip-design.md)）；Skill DAG 高级能力仍属后续——文档与营销勿写成「全量已上线」。  
-**可选扩展：** Shibei 知识库、持久记忆——增强生产力，而非产品主叙事。  
+**当前特色（已交付）：** 对话树（dsh-forkmap：fork / 回滚 / 恢复）、跨会话记忆（MEMORY.md 注入 + `memory` / `search_memory`）、Shibei 答前召回（MCP）、Skill + Workflow（dsh 原生 `SKILL.md` + JavaScript 脚本）、标准 MCP 工具扩展。  
+**规划中的差异化能力：** **跨对话记忆系统 M2/M3**——自动捕获 episode、按需自动召回、可遗忘（见 [设计](cross-session-memory-design.md)）；WriteGate / 受控深树 / 结构化对抗暂缓。  
+**可选扩展：** Shibei 知识库——产品主叙事的一部分，不再只是「可选增强」。  
 **外部集成原则：** 只做**标准 MCP**（stdio / SSE / Streamable HTTP）或 **CLI**（经 `shell` / MCP stdio 包装的外部命令）。**不再**为飞书/读书等平台维护一等公民自定义 Connector 产品面。
 
 > **用语：** 产品主叙事是 **harness · 委派 · 确认 · 对话地图 · 工作流 · 可追溯思考链 · 可定制运行参数**。可偶尔用「协作 / 编制」描述人机与岗位化子任务推进；UI 可用 Mission Strip（岗位名 + 进度）。**不以**「Agent 协作平台 / 自由 Swarm / 聊天室式多智能体」作定位或宣传。
@@ -31,16 +31,15 @@
 | 原则 | 说明 |
 |------|------|
 | **Local & private** | 数据默认留在本机（`~/.lumina/`、可选 Shibei `~/.shibei/db`） |
-| **Action-oriented** | 读文件、跑命令、检索知识、联网；高风险操作必须确认 |
-| **Transparent** | 工具进度、子 Agent 树、对话地图、流式回复对用户可见 |
-| **Traceable reasoning** | **思考链可记录、可追溯、可分析**——模型推理 / 工具决策 / 确认与委派节点形成结构化轨迹，支持回放、审计与事后分析；对企业可控运行环境（合规、事故复盘、质量评估）是一等公民能力，而非调试彩蛋 |
-| **Configurable harness** | **Harness 功能暴露大量可定制参数**（确认策略、委派上限、compaction、工具轮次、超时、模型/profile 路由、思考链保留策略等）；默认合理、高级可调；配置可持久化、可导出/复用，避免「黑盒运行时」 |
-| **Grounded** | 文件/记忆类回答必须基于工具输出；**内容类问题未 `file_read`（或等价 MCP 读文件）不准回复**（仅 `list_dir` 不够） |
-| **Harness-first** | Agent runtime（loop · LLM 适配 · 沙箱 · 委派 · session）采用 **DeepSeek Harness（dsh）** 官方 runtime；Lumina **不嵌入、不 fork** Pi · Hermes · OpenCode · OpenWorker 产品 runtime。Lumina 自研的是**产品差异化插件层**（grounding · 确认 · 对话地图 · TraceStore · Shibei · Skill 编排），不重写 runtime。LLM 协议适配由 dsh 与 `openai-agents` SDK 承担 |
+| **Action-oriented** | 读文件、跑命令、检索知识、联网；工具执行与高风险确认由 dsh 提供 |
+| **Transparent** | 工具进度、子 Agent 树、对话树、流式回复由 dsh UI 呈现 |
+| **Traceable reasoning** | 思考链由 dsh session log + Trajectory 面板提供；Lumina 不再重复落盘 traces |
+| **Configurable harness** | 参数面由 dsh profile / plugin config 提供；Lumina 只暴露 memory / Shibei 开关 |
+| **Harness-first** | Agent runtime（loop · LLM 适配 · 沙箱 · 权限 · 委派 · session · traces · persona）采用 **DeepSeek Harness（dsh）** 官方 runtime；Lumina **不嵌入、不 fork** Pi · Hermes · OpenCode · OpenWorker 产品 runtime。Lumina 只做**产品层**（跨对话记忆 · Shibei · 对话树），不重写 runtime |
 | **Controlled tree** | 默认浅树（`depth=1`）；可配 **受控深树** `max_depth≤2`（硬顶 3）；并行与总节点有预算；禁止无限发散 |
 | **Parent / referee decides** | 多路摘要由**项目主管**综合；可选 `verify` / `ask_user`；高分歧或高风险写路径可进入**结构化对抗**（方案主张 ↔ 风险质询，评审仲裁收束）；**禁止**子↔子自由总线与无限互撕 |
-| **WriteGate** | 子 Agent 只写隔离草稿（proposals）；**项目落地**仅主管/仲裁收尾经确认后写入业务路径 |
-| **Conversation map** | 线程内分支 / fork / rollback / restore 为已交付差异点；地图表达「任务怎么走过来」，不是组织协作平台 |
+| **WriteGate (planned)** | 子 Agent 只写隔离草稿；当前版本暂缓，等 dsh 委派语义稳定后再评估 |
+| **Conversation tree** | 由客户端插件 `dsh-forkmap` 提供：session fork 谱系、一键分叉、按 parentId 展示；不做画布式组织图 |
 | **Skill orchestration** | 采用 dsh 原生两层：**Skill**（`SKILL.md` 按需加载，用户可 `/name` 调用）+ **Workflow**（模型写 JavaScript 脚本，`agent()` / `parallel()` / `pipeline()` 扇出子 Agent）。画布式 Skill DAG 已退役 |
 | **Integrations = MCP or CLI** | 外部能力只经标准 MCP 或 CLI；不新增平台专用 connector |
 | **Knowledge optional** | 通过 dsh MCP 接 Shibei；启用时 prompt 规则要求回答个人背景 / 笔记 / 项目 / 历史决策类问题前先调 `shibei_context`（答前召回），不足再 `shibei_search` |
@@ -307,8 +306,8 @@ spawn_subagent(worker) → file_write 需确认
                    │ tools/pre-execute · agent/turn-stopping · session/event
 ┌──────────────────▼───────────────────────────┐
 │  dsh-lumina plugin（本仓库）                  │
-│  prompt · writegate · jail · confirm         │
-│  grounding · memory · trace                  │
+│  memory · Shibei recall                      │
+│  （对话树由 dsh-forkmap 客户端插件提供）      │
 └──────────┬─────────────┬──────────────────────┘
            │             │
     ~/.lumina/      Shibei MCP（stdio）
