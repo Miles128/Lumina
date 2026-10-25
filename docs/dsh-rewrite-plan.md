@@ -305,6 +305,14 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 验证：`cd dsh && npm run build && npm test`（33 passed）。仓库只剩 `dsh/` + `docs/` + CI。
 
+### 2026-10-25 收口：插件瘦身
+
+迁移完成后按产品聚焦做了一次减法：
+
+- **删除**：workspace jail、confirmation policy、grounding、trace、persona、WriteGate —— 前四项与 dsh 自带能力重复，grounding/persona 不再作为产品差异。
+- **保留**：memory（MEMORY.md + 工具）、Shibei 答前召回；对话树由 `dsh-forkmap` 客户端插件承担。
+- **新增设计**：[cross-session-memory-design.md](cross-session-memory-design.md)（L1 事实 / L2 情景 / L3 知识，M2 自动捕获、M3 自动召回）。
+
 ### 后续（维护）
 
 - dsh 仍是 developer preview：升级前先跑 `npm test` + 一轮真实会话冒烟。
