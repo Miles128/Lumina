@@ -7,71 +7,11 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: src
-      LUMINA_DATA_DIR: ${{ github.workspace }}/.lumina-ci
-      SECRETARY_AUTO_SYNC_ENABLED: "false"
-      SECRETARY_BRIEFING_ENABLED: "false"
-      SECRETARY_THINK_ENABLED: "false"
-      SECRETARY_MEMORY_SUMMARY_ENABLED: "false"
-      PROMPT_GATE_ENABLED: "false"
-      MCP_AUTO_FILESYSTEM: "false"
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          uv sync --all-extras
-          uv run playwright install --with-deps chromium
-
-      - name: Prepare CI data directory
-        run: mkdir -p "$LUMINA_DATA_DIR"
-
-      - name: Lint (ruff)
-        run: uv run ruff check src tests --ignore E501
-
-      - name: Type check (mypy)
-        run: uv run mypy src
-
-      - name: Run tests
-        run: uv run pytest -q -m "not ui"
-
-      - name: E2E (API + Playwright UI)
-        run: bash scripts/e2e-smoke.sh
-
-  desktop:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
-
-      - name: Install desktop deps
-        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-        working-directory: desktop
-
-      - name: Type check (JS with JSDoc contracts)
-        run: npm run typecheck
-        working-directory: desktop
-
   dsh-plugin:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dsh
     steps:
       - uses: actions/checkout@v5
 
@@ -81,14 +21,11 @@ jobs:
           cache: npm
           cache-dependency-path: dsh/package-lock.json
 
-      - name: Install plugin deps
+      - name: Install
         run: npm ci --registry=https://registry.npmjs.org
-        working-directory: dsh
 
       - name: Build
         run: npm run build
-        working-directory: dsh
 
       - name: Test
         run: npm test
-        working-directory: dsh

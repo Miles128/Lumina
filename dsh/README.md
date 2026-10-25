@@ -102,7 +102,11 @@ dsh 的 `mcp-client` 直接接 Shibei 的 stdio server，工具名形如 `mcp__s
 
 dsh 自带 `web_search` / `web_fetch`，默认走 DeepSeek 官方搜索（`searchProvider: deepseek-official`，复用同一账号凭据），不需要 Lumina 的 Tavily key。实测当前新闻检索正常。
 
-## 尚未迁移（后续切片）
+## Legacy
 
-- 对话地图 → 已有独立客户端插件 `dsh-forkmap`
-- 退役 Python `api/` 与 Electron 壳，删除 DAG / skills / 画布代码（Slice 5）
+Python/FastAPI + Electron 实现已退役并从当前树删除：
+
+- tag：`legacy-python-v0.4.0`
+- branch：`archive/python-legacy`
+
+旧设计文档（`docs/harness-design.md`、`docs/workflow-dag-design.md`）仅存档，不代表当前实现。

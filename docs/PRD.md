@@ -1,9 +1,11 @@
 # Lumina · 灵犀 — Product Requirements Document
 
-**Version:** 0.4.0  
+**Version:** 0.5.0  
 **Author:** 四海 (myx28@qq.com)  
 **Last updated:** 2026-10-25  
-**Status:** Active development · v0.4 runtime migration (dsh) · local Agent productivity
+**Status:** Active development · v0.5 dsh plugin · local Agent productivity
+
+> **实现说明（v0.5）：** runtime 已交给 **DeepSeek Harness（dsh）**；Lumina 只交付产品层插件（`dsh/`），UI 寄生 dsh Desktop/Web。Python/FastAPI + Electron 实现已退役，代码存档于 tag `legacy-python-v0.4.0`。下文 FR 描述产品意图；逐模块实现映射见 [dsh-rewrite-plan.md](dsh-rewrite-plan.md)。
 
 <p align="center">
   <img src="assets/logo.png" alt="Lumina logo" width="96" />
@@ -43,7 +45,7 @@
 | **Integrations = MCP or CLI** | 外部能力只经标准 MCP 或 CLI；不新增平台专用 connector |
 | **Knowledge optional** | 通过 dsh MCP 接 Shibei；启用时 prompt 规则要求回答个人背景 / 笔记 / 项目 / 历史决策类问题前先调 `shibei_context`（答前召回），不足再 `shibei_search` |
 | **Token-aware** | PromptGate / compaction / 子 Agent 只回摘要——省上下文、提高任务完成密度 |
-| **Minimal UI** | 紧凑 Electron 桌面；双语 English · 中文 |
+| **Minimal UI** | 寄生 dsh Desktop / Web；Lumina 以客户端插件补充确认、轨迹等面板，不再自维护 Electron 壳 |
 
 ### 非目标（v0.3）
 
@@ -64,7 +66,7 @@
 
 | 选项 | 结论 |
 |------|------|
-| **Fork Pi 重写 Lumina** | **不做。** Pi 是 TypeScript 极简 coding loop；Lumina 是 Python harness + Electron 确认流 + 对话地图 + Shibei + MCP 产品层。Fork 等于丢弃已交付差异点，再重新实现一遍。 |
+| **Fork Pi 重写 Lumina** | **不做。** Pi 是 TypeScript 极简 coding loop；Lumina 是 dsh 插件 + 客户端 UI 扩展 + Shibei + MCP 产品层。Fork 等于丢弃已交付差异点，再重新实现一遍。 |
 | **嵌入 Pi runtime** | **不做**（与 Hermes/OpenCode 同列非目标）。 |
 | **可借鉴（非依赖）** | 短 system prompt、工具面克制、扩展点清晰——写进 prompt/工具设计纪律，不引入 Pi 代码。 |
 
@@ -291,34 +293,31 @@ spawn_subagent(worker) → file_write 需确认
 ## 7. System Architecture · 系统架构
 
 ```
-┌──────────── Electron Desktop ────────────┐
-│  chat · settings（含 harness 高级参数） │
-│  Build/Ask/Plan · conversation map      │
-│  思考链展开 / 轨迹切片 · workspace      │
-│  SSE: /api/chat/progress/{trace_id}     │
-└──────────────────┬───────────────────────┘
-                   │ localhost:8765
-┌──────────────────▼───────────────────────┐
-│  ChatService                             │
-│    → PromptGate → grounding / routing    │
-│    → TurnRunner → AgentLoop              │
-│    → ReasoningTrace（记录/追溯/导出）    │
-│    → HarnessConfig（可定制参数面）       │
-│    → spawn_subagent（depth≤1）           │
-│  ChatToolRegistry (profile 过滤)         │
-│  McpManager（标准 MCP = 外部集成主路径） │
-│  Scheduler: briefing · think             │
-│  Legacy: SyncService / connectors 冻结   │
-└──────────┬─────────────┬─────────────────┘
+┌──────────── dsh Desktop / Web UI ────────────┐
+│  chat · trajectory · workspace · settings     │
+│  Lumina client plugins（对话地图等）          │
+└──────────────────┬───────────────────────────┘
+                   │ dsh host（Electron / web）
+┌──────────────────▼───────────────────────────┐
+│  DeepSeek Harness runtime（官方维护）         │
+│  agent loop · LLM adapter · sandbox          │
+│  session · tools · approval · subagent       │
+│  MCP · skill · workflow                      │
+└──────────────────┬───────────────────────────┘
+                   │ tools/pre-execute · agent/turn-stopping · session/event
+┌──────────────────▼───────────────────────────┐
+│  dsh-lumina plugin（本仓库）                  │
+│  prompt · writegate · jail · confirm         │
+│  grounding · memory · trace                  │
+└──────────┬─────────────┬──────────────────────┘
            │             │
-    ~/.lumina/      Shibei ~/.shibei/db
-    agent · mcp     （可选读记忆）
-    traces · harness config
+    ~/.lumina/      Shibei MCP（stdio）
+    traces · memories
 ```
 
-**知识读取优先级：** 每轮自动 `Shibei.context`（启用且就绪时）→ 按需 `shibei_search` → `session_search` → `search_memory` → MEMORY.md  
+**知识读取优先级：** 个人背景类问题先 `shibei_context`（启用且就绪时）→ 不足再 `shibei_search` → dsh session query → `search_memory` → MEMORY.md  
 **外部集成：** 标准 MCP 或 CLI（见 §1）；平台专用 Connector = Legacy frozen。  
-**Runtime：** 自研 Python harness；不 fork / 不嵌入 Pi；思考链与可定制参数为一等公民（FR-51 / FR-52）。
+**Runtime：** DeepSeek Harness（dsh）官方 runtime；Lumina 只做产品层插件；思考链与可定制参数仍为一等公民（FR-51 / FR-52）。
 
 ---
 
@@ -548,19 +547,19 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 
 | 话题 | 决策 |
 |------|------|
-| 读记忆默认 | Shibei 启用且就绪时**每轮自动 context**；不足再 `shibei_search`；miss 再 `search_memory` |
+| 读记忆默认 | Shibei 启用且就绪时，个人背景类问题先 `shibei_context`；不足再 `shibei_search`；miss 再 `search_memory` |
 | 外部集成 | **只做标准 MCP 或 CLI**；不新增平台专用 Connector |
 | Sync / 自定义 connectors | **遗留冻结** |
 | CLI vs sub-agent | **`spawn_cli_agent` 已删除**；CLI = MCP stdio / `shell` |
 | 主 Agent 扩展 | **Auto** 替代 `mode: primary` |
-| Runtime 底座 | **自研 Python harness**；不 fork Pi |
+| Runtime 底座 | **DeepSeek Harness（dsh）官方 runtime** + `dsh-lumina` 产品插件；不再自研 harness |
 | 子 Agent 拓扑 | 默认 **depth=1**；可配深树 ≤2（硬顶 3）；并行有预算 |
 | 对抗 / 落地 | 结构化对抗可选；WriteGate；见 FR-53–56 与 2026-07-30 规格 |
 | 歧义处理 | 主管综合 → `ask_user` / `verify` / 评审仲裁 |
-| Web search | **Done** |
+| Web search | **Done**（dsh 原生 `web_search` / `web_fetch`） |
 | Briefing/Think | 暂停；先 harness 可见性 |
 | Background Review | 活跃 |
-| 打包 Python | v0.2 spike：sidecar venv |
+| 打包 Python | **已退役**（Python 后端 S5 删除；见 tag `legacy-python-v0.4.0`） |
 | FR-45–50 / F26 v0.3 Next | **全部 Done**（Deferred 项仍除外：IM/内嵌 Python/Explore 便宜模型等） |
 | 思考链（FR-51） | **做**：可记录 / 可追溯 / 可分析；默认本地；企业审计与复盘为一等场景 |
 | Harness 可定制参数（FR-52） | **做**：大量旋钮系统化暴露；默认合理、高级可调；与 FR-46/47/51 联动 |
@@ -568,4 +567,4 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 
 ---
 
-*End of document · 文档结束 · v0.4.0*
+*End of document · 文档结束 · v0.5.0*

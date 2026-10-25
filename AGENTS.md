@@ -1,68 +1,61 @@
 # AGENTS.md — Lumina
 
-Local-first Agent productivity tool: harness (Turn/profiles/confirm), conversation map, memory, MCP, file access. Confirms before risky actions. Skill workflow DAG is planned (see docs/workflow-dag-design.md), not shipped.
+Lumina 是 **DeepSeek Harness（`dsh`）的差异化插件**，不是独立 harness 产品。
 
-Integrations: **standard MCP or CLI only** — platform connectors (飞书/微信读书/邮箱等) are removed. Do not add new modules under `src/secretary/connectors/`. Personal knowledge via Shibei / MEMORY.md / user MCP.
+- runtime（agent loop · LLM 适配 · 沙箱 · 委派 · session）由 dsh 官方维护。
+- 本仓库只做产品层：grounding · confirmation · WriteGate · memory · trace · prompt · Shibei。
+- UI 寄生 dsh Desktop/Web（客户端插件），不再维护 Electron 壳。
+- Skill / Workflow 用 dsh 原生 `SKILL.md` + JavaScript 脚本；禁止重启自研 DAG。
 
 ## Quick start
 
 ```bash
-cd "/Users/sihai/Documents/My Projects/Lumina"
-uv sync --extra dev
-cd desktop && npm install && npm start
-# or: ./scripts/start-backend.sh && npm start
+cd dsh
+npm install
+npm run build
+npm test
 ```
 
-Fallback (no uv): `pip install -e ".[dev]"`
+挂载到 dsh profile：
+
+```bash
+dsh plugin --profile web add /absolute/path/to/Lumina/dsh
+```
 
 ## Verification
 
 ```bash
-uv run pytest
-uv run ruff check src tests
-uv run mypy src
-cd dsh && npm run build && npm test   # dsh plugin suite
+cd dsh && npm run build && npm test
 ```
 
-## Architecture
+CI 只跑这一条链。提交前必须绿。
+
+## 结构
 
 ```
-src/           FastAPI backend, AgentLoop, MCP, memory (legacy; migration source)
-dsh/           DeepSeek Harness plugin suite (target runtime)
-desktop/       Electron shell (legacy; UI moves to dsh Desktop/Web)
-tests/
-docs/          PRD + harness design — see docs/README.md
+dsh/              dsh-lumina 插件（唯一产品代码）
+  src/            config · prompt · writegate · jail · confirm · grounding · memory · trace
+  test/           node:test
+  cordis.patch.yml
+  profile.patch.example.yml
+docs/             PRD + 迁移记录 + 历史设计
 ```
 
-Runtime direction: **dsh owns the harness** (loop · LLM · sandbox · delegation · session). Lumina keeps only the product layer as a dsh plugin (`dsh/`). Skills and workflow orchestration use dsh native `skill` + `workflow` scripts — the Python DAG/canvas is retired and must not gain features. Migration slices are tracked in `docs/dsh-rewrite-plan.md`; the Python backend stays runnable until the last slice lands.
+## 开发纪律
 
-Product truth: `docs/PRD.md`. Do not follow superseded plans under `docs/superpowers/plans/` without checking PRD.
+- **只写产品层**：不实现 agent loop、LLM 协议解析、沙箱、委派、session 持久化——这些是 dsh 的职责。
+- **用 dsh seam**：工具策略走 `tools/pre-execute` / `post-execute`；强制补步走 `agent/turn-stopping`；轨迹走 `session/event`；提示词走 `systemPrompt.section`；子 Agent 识别走 `subagent/start`。
+- **不引第三方 runtime**：新增依赖先说明为什么现有 dsh seam 不够。
+- **最小 diff**：不要顺带重构相邻代码。
+- **不造轮子**：协议/运行时用库或 dsh 原生能力；产品策略（栅栏、确认、WriteGate、grounding、memory、trace）才自研。
+- **配置可覆盖**：所有行为参数进 `LuminaConfig`，默认合理，profile 可改。
 
-## Gotchas
+## 已退役（勿恢复）
 
-- Backend + Electron are separate; start backend before desktop if scripts split.
-- MCP config lives in secretary services — read existing patterns before adding servers.
-- Python env: **uv** + `uv.lock` (`.venv/` local). CI uses `uv sync --all-extras`.
+- Python/FastAPI 后端、Electron 壳、Skill DAG 画布。
+- 代码存档：tag `legacy-python-v0.4.0` / branch `archive/python-legacy`。
+- `docs/harness-design.md`、`docs/workflow-dag-design.md` 是历史设计，不代表当前实现。
 
-## 不造轮子纪律（No-reinventing rule）
+## 产品真相
 
-协议/运行时层必须用库，禁止自研；产品策略层必须自研，禁止引库替代。
-
-| 层 | 做法 | 代码位置 |
-|---|---|---|
-| LLM 协议 / tool 解析 / provider 适配 | **openai-agents SDK**（`agents_sdk_runtime.py`）| 边界文件，别处不 import SDK |
-| LLM Chat Completions（utility/direct 路径） | **openai SDK**（同步 `OpenAI` client，`max_retries=0` 让外层统一重试）| `llm_client.py` |
-| HITL 暂停/恢复/状态序列化 | SDK `interruptions` + `RunState`（`sdk_state`） | 同上 |
-| 网络重试/退避 | SDK 内置（`llm_client` 自研重试是统一外层；openai client 内层已 `max_retries=0`） | `llm_client.py` |
-| MCP 连接（stdio/SSE/HTTP） | 官方 `mcp` SDK；`mcp_manager` 只做工具桥接/审批（产品层，保留） | `mcp_manager.py` |
-| Markdown 渲染/消毒 | markdown-it + DOMPurify | `desktop/ui/markdown.js` |
-| 前端打包 | esbuild（未引入前保持 script 顺序 + `node --check`） | `desktop/ui/*` |
-
-**必须自研（差异化，勿外包）**：grounding 校验、confirmation_policy、fs_jail、WriteGate、对话地图、TraceStore、Shibei 集成、Skill 编排。
-
-**禁止**：import Hermes / opencode 产品 runtime（PRD 非目标）；新增手写 LLM 协议解析；vendor fork 上游库（最后手段）。
-
-## Agent workflows
-
-- Prefer minimal diffs; Lumina has many integrated subsystems (MCP, memory).
-- Run pytest before claiming API/agent loop changes are done.
+`docs/PRD.md` 定义产品意图；实现映射以 `docs/dsh-rewrite-plan.md` 为准。若两者冲突，先改 PRD 再改代码。

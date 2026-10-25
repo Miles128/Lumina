@@ -1,6 +1,6 @@
 # DSH 插件化改造方案（Lumina → DeepSeek Harness 插件）
 
-> **状态：已启动 · Phase 0 通过 · Slice 1–4 已落地并通过真实会话验收**
+> **状态：完成 · Phase 0 通过 · Slice 1–5 全部落地**
 > 分支：`spike/dsh-runtime`
 > 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
 > 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / writegate / jail / confirm / grounding / memory / trace），已安装到本机 `~/.dsh/profiles/lumina`。
@@ -10,7 +10,8 @@
 
 ## 0. TL;DR
 
-- **新定位**：harness（agent loop / LLM / 沙箱 / 委派）交给 dsh 官方 runtime；Lumina 只做**产品差异化插件**（grounding / 确认 / 对话地图 / TraceStore / Shibei / Skill）。
+- **结果（2026-10-25）**：迁移完成。当前仓库只保留 `dsh/` 插件 + `docs/`；Python/Electron 实现存档于 tag `legacy-python-v0.4.0`。
+- **新定位**：harness（agent loop / LLM / 沙箱 / 委派）交给 dsh 官方 runtime；Lumina 只做**产品差异化插件**（grounding / 确认 / WriteGate / 对话地图 / TraceStore / Shibei / memory）。
 - **冲突消除**：原方案是「Lumina 嵌入 dsh runtime」→ 违反 PRD；插件化后关系倒转为「dsh 加载 Lumina 插件」→ 字面冲突消除，仅需修订「Harness-first 自研 harness」定位措辞。
 - **范围**：Python 后端约 **30.5K 行**、测试约 **13.6K 行**重写为 dsh Cordis 插件（TS）；前端 **11.4K 行**去留取决于 §5.4。
 - **决策门**：Phase 0 spike 必须回答 §5.2 的 7 个问题；任一失败则方案终止，回退 Python SDK 桥接（方案 ③）。
@@ -290,9 +291,25 @@ grounding 校验 · confirmation_policy · fs_jail · WriteGate · 对话地图 
 
 确认：无需接 Tavily；dsh 走 DeepSeek 官方搜索。MCP 工具沿用 `mcp__<server>__<tool>` 命名，Lumina 的 confirm 策略对 `import` / `update` 类 MCP 写操作仍会询问。
 
-### 后续切片
+### Slice 5 已交付：Python / Electron 退役
 
-- Slice 5：退役 Python `api/` 与 Electron 壳，删除 DAG / skills / 画布代码，测试迁移
+| 项 | 处理 |
+|---|---|
+| `src/`（130 文件 / 30K 行） | 删除 |
+| `tests/`（123 文件 / 13.6K 行） | 删除 |
+| `desktop/`（Electron 壳 / 17K 行） | 删除 |
+| `pyproject.toml` / `uv.lock` / `.python-version` / `scripts/` / `config/` | 删除 |
+| `.github/workflows/ci.yml` | 改为单一 dsh job：`npm ci` → build → test |
+| `README.md` / `AGENTS.md` / `docs/README.md` / PRD | 重写为 dsh 插件定位；旧设计文档标记为历史 |
+| 存档 | tag `legacy-python-v0.4.0`、branch `archive/python-legacy` |
+
+验证：`cd dsh && npm run build && npm test`（33 passed）。仓库只剩 `dsh/` + `docs/` + CI。
+
+### 后续（维护）
+
+- dsh 仍是 developer preview：升级前先跑 `npm test` + 一轮真实会话冒烟。
+- 客户端 UI 能力（对话地图、确认面板）继续以 dsh client plugin 形式补充。
+- 若 dsh 未来提供稳定的嵌入式库 API，再评估是否需要独立壳；当前不预研。
 
 ---
 
