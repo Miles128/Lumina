@@ -1,11 +1,12 @@
 /**
- * Memory: durable MEMORY.md facts plus a local note search.
+ * dsh-lumina-memory — durable MEMORY.md facts for Lumina.
  *
- * Ported from Lumina's three-layer memory (the session archive layer is now
- * dsh's own session log, so it is intentionally not duplicated here):
- *   - MEMORY.md is injected into every system prompt (frozen snapshot, capped)
- *   - a `memory` tool mutates it (add / replace / remove)
- *   - a `search_memory` tool searches MEMORY.md and any notes under the root
+ * Scope:
+ *   - MEMORY.md is injected into every system prompt (capped)
+ *   - `memory` mutates it (add / replace / remove)
+ *   - `search_memory` searches MEMORY.md and notes under the root
+ *
+ * The runtime (loop, sessions, persona, traces) belongs to dsh.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
@@ -14,21 +15,39 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
-import type { LuminaConfig } from './config.js'
 import { expandHome } from './paths.js'
+
+export interface Config {
+  enabled: boolean
+  root: string
+  /** Inject MEMORY.md into the system prompt on every assembly. */
+  inject: boolean
+  maxChars: number
+}
+
+export const DEFAULT_CONFIG: Config = {
+  enabled: true,
+  root: '~/.lumina/memories',
+  inject: true,
+  maxChars: 4000,
+}
+
+export function resolveConfig(input: Partial<Config> = {}): Config {
+  return { ...DEFAULT_CONFIG, ...input }
+}
 
 const MEMORY_FILE = 'MEMORY.md'
 const POLLUTED = /^\s*(system|assistant|user):|^\[System\]/i
 
-export function memoryRoot(cfg: LuminaConfig): string {
-  return path.resolve(expandHome(cfg.memory.root))
+export function memoryRoot(cfg: Config): string {
+  return path.resolve(expandHome(cfg.root))
 }
 
-export function memoryPath(cfg: LuminaConfig): string {
+export function memoryPath(cfg: Config): string {
   return path.join(memoryRoot(cfg), MEMORY_FILE)
 }
 
-export function readMemory(cfg: LuminaConfig): string {
+export function readMemory(cfg: Config): string {
   try {
     return readFileSync(memoryPath(cfg), 'utf8').trim()
   } catch {
@@ -36,25 +55,25 @@ export function readMemory(cfg: LuminaConfig): string {
   }
 }
 
-function appendFact(cfg: LuminaConfig, text: string): string {
+function appendFact(cfg: Config, text: string): string {
   const line = text.trim()
   if (!line) return 'Error: empty text'
   if (POLLUTED.test(line)) return 'Skipped: looks like transcript pollution, not a fact'
   const existing = readMemory(cfg)
   if (existing.includes(line)) return 'Already present in MEMORY.md'
-  const updated = `${existing}\n${line}`.trim().slice(0, cfg.memory.maxChars)
+  const updated = `${existing}\n${line}`.trim().slice(0, cfg.maxChars)
   writeMemory(cfg, updated)
   return `Added to MEMORY.md: ${line}`
 }
 
-function writeMemory(cfg: LuminaConfig, content: string): void {
+function writeMemory(cfg: Config, content: string): void {
   const root = memoryRoot(cfg)
   mkdirSync(root, { recursive: true })
-  writeFileSync(memoryPath(cfg), content.trim().slice(0, cfg.memory.maxChars) + '\n', 'utf8')
+  writeFileSync(memoryPath(cfg), content.trim().slice(0, cfg.maxChars) + '\n', 'utf8')
 }
 
 export function mutateMemory(
-  cfg: LuminaConfig,
+  cfg: Config,
   action: string,
   text: string,
   oldText: string,
@@ -88,7 +107,7 @@ interface NoteHit {
   text: string
 }
 
-export function searchMemory(cfg: LuminaConfig, query: string, limit = 5): NoteHit[] {
+export function searchMemory(cfg: Config, query: string, limit = 5): NoteHit[] {
   const needle = query.trim().toLowerCase()
   if (!needle) return []
   const root = memoryRoot(cfg)
@@ -119,10 +138,10 @@ export function searchMemory(cfg: LuminaConfig, query: string, limit = 5): NoteH
   return hits.slice(0, Math.max(1, limit))
 }
 
-export function installMemory(ctx: Context, cfg: LuminaConfig): void {
-  if (!cfg.memory.enabled) return
+export function installMemory(ctx: Context, cfg: Config): void {
+  if (!cfg.enabled) return
 
-  if (cfg.memory.inject) {
+  if (cfg.inject) {
     ctx.systemPrompt.section({
       name: 'lumina:memory',
       order: 5,
@@ -176,7 +195,14 @@ export function installMemory(ctx: Context, cfg: LuminaConfig): void {
   }))
 }
 
-export function ensureMemoryRoot(cfg: LuminaConfig): void {
+export function ensureMemoryRoot(cfg: Config): void {
   const root = memoryRoot(cfg)
   if (!existsSync(root)) mkdirSync(root, { recursive: true })
+}
+
+export const name = 'lumina-memory'
+export const inject = ['tools', 'systemPrompt']
+
+export function apply(ctx: Context, config: Partial<Config> = {}): void {
+  installMemory(ctx, resolveConfig(config))
 }

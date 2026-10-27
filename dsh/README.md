@@ -1,12 +1,13 @@
 # dsh-lumina
 
-Lumina 在 DeepSeek Harness 上的产品层。只做三件事：
+Lumina 在 DeepSeek Harness 上的产品层，拆成两个独立插件：
 
-1. **跨对话记忆** — `MEMORY.md` 注入 + `memory` / `search_memory` 工具
-2. **Shibei 答前召回** — 个人背景类问题先查知识库再回答
-3. **对话树** — 由客户端插件 [`dsh-forkmap`](https://github.com/Miles128/dsh-forkmap) 提供（session fork 谱系 / 一键分叉）
+| 包 | 作用 | 默认行为 |
+|---|---|---|
+| **dsh-lumina-memory** | `MEMORY.md` 注入 + `memory` / `search_memory` 工具 | 开启 |
+| **dsh-lumina-shibei** | Shibei 答前召回规则 + 可选自动召回注入 | 规则开启，自动注入关闭 |
 
-runtime（loop · LLM · 沙箱 · 权限 · 委派 · session · 轨迹 · persona）全部由 dsh 负责，本插件不重复实现。
+对话树仍由 [`dsh-forkmap`](https://github.com/Miles128/dsh-forkmap) 提供；Skill / Workflow 用 dsh 原生能力，不在本仓库。
 
 ## 安装
 
@@ -15,58 +16,55 @@ cd dsh
 npm install
 npm run build
 
-dsh plugin --profile lumina add /absolute/path/to/Lumina/dsh
+# 两个都装
+dsh plugin --profile lumina add "$PWD/packages/memory"
+dsh plugin --profile lumina add "$PWD/packages/shibei"
+
+# 或只装一个
+dsh plugin --profile lumina add "$PWD/packages/shibei"
 ```
 
-对话树：
-
-```bash
-dsh plugin --profile lumina add /absolute/path/to/dsh-forkmap
-```
-
-Shibei 通过 dsh 的 MCP client 接入，见 [`profile.patch.example.yml`](profile.patch.example.yml) 的 `mcp-shibei` 段。
-
-## 配置
+## dsh-lumina-memory
 
 ```yaml
-- id: lumina
+- id: lumina-memory
   config:
-    memory:
-      enabled: true
-      root: ~/.lumina/memories
-      inject: true
-      maxChars: 4000
-    shibei:
-      recall: true
-      serverName: shibei   # 必须与 mcp-client 的 serverName 一致
-      autoRecall: false    # true = 每轮第一步自动注入 Shibei 召回（多一次 MCP 调用）
-      topK: 3
-      maxChars: 1200
-      timeoutMs: 8000
+    enabled: true
+    root: ~/.lumina/memories
+    inject: true
+    maxChars: 4000
 ```
 
-完整模板（含 Skill/Workflow 与 Shibei MCP）见 [`profile.patch.example.yml`](profile.patch.example.yml)。
+- `MEMORY.md` 每轮注入 system prompt
+- `memory`：add / replace / remove
+- `search_memory`：搜索 MEMORY.md 与本地笔记
 
-## 工具
+## dsh-lumina-shibei
 
-| 工具 | 作用 |
-|---|---|
-| `memory` | `add` / `replace` / `remove` MEMORY.md 中的长期事实 |
-| `search_memory` | 搜索 MEMORY.md 与本地记忆笔记 |
+```yaml
+- id: lumina-shibei
+  config:
+    serverName: shibei   # 必须与 mcp-client 的 serverName 一致
+    recall: true         # prompt 规则
+    autoRecall: false    # 每轮第一步自动注入（多一次 MCP 调用）
+    topK: 3
+    maxChars: 1200
+    timeoutMs: 8000
+```
 
-`MEMORY.md` 每轮注入 system prompt（可用 `memory.inject: false` 关闭）。
+MCP 连接本身不进插件，继续放 profile 的 `mcp-shibei` 行（命令路径、`PYTHONPATH`、`SHIBEI_CONFIG` 都是机器相关的）。插件检测不到 `mcp__<server>__shibei_context` 时直接 no-op。
 
-## 跨对话记忆（规划）
-
-当前是「手工 curated facts + 工具检索」。自动捕获 / 自动召回的设计见 [docs/cross-session-memory-design.md](../docs/cross-session-memory-design.md)。
+完整模板见 [`profile.patch.example.yml`](profile.patch.example.yml)。
 
 ## 开发
 
 ```bash
-npm run build
-npm test
+cd dsh
+npm install
+npm run build      # 两个包
+npm test           # build + 两个包的测试
 ```
 
 ## Legacy
 
-Python/FastAPI + Electron 实现已退役：tag `legacy-python-v0.4.0` / branch `archive/python-legacy`。
+单包 `dsh-lumina` 已拆分为 `dsh-lumina-memory` + `dsh-lumina-shibei`。Python/Electron 实现存档于 tag `legacy-python-v0.4.0`。

@@ -3,7 +3,7 @@
 > **状态：完成 · Phase 0 通过 · Slice 1–5 全部落地**
 > 分支：`spike/dsh-runtime`
 > 决策：**全面转 dsh runtime**；UI 寄生 dsh Desktop/Web（客户端插件），Lumina 自研 Electron 壳退役。
-> 已落地：`dsh/`（`dsh-lumina` 插件，覆盖 prompt / writegate / jail / confirm / grounding / memory / trace），已安装到本机 `~/.dsh/profiles/lumina`。
+> 已落地：`dsh/` 拆成 `dsh-lumina-memory` + `dsh-lumina-shibei` 两个插件，已安装到本机 `~/.dsh/profiles/lumina`。
 > 定位：Lumina 由「独立 harness 产品」转为「DeepSeek Harness 生态的差异化插件包」，消除 PRD「不嵌入产品 runtime」冲突（见 §5.0）。
 
 ---

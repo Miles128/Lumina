@@ -3,12 +3,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { resolveConfig } from '../dist/config.js'
-import { memoryPath, mutateMemory, readMemory, searchMemory } from '../dist/memory.js'
+import { memoryPath, mutateMemory, readMemory, resolveConfig, searchMemory } from '../dist/index.js'
 
 function tempConfig() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'lumina-mem-'))
-  return resolveConfig({ memory: { root, inject: false } })
+  return resolveConfig({ root, inject: false })
 }
 
 test('memory add dedupes and caps', () => {
@@ -45,6 +44,6 @@ test('memory search finds lines across notes', () => {
 test('memory file stays inside the configured root', () => {
   const cfg = tempConfig()
   mutateMemory(cfg, 'add', 'fact', '')
-  assert.equal(path.dirname(memoryPath(cfg)), cfg.memory.root)
+  assert.equal(path.dirname(memoryPath(cfg)), cfg.root)
   assert.match(readFileSync(memoryPath(cfg), 'utf8'), /fact/)
 })
