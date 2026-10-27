@@ -14,6 +14,10 @@
     shibei:
       recall: true
       serverName: shibei
+      autoRecall: false
+      topK: 3
+      maxChars: 1200
+      timeoutMs: 8000
 
 # --- Skills (dsh native) -----------------------------------------------------
 # Discovered roots: <project>/.dsh/skills, <project>/.agents/skills,

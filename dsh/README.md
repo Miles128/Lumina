@@ -39,6 +39,10 @@ Shibei 通过 dsh 的 MCP client 接入，见 [`profile.patch.example.yml`](prof
     shibei:
       recall: true
       serverName: shibei   # 必须与 mcp-client 的 serverName 一致
+      autoRecall: false    # true = 每轮第一步自动注入 Shibei 召回（多一次 MCP 调用）
+      topK: 3
+      maxChars: 1200
+      timeoutMs: 8000
 ```
 
 完整模板（含 Skill/Workflow 与 Shibei MCP）见 [`profile.patch.example.yml`](profile.patch.example.yml)。
