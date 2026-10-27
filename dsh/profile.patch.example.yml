@@ -3,21 +3,24 @@
 # Copy the relevant rows into $DSH_HOME/profiles/<name>/cordis.patch.yml.
 # The user layer replaces a row's whole `config`, so keep each block complete.
 
-# --- Product layer -----------------------------------------------------------
-- id: lumina
+# --- Memory ------------------------------------------------------------------
+- id: lumina-memory
   config:
-    memory:
-      enabled: true
-      root: ~/.lumina/memories
-      inject: true
-      maxChars: 4000
-    shibei:
-      recall: true
-      serverName: shibei
-      autoRecall: false
-      topK: 3
-      maxChars: 1200
-      timeoutMs: 8000
+    enabled: true
+    root: ~/.lumina/memories
+    inject: true
+    maxChars: 4000
+
+# --- Shibei recall -----------------------------------------------------------
+# The MCP connection is configured separately (see mcp-shibei below).
+- id: lumina-shibei
+  config:
+    serverName: shibei
+    recall: true
+    autoRecall: false
+    topK: 3
+    maxChars: 1200
+    timeoutMs: 8000
 
 # --- Skills (dsh native) -----------------------------------------------------
 # Discovered roots: <project>/.dsh/skills, <project>/.agents/skills,
@@ -40,7 +43,7 @@
 
 # --- Shibei knowledge base over MCP -----------------------------------------
 # Replace the paths with your checkout. `serverName` must match
-# `lumina.shibei.serverName`.
+# `lumina-shibei.serverName`.
 - insert:
     - id: mcp-shibei
       name: '@deepseek-ai/dsh-mcp-client'

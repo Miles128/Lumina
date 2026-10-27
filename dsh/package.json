@@ -1,45 +1,17 @@
 {
-  "name": "dsh-lumina",
-  "version": "0.1.0",
-  "description": "Cross-session memory, Shibei recall and conversation tree for DeepSeek Harness.",
-  "license": "MIT",
+  "name": "dsh-lumina-workspace",
+  "version": "0.0.0",
+  "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dist",
-    "cordis.patch.yml",
-    "README.md"
+  "workspaces": [
+    "packages/*"
   ],
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/*.test.js"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6"
+    "build": "npm run build --workspaces",
+    "test": "npm run build && npm run test --workspaces",
+    "check": "npm run check --workspaces"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5",
-    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.9.0"
   },

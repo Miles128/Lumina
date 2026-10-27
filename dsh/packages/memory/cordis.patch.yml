@@ -1,0 +1,4 @@
+# dsh-lumina-memory bundle patch — one row for the memory plugin.
+- insert:
+    - id: lumina-memory
+      name: dsh-lumina-memory

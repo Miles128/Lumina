@@ -1,0 +1,4 @@
+# dsh-lumina-shibei bundle patch — one row for the Shibei recall plugin.
+- insert:
+    - id: lumina-shibei
+      name: dsh-lumina-shibei

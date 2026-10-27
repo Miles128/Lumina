@@ -11,7 +11,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { LuminaConfig } from './config.js'
+import type { Config } from './config.js'
 
 interface RecallDoc {
   source?: string
@@ -83,8 +83,8 @@ function textOf(message: UserMessageLike): string {
     .trim()
 }
 
-export function installAutoRecall(ctx: Context, cfg: LuminaConfig): void {
-  if (!cfg.shibei.autoRecall) return
+export function installAutoRecall(ctx: Context, cfg: Config): void {
+  if (!cfg.autoRecall) return
   const seen = new Set<string>()
   let counter = 0
 
@@ -103,7 +103,7 @@ export function installAutoRecall(ctx: Context, cfg: LuminaConfig): void {
     if (seen.size > 2000) seen.clear()
     seen.add(key)
 
-    const toolName = `mcp__${cfg.shibei.serverName}__shibei_context`
+    const toolName = `mcp__${cfg.serverName}__shibei_context`
     if (!ctx.tools.get(toolName)) return next()
 
     let result: { isError?: boolean; content?: Array<{ type: string; text?: string }> }
@@ -111,9 +111,9 @@ export function installAutoRecall(ctx: Context, cfg: LuminaConfig): void {
       result = await ctx.tools.execute({
         callId: `lumina-recall-${++counter}` as never,
         name: toolName,
-        arguments: { message: text, limit: cfg.shibei.topK },
+        arguments: { message: text, limit: cfg.topK },
         agent: payload.agent,
-        signal: AbortSignal.timeout(cfg.shibei.timeoutMs),
+        signal: AbortSignal.timeout(cfg.timeoutMs),
       }) as unknown as typeof result
     } catch {
       return next()
@@ -128,9 +128,9 @@ export function installAutoRecall(ctx: Context, cfg: LuminaConfig): void {
 
     let context = ''
     try {
-      context = formatRecall(JSON.parse(raw) as RecallData, cfg.shibei.maxChars)
+      context = formatRecall(JSON.parse(raw) as RecallData, cfg.maxChars)
     } catch {
-      context = raw.slice(0, cfg.shibei.maxChars)
+      context = raw.slice(0, cfg.maxChars)
     }
     if (!context.trim()) return next()
 

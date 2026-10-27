@@ -305,7 +305,7 @@ spawn_subagent(worker) → file_write 需确认
 └──────────────────┬───────────────────────────┘
                    │ tools/pre-execute · agent/turn-stopping · session/event
 ┌──────────────────▼───────────────────────────┐
-│  dsh-lumina plugin（本仓库）                  │
+│  dsh-lumina-memory / dsh-lumina-shibei       │
 │  memory · Shibei recall                      │
 │  （对话树由 dsh-forkmap 客户端插件提供）      │
 └──────────┬─────────────┬──────────────────────┘
@@ -551,7 +551,7 @@ Harness 不是固定黑盒：确认、委派、压缩、轮次、超时、路由
 | Sync / 自定义 connectors | **遗留冻结** |
 | CLI vs sub-agent | **`spawn_cli_agent` 已删除**；CLI = MCP stdio / `shell` |
 | 主 Agent 扩展 | **Auto** 替代 `mode: primary` |
-| Runtime 底座 | **DeepSeek Harness（dsh）官方 runtime** + `dsh-lumina` 产品插件；不再自研 harness |
+| Runtime 底座 | **DeepSeek Harness（dsh）官方 runtime** + `dsh-lumina-memory` / `dsh-lumina-shibei` 插件；不再自研 harness |
 | 子 Agent 拓扑 | 默认 **depth=1**；可配深树 ≤2（硬顶 3）；并行有预算 |
 | 对抗 / 落地 | 结构化对抗可选；WriteGate；见 FR-53–56 与 2026-07-30 规格 |
 | 歧义处理 | 主管综合 → `ask_user` / `verify` / 评审仲裁 |

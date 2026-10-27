@@ -10,9 +10,6 @@
     "exactOptionalPropertyTypes": false,
     "skipLibCheck": true,
     "declaration": true,
-    "sourceMap": false,
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": ["src/**/*.ts"]
+    "sourceMap": false
+  }
 }

@@ -52,7 +52,7 @@ function fakeCtx() {
 
 test('auto-recall prepends a bounded context to the user message', async () => {
   const ctx = fakeCtx()
-  installAutoRecall(ctx, resolveConfig({ shibei: { autoRecall: true, serverName: 'shibei' } }))
+  installAutoRecall(ctx, resolveConfig({ autoRecall: true, serverName: 'shibei' }))
   const user = { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '我之前做过哪些 RAG 项目？' }] }
   const payload = { agent: { session: { id: 's1' } }, turn: 1, step: 1, messages: [user], signal: new AbortController().signal }
   const decision = await ctx.handler()(payload, async () => ({ kind: 'enter', messages: [user] }))

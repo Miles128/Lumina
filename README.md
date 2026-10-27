@@ -14,7 +14,7 @@
 
 ---
 
-灵犀不再自己维护 agent runtime。**DeepSeek Harness（`dsh`）** 负责 loop / LLM 适配 / 沙箱 / 委派 / session；本仓库只交付 Lumina 的产品差异化，打包为一个 dsh 插件 `dsh-lumina`，UI 寄生 dsh Desktop/Web（客户端插件）。
+灵犀不再自己维护 agent runtime。**DeepSeek Harness（`dsh`）** 负责 loop / LLM 适配 / 沙箱 / 委派 / session；本仓库只交付 Lumina 的产品差异化，拆成两个 dsh 插件：`dsh-lumina-memory`（长期记忆）与 `dsh-lumina-shibei`（Shibei 召回）；UI 寄生 dsh Desktop/Web（客户端插件）。
 
 **核心差异点：** 工作区硬栅栏 · 分级确认 · WriteGate（子 Agent 只写草稿）· grounding 强制补读 · MEMORY.md + 检索 · 本地思考链轨迹 · Shibei 答前召回。
 
@@ -51,7 +51,7 @@ dsh plugin --profile lumina add /absolute/path/to/Lumina/dsh
 ## 结构
 
 ```
-dsh/                    dsh-lumina 插件（全部产品逻辑）
+dsh/                    两个 dsh 插件（memory / shibei）
   src/                  prompt · writegate · jail · confirm · grounding · memory · trace
   test/                 node:test 单元测试
   WORKFLOWS.md          Skill / Workflow 用法

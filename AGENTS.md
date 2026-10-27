@@ -19,7 +19,8 @@ npm test
 挂载到 dsh profile：
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/Lumina/dsh
+dsh plugin --profile web add /absolute/path/to/Lumina/dsh/packages/memory
+dsh plugin --profile web add /absolute/path/to/Lumina/dsh/packages/shibei
 ```
 
 ## Verification
@@ -33,10 +34,9 @@ CI 只跑这一条链。提交前必须绿。
 ## 结构
 
 ```
-dsh/              dsh-lumina 插件（唯一产品代码）
-  src/            config · prompt · writegate · jail · confirm · grounding · memory · trace
-  test/           node:test
-  cordis.patch.yml
+dsh/              npm workspace（两个插件）
+  packages/memory/    MEMORY.md + memory/search_memory
+  packages/shibei/    Shibei 召回 + 可选自动注入
   profile.patch.example.yml
 docs/             PRD + 迁移记录 + 历史设计
 ```
